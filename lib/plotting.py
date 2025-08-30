@@ -236,4 +236,17 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                            text=str(ticker), showarrow=False,
                            xanchor="left", font=dict(size=18))
 
+
+    # --- keep legend right-aligned (final override) ---
+
+    try:
+
+        fig.update_layout(legend=dict(orientation="h", x=1, xanchor="right", y=1.1))
+
+    except Exception:
+
+        pass
+
+    # --- end legend override ---
+
     return fig
