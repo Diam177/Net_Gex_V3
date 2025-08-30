@@ -142,10 +142,10 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             tickmode="array",
             tickvals=x_labels,
             ticktext=x_labels,
-            range=[-0.5, len(x_labels)-0.5]
+            range=[-0.5, len(x_labels, showgrid=False)-0.5]
         ),
-        yaxis=dict(title="Net Gex (thousands)"),
-        yaxis2=dict(title="Other series", overlaying="y", side="right"),
+        yaxis=dict(title="Net Gex", showgrid=False),
+        yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
         hovermode="x unified",
         height=560
     )
