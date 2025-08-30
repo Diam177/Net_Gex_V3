@@ -104,23 +104,31 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             ))
 
     # Vertical price line anchored to the nearest kept strike
-    if price is not None and n > 0:
-        i_near = int(np.argmin(np.abs(strikes_keep - float(price))))
-        x_line = x_labels[i_near]
-        fig.add_shape(
-            type="line",
-            x0=x_line, x1=x_line, xref="x",
-            y0=0, y1=1, yref="paper",
-            line=dict(width=2, color="#f0a000")
-        )
-        fig.add_annotation(
-            x=x_line, y=1.02, xref="x", yref="paper",
-            text=f"Price: {float(price):.2f}",
-            showarrow=False, font=dict(size=12, color="#f0a000")
-        )
+        if price is not None and n > 0:
+            i_near = int(np.argmin(np.abs(strikes_keep - float(price))))
+            x_line = x_labels[i_near]
+            # full-height vertical line
+            fig.add_shape(
+                type="line",
+                x0=x_line, x1=x_line, xref="x",
+                y0=0, y1=1, yref="paper",
+                line=dict(width=2, color="#f0a000"),
+                layer="above"
+            )
+            # centered label exactly above the line
+            fig.add_annotation(
+                x=x_line, y=1.0, xref="x", yref="paper",
+                text=f"Price: {float(price):.2f}",
+                showarrow=False,
+                xanchor="center",
+                yanchor="bottom",
+                align="center",
+                yshift=8,
+                font=dict(size=12, color="#f0a000")
+            )
 
-    # Layout with full-width category axis
-    fig.update_layout(
+        # Layout with full-width category axis
+        fig.update_layout(
         barmode="overlay",
         bargap=bargap,
         bargroupgap=0.0,
