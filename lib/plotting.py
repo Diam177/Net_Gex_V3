@@ -112,20 +112,21 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             y_pos
         ], axis=-1)
         fig.add_trace(go.Bar(
-            x=x_pos, y=y_pos, name="Net Gex +",
-            marker_color=POS_COLOR, opacity=0.92,
-            customdata=cd_pos,
-            hovertemplate=(
-                "Strike: %{customdata[0]}<br>"
-                "Call OI: %{customdata[1]:,.0f}<br>"
-                "Put OI: %{customdata[2]:,.0f}<br>"
-                "Call Volume: %{customdata[3]:,.0f}<br>"
-                "Put Volume: %{customdata[4]:,.0f}<br>"
-                "Net Gex: %{customdata[5]:,.1f}"
-                "<extra></extra>"
-            ),
-            hoverlabel=dict(bgcolor=POS_COLOR)
-        ))
+                x=x_pos, y=y_pos, name="Net Gex +",
+                marker_color=POS_COLOR, opacity=0.92,
+                customdata=cd_pos,
+                text=[
+                    f"Strike: {row[0]}<br>"
+                    f"Call OI: {row[1]:,.0f}<br>"
+                    f"Put OI: {row[2]:,.0f}<br>"
+                    f"Call Volume: {row[3]:,.0f}<br>"
+                    f"Put Volume: {row[4]:,.0f}<br>"
+                    f"Net Gex: {row[5]:,.1f}"
+                    for row in cd_pos
+                ],
+                hovertemplate="%{text}<extra></extra>",
+                hoverlabel=dict(bgcolor=POS_COLOR)
+            ))
 
         # Negative bars
         x_neg = [lbl for lbl, m in zip(x_labels, mask_neg) if m]
@@ -139,20 +140,21 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             y_neg
         ], axis=-1)
         fig.add_trace(go.Bar(
-            x=x_neg, y=y_neg, name="Net Gex -",
-            marker_color=NEG_COLOR, opacity=0.92,
-            customdata=cd_neg,
-            hovertemplate=(
-                "Strike: %{customdata[0]}<br>"
-                "Call OI: %{customdata[1]:,.0f}<br>"
-                "Put OI: %{customdata[2]:,.0f}<br>"
-                "Call Volume: %{customdata[3]:,.0f}<br>"
-                "Put Volume: %{customdata[4]:,.0f}<br>"
-                "Net Gex: %{customdata[5]:,.1f}"
-                "<extra></extra>"
-            ),
-            hoverlabel=dict(bgcolor=NEG_COLOR)
-        ))
+                x=x_neg, y=y_neg, name="Net Gex -",
+                marker_color=NEG_COLOR, opacity=0.92,
+                customdata=cd_neg,
+                text=[
+                    f"Strike: {row[0]}<br>"
+                    f"Call OI: {row[1]:,.0f}<br>"
+                    f"Put OI: {row[2]:,.0f}<br>"
+                    f"Call Volume: {row[3]:,.0f}<br>"
+                    f"Put Volume: {row[4]:,.0f}<br>"
+                    f"Net Gex: {row[5]:,.1f}"
+                    for row in cd_neg
+                ],
+                hovertemplate="%{text}<extra></extra>",
+                hoverlabel=dict(bgcolor=NEG_COLOR)
+            ))
 
     # Optional lines (aligned to filtered x)
     for name in ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]:
@@ -204,7 +206,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         ),
         yaxis=dict(title="Net Gex", showgrid=False),
         yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
-        hovermode="closest",
+        hovermode="x",
         height=560
     )
 
