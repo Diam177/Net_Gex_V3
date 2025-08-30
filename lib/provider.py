@@ -1,21 +1,27 @@
-import requests, time, json
+import requests, json
 
 DEFAULT_TIMEOUT = 20
 
-def fetch_option_chain(ticker, host, api_key, expiry_unix=None, timeout=20):
-    import requests, json
+def fetch_option_chain(ticker, host, api_key, expiry_unix=None, timeout=DEFAULT_TIMEOUT):
+    """
+    Fetch options chain JSON from yahoo-finance15 RapidAPI host.
+
+    Primary (per provider docs / your screenshots):
+      GET https://{host}/api/v1/markets/options?ticker=SPY&display=chain&expiration=UNIX
+
+    Fallbacks: several legacy yahoo-like paths that some deployments expose.
+    Returns (json_dict, raw_bytes). Raises RuntimeError with a compact trace on failure.
+    """
     base_url = f"https://{host}"
-    # 1) канонический путь провайдера из твоего скрина
     candidates = [
-        {"url": f"{base_url}/api/v1/markets/options",                 "mode": "query_ticker"},
-        # 2) запасные варианты (встречаются у того же хоста в разных версиях пакета)
-        {"url": f"{base_url}/api/yahoo/options/{ticker}",             "mode": "path"},
-        {"url": f"{base_url}/api/yahoo/finance/options/{ticker}",     "mode": "path"},
-        {"url": f"{base_url}/api/yahoo/finance/option/{ticker}",      "mode": "path"},
-        {"url": f"{base_url}/api/yahoo/finance/stock/options/{ticker}","mode": "path"},
-        {"url": f"{base_url}/api/yahoo/finance/v2/options/{ticker}",  "mode": "path"},
-        {"url": f"{base_url}/api/yahoo/options",                      "mode": "query_symbol"},
-        {"url": f"{base_url}/api/yahoo/finance/options",              "mode": "query_symbol"},
+        {"url": f"{base_url}/api/v1/markets/options",                 "mode": "v1"},            # ticker, display=chain, expiration
+        {"url": f"{base_url}/api/yahoo/options/{ticker}",             "mode": "path"},          # ?date=
+        {"url": f"{base_url}/api/yahoo/finance/options/{ticker}",     "mode": "path"},          # ?date=
+        {"url": f"{base_url}/api/yahoo/finance/option/{ticker}",      "mode": "path"},          # ?date=
+        {"url": f"{base_url}/api/yahoo/finance/stock/options/{ticker}","mode": "path"},         # ?date=
+        {"url": f"{base_url}/api/yahoo/finance/v2/options/{ticker}",  "mode": "path"},          # ?date=
+        {"url": f"{base_url}/api/yahoo/options",                      "mode": "query_symbol"},  # ?symbol=&date=
+        {"url": f"{base_url}/api/yahoo/finance/options",              "mode": "query_symbol"},  # ?symbol=&date=
     ]
     headers = {
         "X-RapidAPI-Key": api_key,
@@ -25,16 +31,16 @@ def fetch_option_chain(ticker, host, api_key, expiry_unix=None, timeout=20):
     errors = []
     for c in candidates:
         params = {}
-        if c["mode"] == "query_ticker":
+        if c["mode"] == "v1":
             params["ticker"] = ticker
+            params["display"] = "chain"  # CRITICAL: we need calls/puts rather than straddles
             if expiry_unix is not None:
-                params["expiration"] = int(expiry_unix)  # ВАЖНО: у этого эндпоинта параметр называется expiration
+                params["expiration"] = int(expiry_unix)
         elif c["mode"] == "query_symbol":
             params["symbol"] = ticker
             if expiry_unix is not None:
-                # некоторые альтернативные пути принимают date
                 params["date"] = int(expiry_unix)
-        else:
+        else:  # path
             if expiry_unix is not None:
                 params["date"] = int(expiry_unix)
 
