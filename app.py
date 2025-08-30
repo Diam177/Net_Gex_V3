@@ -9,7 +9,6 @@ from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
-st.title(ticker)
 
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
@@ -25,6 +24,7 @@ with st.sidebar:
 col_t, col_e = st.columns([1,1])
 with col_t:
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
+st.title(ticker)
 with col_e:
     st.caption("Экспирация по умолчанию — ближайшая будущая")
     expiry_placeholder = st.empty()
