@@ -277,5 +277,13 @@ if price is None:
                 pass
             break
 
+# Доп. вариант: берём спот из исходного JSON через extract_core_from_chain
+if price is None:
+    try:
+        _quote, _t0, _S, _exps, _blocks = extract_core_from_chain(raw_data)
+        price = float(_S)
+    except Exception:
+        pass
+
 fig = make_figure(strikes, series_dict["Net Gex"], toggles, series_dict, price=price)
 st.plotly_chart(fig, use_container_width=True)
