@@ -131,8 +131,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 "Put Volume: %{customdata[4]:,.0f}<br>"
                 "Net Gex: %{customdata[5]:,.1f}"
                 "<extra></extra>"
-            ),
-            hoverlabel=dict(bgcolor=POS_COLOR)
+            )
         ))
         fig.add_trace(go.Bar(
             x=x_neg, y=y_all[mask_neg], name="Net GEX", showlegend=False,
@@ -186,7 +185,8 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 line=dict(color=colors["line"], width=1.1, shape="spline"),
                 marker=dict(color=colors["line"], size=5),
                 fill="tozeroy", fillcolor=colors["fill"], opacity=0.95,
-                customdata=cd, hovertemplate=hovertemplate
+                customdata=cd, hovertemplate=hovertemplate,
+                hoverlabel=dict(bgcolor=colors["line"])
             ))
 
     # Price marker
