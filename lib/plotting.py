@@ -89,8 +89,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     else:
         bargap = 0.15
 
-    
-    # Net Gex bars split by sign with custom hover (table-like) and colored hover box
+    # Net Gex bars split by sign with custom hover
     if series_enabled.get("Net Gex", True):
         y_all = np.asarray(series_dict["Net Gex"], dtype=float)[idx_keep]
         call_oi_f = np.asarray(series_dict.get("Call OI", np.zeros_like(y_all)), dtype=float)[idx_keep]
@@ -122,7 +121,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 "Put OI: %{customdata[2]:,.0f}<br>"
                 "Call Volume: %{customdata[3]:,.0f}<br>"
                 "Put Volume: %{customdata[4]:,.0f}<br>"
-                "Net GEX: %{customdata[5]:,.1f}"
+                "Net Gex: %{customdata[5]:,.1f}"
                 "<extra></extra>"
             ),
             hoverlabel=dict(bgcolor=POS_COLOR)
@@ -149,13 +148,13 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 "Put OI: %{customdata[2]:,.0f}<br>"
                 "Call Volume: %{customdata[3]:,.0f}<br>"
                 "Put Volume: %{customdata[4]:,.0f}<br>"
-                "Net GEX: %{customdata[5]:,.1f}"
+                "Net Gex: %{customdata[5]:,.1f}"
                 "<extra></extra>"
             ),
             hoverlabel=dict(bgcolor=NEG_COLOR)
         ))
-    # Optional lines
- (aligned to filtered x)
+
+    # Optional lines (aligned to filtered x)
     for name in ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]:
         if series_enabled.get(name, False) and name in series_dict:
             y_full = np.asarray(series_dict[name], dtype=float)[idx_keep]
@@ -163,54 +162,53 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 x=x_labels, y=y_full, name=name, mode="lines+markers", yaxis="y2"
             ))
 
-    # Vertical price line anchored to the nearest kept strike
-        if price is not None and n > 0:
-            i_near = int(np.argmin(np.abs(strikes_keep - float(price))))
-            x_idx = i_near
-            # full-height vertical line
-            fig.add_shape(
-                type="line",
-                x0=x_idx, x1=x_idx, xref="x",
-                y0=0, y1=1, yref="paper",
-                line=dict(width=2, color="#f0a000"),
-                layer="above"
-            )
-            # centered label exactly above the line
-            fig.add_annotation(
-                x=x_idx, y=1.0, xref="x", yref="paper",
-                text=f"Price: {float(price):.2f}",
-                showarrow=False,
-                xanchor="center",
-                yanchor="bottom",
-                align="center",
-                yshift=8,
-                font=dict(size=12, color="#f0a000")
-            )
-
-        # Layout with full-width category axis
-        fig.update_layout(
-            barmode="overlay",
-            bargap=bargap,
-            bargroupgap=0.0,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            margin=dict(l=40, r=40, t=40, b=40),
-            xaxis=dict(
-                title="Strike",
-                type="category",
-                categoryorder="array",
-                categoryarray=x_labels,
-                tickmode="array",
-                tickvals=x_labels,
-                ticktext=x_labels,
-                range=[-0.5, len(x_labels)-0.5],
-                showgrid=False
-            ),
-            yaxis=dict(title="Net Gex", showgrid=False),
-            yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
-            hovermode="x unified",
-            height=560
+    # Vertical price line anchored to the nearest kept strike (use category index)
+    if price is not None and n > 0:
+        i_near = int(np.argmin(np.abs(strikes_keep - float(price))))
+        x_idx = i_near
+        fig.add_shape(
+            type="line",
+            x0=x_idx, x1=x_idx, xref="x",
+            y0=0, y1=1, yref="paper",
+            line=dict(width=2, color="#f0a000"),
+            layer="above"
         )
-# Add ticker label at top-left (inside chart, under 'График')
+        fig.add_annotation(
+            x=x_idx, y=1.0, xref="x", yref="paper",
+            text=f"Price: {float(price):.2f}",
+            showarrow=False,
+            xanchor="center",
+            yanchor="bottom",
+            align="center",
+            yshift=8,
+            font=dict(size=12, color="#f0a000")
+        )
+
+    # Layout
+    fig.update_layout(
+        barmode="overlay",
+        bargap=bargap,
+        bargroupgap=0.0,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        margin=dict(l=40, r=40, t=40, b=40),
+        xaxis=dict(
+            title="Strike",
+            type="category",
+            categoryorder="array",
+            categoryarray=x_labels,
+            tickmode="array",
+            tickvals=x_labels,
+            ticktext=x_labels,
+            range=[-0.5, len(x_labels)-0.5],
+            showgrid=False
+        ),
+        yaxis=dict(title="Net Gex", showgrid=False),
+        yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
+        hovermode="x unified",
+        height=560
+    )
+
+    # Add ticker label at top-left (inside chart, under 'График')
     if ticker:
         fig.add_annotation(
             x=0.0, y=1.08, xref="paper", yref="paper",
