@@ -204,18 +204,6 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                                text=f"Price: {price_val:.2f}", showarrow=False,
                                xanchor="center", yanchor="bottom",
                                font=dict(size=14, color="#f0a000"))
-    
-    # --- dynamic right-axis title based on selected optional series ---
-    try:
-        order = ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
-        se = series_enabled or {}
-        enabled_names = [name for name in order if se.get(name)]
-    except Exception:
-        enabled_names = []
-    base_title = "Other parameters"
-    y2_title = base_title + (f"({', '.join(enabled_names)})" if enabled_names else "")
-    # --- end dynamic title ---
-
 
     fig.update_layout(
         barmode="overlay", bargap=bargap, bargroupgap=0.0,
@@ -226,7 +214,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                    ticktext=x_labels, range=[-0.5, len(x_labels)-0.5],
                    showgrid=False, fixedrange=True),
         yaxis=dict(title="Net GEX", showgrid=False, fixedrange=True),
-        yaxis2=dict(title=y2_title, overlaying="y", side="right",
+        yaxis2=dict(title="Other series", overlaying="y", side="right",
                     showgrid=False, fixedrange=True),
         hovermode="closest", height=560,
     )
@@ -237,11 +225,117 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                            xanchor="left", font=dict(size=18))
 
 
-    # --- keep legend right-aligned (final override) ---
+    try:
+
+        for _tr in fig.data:
+
+            _n = (getattr(_tr, "name", None) or "").strip().lower()
+
+            if _n in ("put oi", "put volume"):
+
+                _tr.update(hoverlabel=dict(font=dict(color="white")))
+
+    except Exception:
+
+        pass
+
+    # === end enforced tooltip text colors ===
+
+
+    
+
+    # === force area fill alpha = 0.6 for specific series ===
 
     try:
 
-        fig.update_layout(legend=dict(orientation="h", x=1, xanchor="right", y=1.1))
+        def _parse_rgba(c):
+
+            s = (c or "").strip().lower()
+
+            if s.startswith("rgba(") and s.endswith(")"):
+
+                p = [x.strip() for x in s[5:-1].split(",")]
+
+                if len(p) == 4:
+
+                    try:
+
+                        return int(float(p[0])), int(float(p[1])), int(float(p[2])), float(p[3])
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("rgb(") and s.endswith(")"):
+
+                p = [x.strip() for x in s[4:-1].split(",")]
+
+                if len(p) == 3:
+
+                    try:
+
+                        return int(float(p[0])), int(float(p[1])), int(float(p[2])), 1.0
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("#") and (len(s) in (7,9)):
+
+                try:
+
+                    r = int(s[1:3],16); g=int(s[3:5],16); b=int(s[5:7],16)
+
+                    a = int(s[7:9],16)/255.0 if len(s)==9 else 1.0
+
+                    return r,g,b,a
+
+                except Exception:
+
+                    return None
+
+            return None
+
+    
+
+        targets = {"put oi","call oi","put volume","call volume","ag","pz","pz_fp"}
+
+        for tr in fig.data:
+
+            name = (getattr(tr,"name","") or "").strip().lower()
+
+            if name in targets and getattr(tr,"fill",None) not in (None,"none"):
+
+                rgb = None
+
+                lc = getattr(getattr(tr,"line",None),"color",None)
+
+                fc = getattr(tr,"fillcolor",None)
+
+                rgba = _parse_rgba(lc) or _parse_rgba(fc)
+
+                if rgba:
+
+                    r,g,b,_ = rgba
+
+                    tr.update(fillcolor=f"rgba({int(r)},{int(g)},{int(b)},0.6)")
+
+    except Exception:
+
+        pass
+
+    # === end force area fill alpha ===
+
+    
+
+
+    # --- final legend override: right-aligned & non-clickable ---
+
+    try:
+
+        fig.update_layout(legend=dict(orientation="h", x=1, y=1.1, xanchor="right",
+
+                                      itemclick=False, itemdoubleclick=False))
 
     except Exception:
 
