@@ -336,4 +336,133 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     # === end reduce fill transparency ===
 
+
+    
+
+    # === reduce ONLY area fill opacity by 30% for specific series ===
+
+    try:
+
+        import re as _re
+
+        _targets = {"put oi","call oi","put volume","call volume","ag","pz","pz_fp"}
+
+        def _parse_color_to_rgb(cstr):
+
+            s = (cstr or "").strip().lower()
+
+            if s.startswith("rgba(") and s.endswith(")"):
+
+                body = s[5:-1]
+
+                parts = [p.strip() for p in body.split(",")]
+
+                if len(parts) == 4:
+
+                    try:
+
+                        r,g,b,a = int(float(parts[0])), int(float(parts[1])), int(float(parts[2])), float(parts[3])
+
+                        return r,g,b,a
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("rgb(") and s.endswith(")"):
+
+                body = s[4:-1]
+
+                parts = [p.strip() for p in body.split(",")]
+
+                if len(parts) == 3:
+
+                    try:
+
+                        r,g,b = int(float(parts[0])), int(float(parts[1])), int(float(parts[2]))
+
+                        return r,g,b,1.0
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("#") and (len(s) in (7,9)):
+
+                try:
+
+                    r = int(s[1:3], 16); g = int(s[3:5], 16); b = int(s[5:7], 16)
+
+                    a = int(s[7:9], 16)/255.0 if len(s)==9 else 1.0
+
+                    return r,g,b,a
+
+                except Exception:
+
+                    return None
+
+            return None
+
+    
+
+        def _rgba_string(r,g,b,a):
+
+            a = max(0.0, min(1.0, float(a)))
+
+            return f"rgba({int(r)},{int(b) if False else int(g)},{int(b)},{a})".replace(" ,", ",")
+
+    
+
+        for _tr in fig.data:
+
+            _name = (getattr(_tr, "name", "") or "").strip().lower()
+
+            if _name in _targets and getattr(_tr, "fill", None) not in (None, "none"):
+
+                _fc = getattr(_tr, "fillcolor", None)
+
+                rgba = None
+
+                if isinstance(_fc, str) and _fc.strip():
+
+                    rgba = _parse_color_to_rgb(_fc)
+
+                if rgba is None:
+
+                    # берём цвет линии как базу
+
+                    base = getattr(getattr(_tr, "line", None), "color", None) or getattr(getattr(_tr, "marker", None), "color", None)
+
+                    rgba = _parse_color_to_rgb(base)
+
+                    if rgba is None:
+
+                        # если цвет не парсится, не трогаем, чтобы не ломать стиль
+
+                        continue
+
+                r,g,b,a = rgba
+
+                # если альфа не задана (a==1.0) и fillcolor не был задан — считаем, что базово 0.5 и уменьшаем на 30% -> 0.35
+
+                if (isinstance(_fc, str) and _fc.strip()) or a < 1.0:
+
+                    a_new = a * 0.7
+
+                else:
+
+                    a_new = 0.35
+
+                a_new = max(0.0, min(1.0, a_new))
+
+                _tr.update(fillcolor=f"rgba({int(r)},{int(g)},{int(b)},{a_new})")
+
+    except Exception:
+
+        pass
+
+    # === end reduce area fill opacity ===
+
+    
+
     return fig
