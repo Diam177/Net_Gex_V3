@@ -183,7 +183,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             fig.add_trace(go.Scatter(
                 x=x_labels, y=y_full, name=ser_key,
                 mode="lines+markers", yaxis="y2",
-                line=dict(color=colors["line"], width=1.1, shape="spline"),
+                line=dict(color=colors["line"], width=2.2, shape="spline"),
                 marker=dict(color=colors["line"], size=5),
                 fill="tozeroy", fillcolor=colors["fill"], opacity=0.95,
                 customdata=cd, hovertemplate=hovertemplate
@@ -198,7 +198,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             x_idx = i_near
             fig.add_shape(type="line", x0=x_idx, x1=x_idx, xref="x",
                           y0=0, y1=1, yref="paper",
-                          line=dict(width=1, color="#f0a000"), layer="above")
+                          line=dict(width=2, color="#f0a000"), layer="above")
             fig.add_annotation(x=x_idx, y=1.0, xref="x", yref="paper",
                                text=f"Price: {price_val:.2f}", showarrow=False,
                                xanchor="center", yanchor="bottom",
