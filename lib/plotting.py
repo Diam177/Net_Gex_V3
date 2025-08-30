@@ -244,27 +244,96 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     # === end enforced tooltip text colors ===
 
 
-    
-
-
-    # === enforced fill transparency (further reduced by 30%) ===
+    # === reduce fill transparency by 30% for specific series ===
 
     try:
 
+        targets = {"put oi","call oi","put volume","call volume","ag","pz","pz_fp"}
+
         for _tr in fig.data:
 
-            _n = (getattr(_tr, "name", None) or "").strip().lower()
+            _name = (getattr(_tr, "name", "") or "").strip().lower()
 
-            if _n in ("put oi", "call oi", "put volume", "call volume", "ag", "pz", "pz_fp"):
+            if _name in targets and getattr(_tr, "fill", None) not in (None, "none"):
 
-                if hasattr(_tr, "fill") and _tr.fill not in (None, "none"):
+                fc = getattr(_tr, "fillcolor", None)
 
-                    _tr.update(opacity=0.4)
+                if isinstance(fc, str):
+
+                    s = fc.strip().lower()
+
+                    # rgba(r,g,b,a)
+
+                    if s.startswith("rgba(") and s.endswith(")"):
+
+                        body = s[5:-1]
+
+                        parts = [p.strip() for p in body.split(",")]
+
+                        if len(parts) == 4:
+
+                            r,g,b,a = parts
+
+                            try:
+
+                                a = float(a)
+
+                                a = max(0.0, min(1.0, a * 0.7))  # на 30% прозрачнее
+
+                                _tr.update(fillcolor=f"rgba({r},{g},{b},{a})")
+
+                            except Exception:
+
+                                pass
+
+                    # rgb(r,g,b) -> добавляем альфу 0.7
+
+                    elif s.startswith("rgb(") and s.endswith(")"):
+
+                        body = s[4:-1]
+
+                        parts = [p.strip() for p in body.split(",")]
+
+                        if len(parts) == 3:
+
+                            r,g,b = parts
+
+                            _tr.update(fillcolor=f"rgba({r},{g},{b},0.7)")
+
+                    # #RRGGBB или #RRGGBBAA
+
+                    elif s.startswith("#") and (len(s) == 7 or len(s) == 9):
+
+                        try:
+
+                            r = int(s[1:3], 16)
+
+                            g = int(s[3:5], 16)
+
+                            b = int(s[5:7], 16)
+
+                            if len(s) == 9:
+
+                                a = int(s[7:9], 16) / 255.0
+
+                                a = max(0.0, min(1.0, a * 0.7))
+
+                            else:
+
+                                a = 0.7
+
+                            _tr.update(fillcolor=f"rgba({r},{g},{b},{a})")
+
+                        except Exception:
+
+                            pass
+
+                # если fillcolor не строка или не задан, не трогаем (ничего другого не меняем)
 
     except Exception:
 
         pass
 
-    # === end enforced fill transparency ===
+    # === end reduce fill transparency ===
 
     return fig
