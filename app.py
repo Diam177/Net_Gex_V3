@@ -258,4 +258,4 @@ series_dict = {
 }
 
 fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used, ticker=ticker)
-st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
+st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
