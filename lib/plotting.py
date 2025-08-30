@@ -224,4 +224,23 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                            text=str(ticker), showarrow=False,
                            xanchor="left", font=dict(size=18))
 
+
+    # === enforced tooltip text colors for Put OI / Put Volume ===
+
+    try:
+
+        for _tr in fig.data:
+
+            _n = (getattr(_tr, "name", None) or "").strip().lower()
+
+            if _n in ("put oi", "put volume"):
+
+                _tr.update(hoverlabel=dict(font=dict(color="white")))
+
+    except Exception:
+
+        pass
+
+    # === end enforced tooltip text colors ===
+
     return fig
