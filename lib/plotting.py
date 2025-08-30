@@ -225,8 +225,6 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                            xanchor="left", font=dict(size=18))
 
 
-    # === enforced tooltip text colors for Put OI / Put Volume ===
-
     try:
 
         for _tr in fig.data:
@@ -243,8 +241,6 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     # === end enforced tooltip text colors ===
 
-
-    # === reduce fill transparency by 30% for specific series ===
 
     try:
 
@@ -338,8 +334,6 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
 
     
-
-    # === reduce ONLY area fill opacity by 30% for specific series ===
 
     try:
 
@@ -462,6 +456,182 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         pass
 
     # === end reduce area fill opacity ===
+
+    
+
+
+    
+
+    try:
+
+        def _parse_rgba(c):
+
+            s = (c or "").strip().lower()
+
+            if s.startswith("rgba(") and s.endswith(")"):
+
+                p = [x.strip() for x in s[5:-1].split(",")]
+
+                if len(p) == 4:
+
+                    try:
+
+                        return int(float(p[0])), int(float(p[1])), int(float(p[2])), float(p[3])
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("rgb(") and s.endswith(")"):
+
+                p = [x.strip() for x in s[4:-1].split(",")]
+
+                if len(p) == 3:
+
+                    try:
+
+                        return int(float(p[0])), int(float(p[1])), int(float(p[2])), 1.0
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("#") and (len(s) in (7,9)):
+
+                try:
+
+                    r = int(s[1:3],16); g=int(s[3:5],16); b=int(s[5:7],16)
+
+                    a = int(s[7:9],16)/255.0 if len(s)==9 else 1.0
+
+                    return r,g,b,a
+
+                except Exception:
+
+                    return None
+
+            return None
+
+    
+
+        targets = {"put oi","call oi","put volume","call volume","ag","pz","pz_fp"}
+
+        for tr in fig.data:
+
+            name = (getattr(tr,"name","") or "").strip().lower()
+
+            if name in targets and getattr(tr,"fill",None) not in (None,"none"):
+
+                rgb = None
+
+                # приоритет: line.color -> fillcolor
+
+                lc = getattr(getattr(tr,"line",None),"color",None)
+
+                fc = getattr(tr,"fillcolor",None)
+
+                rgba = _parse_rgba(lc) or _parse_rgba(fc)
+
+                if rgba:
+
+                    r,g,b,_ = rgba
+
+                    tr.update(fillcolor=f"rgba({int(r)},{int(g)},{int(b)},0.35)")
+
+    except Exception:
+
+        pass
+
+    # === end force area fill alpha ===
+
+    
+
+
+    
+
+    # === force area fill alpha = 0.7 (less transparent) for specific series ===
+
+    try:
+
+        def _parse_rgba(c):
+
+            s = (c or "").strip().lower()
+
+            if s.startswith("rgba(") and s.endswith(")"):
+
+                p = [x.strip() for x in s[5:-1].split(",")]
+
+                if len(p) == 4:
+
+                    try:
+
+                        return int(float(p[0])), int(float(p[1])), int(float(p[2])), float(p[3])
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("rgb(") and s.endswith(")"):
+
+                p = [x.strip() for x in s[4:-1].split(",")]
+
+                if len(p) == 3:
+
+                    try:
+
+                        return int(float(p[0])), int(float(p[1])), int(float(p[2])), 1.0
+
+                    except Exception:
+
+                        return None
+
+            if s.startswith("#") and (len(s) in (7,9)):
+
+                try:
+
+                    r = int(s[1:3],16); g=int(s[3:5],16); b=int(s[5:7],16)
+
+                    a = int(s[7:9],16)/255.0 if len(s)==9 else 1.0
+
+                    return r,g,b,a
+
+                except Exception:
+
+                    return None
+
+            return None
+
+    
+
+        targets = {"put oi","call oi","put volume","call volume","ag","pz","pz_fp"}
+
+        for tr in fig.data:
+
+            name = (getattr(tr,"name","") or "").strip().lower()
+
+            if name in targets and getattr(tr,"fill",None) not in (None,"none"):
+
+                rgb = None
+
+                # приоритет: line.color -> fillcolor
+
+                lc = getattr(getattr(tr,"line",None),"color",None)
+
+                fc = getattr(tr,"fillcolor",None)
+
+                rgba = _parse_rgba(lc) or _parse_rgba(fc)
+
+                if rgba:
+
+                    r,g,b,_ = rgba
+
+                    tr.update(fillcolor=f"rgba({int(r)},{int(g)},{int(b)},0.7)")
+
+    except Exception:
+
+        pass
+
+    # === end force area fill alpha ===
 
     
 
