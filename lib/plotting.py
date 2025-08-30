@@ -2,6 +2,9 @@
 import numpy as np
 import plotly.graph_objects as go
 
+POS_COLOR = "#48B4FF"   # голубые положительные
+NEG_COLOR = "#FF3B30"   # красные отрицательные
+
 def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nmax=49):
     strikes = np.asarray(strikes, dtype=float)
     call_oi = np.asarray(call_oi, dtype=float)
@@ -58,50 +61,50 @@ def _format_labels(vals):
 
 def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
     strikes = np.asarray(strikes, dtype=float)
-    x_all = _format_labels(strikes)
 
-    # Determine filter indices for Net Gex
-    idx_keep = None
+    # Determine indices to keep for bars
+    idx_keep = np.arange(len(strikes), dtype=int)
     if (price is not None) and ("Call OI" in series_dict) and ("Put OI" in series_dict):
         try:
             idx_keep = _select_atm_window(strikes, series_dict["Call OI"], series_dict["Put OI"], float(price))
         except Exception:
-            idx_keep = None
+            idx_keep = np.arange(len(strikes), dtype=int)
+
+    strikes_keep = strikes[idx_keep]
+    x_labels = _format_labels(strikes_keep)
 
     # Build figure
     fig = go.Figure()
 
-    # Choose spacing depending on sample size
-    n_all = len(strikes)
-    if n_all < 10:
-        bargap = 0.45
-    elif n_all < 20:
-        bargap = 0.30
+    # Adaptive gaps for small samples
+    n = len(strikes_keep)
+    if n <= 5:
+        bargap = 0.55
+    elif n <= 10:
+        bargap = 0.40
+    elif n <= 20:
+        bargap = 0.28
     else:
         bargap = 0.15
 
-    # Plot Net Gex bars with equal spacing (categorical x)
+    # Net Gex bars with per-bar color by sign
     if series_enabled.get("Net Gex", True):
-        if idx_keep is not None and idx_keep.size > 0:
-            x = [x_all[i] for i in idx_keep]
-            y = np.asarray(series_dict["Net Gex"], dtype=float)[idx_keep]
-        else:
-            x = x_all
-            y = np.asarray(series_dict["Net Gex"], dtype=float)
-        fig.add_trace(go.Bar(x=x, y=y, name="Net Gex", opacity=0.9))
+        y = np.asarray(series_dict["Net Gex"], dtype=float)[idx_keep]
+        colors = [POS_COLOR if v >= 0 else NEG_COLOR for v in y]
+        fig.add_trace(go.Bar(x=x_labels, y=y, name="Net Gex", marker_color=colors, opacity=0.92))
 
-    # Plot other series against the same categorical axis
+    # Optional lines (use filtered x for alignment)
     for name in ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]:
-        if series_enabled.get(name, False):
-            y = np.asarray(series_dict[name], dtype=float)
+        if series_enabled.get(name, False) and name in series_dict:
+            y_full = np.asarray(series_dict[name], dtype=float)[idx_keep]
             fig.add_trace(go.Scatter(
-                x=x_all, y=y, name=name, mode="lines+markers", yaxis="y2"
+                x=x_labels, y=y_full, name=name, mode="lines+markers", yaxis="y2"
             ))
 
-    # Place vertical price line at nearest strike label, annotate with actual price
-    if price is not None and len(strikes) > 0:
-        i_near = int(np.argmin(np.abs(strikes - float(price))))
-        x_line = x_all[i_near]
+    # Vertical price line anchored to the NEAREST kept strike label
+    if price is not None and n > 0:
+        i_near = int(np.argmin(np.abs(strikes_keep - float(price))))
+        x_line = x_labels[i_near]
         fig.add_shape(
             type="line",
             x0=x_line, x1=x_line, xref="x",
@@ -124,7 +127,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
             title="Strike",
             type="category",
             categoryorder="array",
-            categoryarray=x_all
+            categoryarray=x_labels
         ),
         yaxis=dict(title="Net Gex (thousands)"),
         yaxis2=dict(title="Other series", overlaying="y", side="right"),
@@ -132,3 +135,4 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
         height=560
     )
     return fig
+
