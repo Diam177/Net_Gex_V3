@@ -37,6 +37,128 @@ LINE_SPECS = {
 }
 
 
+# --- Column normalization helpers ---
+_NORM_MAP = {
+    # strike
+    "strike": "strike", "Strike": "strike", "K": "strike",
+    # net gex
+    "net gex": "net_gex", "Net Gex": "net_gex", "Net GEX": "net_gex", "net_gex": "net_gex", "NET_GEX": "net_gex",
+    # OI
+    "Put OI": "put_oi", "put_oi": "put_oi", "PUT_OI": "put_oi",
+    "Call OI": "call_oi", "call_oi": "call_oi", "CALL_OI": "call_oi",
+    # Volume
+    "Put Volume": "put_volume", "put_volume": "put_volume", "PUT_VOLUME": "put_volume",
+    "Call Volume": "call_volume", "call_volume": "call_volume", "CALL_VOLUME": "call_volume",
+    # AG / PZ
+    "AG": "ag", "ag": "ag",
+    "PZ": "pz", "pz": "pz",
+    "PZ_FP": "pz_fp", "PZ FP": "pz_fp", "pz_fp": "pz_fp",
+}
+
+def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    ren = {}
+    for c in df.columns:
+        key = c if c in _NORM_MAP else _NORM_MAP.get(str(c), None)
+        if key is None:
+            key = _NORM_MAP.get(str(c).strip(), None)
+        if key is not None:
+            ren[c] = key
+    if ren:
+        df = df.rename(columns=ren)
+    return df
+
+def _as_array(x):
+    try:
+        return np.asarray(x)
+    except Exception:
+        return None
+
+def make_figure(*args, **kwargs):
+    """
+    Flexible wrapper:
+    1) New API: make_figure(df=DataFrame_with_columns, spot=..., title=..., show_* flags...)
+    2) Back-compat API (as in your app):
+       make_figure(strike_array, net_gex_array, toggles_dict, series_dict, **opt_kwargs)
+         - toggles_dict keys like: 'Net Gex','Put OI','Call OI','Put Volume','Call Volume','AG','PZ','PZ_FP'
+         - series_dict may include arrays for optional series and maybe 'spot' or 'title'
+    """
+    # Case A: called with a single DataFrame (positional or keyword)
+    df = None
+    spot = kwargs.pop("spot", None)
+    title = kwargs.pop("title", None)
+
+    if len(args) == 1 and isinstance(args[0], pd.DataFrame):
+        df = _normalize_columns(args[0].copy())
+    elif "df" in kwargs and isinstance(kwargs["df"], pd.DataFrame):
+        df = _normalize_columns(kwargs.pop("df").copy())
+
+    if df is not None:
+        # pull explicit show flags or default False
+        show_netgex = bool(kwargs.pop("show_netgex", True))
+        show_put_oi = bool(kwargs.pop("show_put_oi", False))
+        show_call_oi = bool(kwargs.pop("show_call_oi", False))
+        show_put_vol = bool(kwargs.pop("show_put_vol", False))
+        show_call_vol = bool(kwargs.pop("show_call_vol", False))
+        show_ag = bool(kwargs.pop("show_ag", False))
+        show_pz = bool(kwargs.pop("show_pz", False))
+        show_pz_fp = bool(kwargs.pop("show_pz_fp", False))
+        max_bars_per_side = int(kwargs.pop("max_bars_per_side", 30))
+        return _make_figure_core(
+            df, spot=spot, title=title,
+            show_netgex=show_netgex, show_put_oi=show_put_oi, show_call_oi=show_call_oi,
+            show_put_vol=show_put_vol, show_call_vol=show_call_vol,
+            show_ag=show_ag, show_pz=show_pz, show_pz_fp=show_pz_fp,
+            max_bars_per_side=max_bars_per_side,
+        )
+
+    # Case B: legacy call with arrays + toggles + series_dict
+    if len(args) >= 4:
+        strike_arr = _as_array(args[0])
+        netgex_arr = _as_array(args[1])
+        toggles = args[2] if isinstance(args[2], dict) else {}
+        series = args[3] if isinstance(args[3], dict) else {}
+
+        data = {"strike": strike_arr, "net_gex": netgex_arr}
+        # bring optional series if present
+        for k, v in series.items():
+            key_norm = _NORM_MAP.get(str(k), None) or _NORM_MAP.get(str(k).strip(), None)
+            if key_norm in {"put_oi","call_oi","put_volume","call_volume","ag","pz","pz_fp"}:
+                data[key_norm] = _as_array(v)
+
+        # spot/title may come from kwargs or series
+        if spot is None:
+            spot = series.get("spot", None) if isinstance(series, dict) else None
+        if title is None:
+            title = series.get("title", None) if isinstance(series, dict) else None
+
+        df_legacy = pd.DataFrame({k: v for k, v in data.items() if v is not None})
+        df_legacy = _normalize_columns(df_legacy)
+
+        # read toggles
+        def t(name, default=False):
+            return bool(toggles.get(name, default))
+        show_netgex = t("Net Gex", True)
+        show_put_oi = t("Put OI")
+        show_call_oi = t("Call OI")
+        show_put_vol = t("Put Volume")
+        show_call_vol = t("Call Volume")
+        show_ag = t("AG")
+        show_pz = t("PZ")
+        show_pz_fp = t("PZ_FP")
+
+        max_bars_per_side = int(kwargs.pop("max_bars_per_side", 30))
+
+        return _make_figure_core(
+            df_legacy, spot=spot, title=title,
+            show_netgex=show_netgex, show_put_oi=show_put_oi, show_call_oi=show_call_oi,
+            show_put_vol=show_put_vol, show_call_vol=show_call_vol,
+            show_ag=show_ag, show_pz=show_pz, show_pz_fp=show_pz_fp,
+            max_bars_per_side=max_bars_per_side,
+        )
+
+    # If we get here, arguments were not recognized
+    raise ValueError("make_figure: unexpected arguments. Pass a DataFrame (new API) or (strike, net_gex, toggles, series_dict).")
+
 def _infer_step(strikes: np.ndarray) -> float:
     """Infer typical increment between strikes to size bar widths and x-window."""
     if strikes.size < 2:
@@ -162,7 +284,7 @@ def _maybe(series: pd.Series | None) -> pd.Series:
     return series if series is not None else pd.Series(dtype=float)
 
 
-def make_figure(
+def _make_figure_core(
     df: pd.DataFrame,
     spot: Optional[float] = None,
     title: Optional[str] = None,
