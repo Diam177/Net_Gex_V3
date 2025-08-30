@@ -244,7 +244,10 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     # === end enforced tooltip text colors ===
 
 
-    # === enforced fill transparency (30%) ===
+    
+
+
+    # === enforced fill transparency (further reduced by 30%) ===
 
     try:
 
@@ -256,7 +259,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
                 if hasattr(_tr, "fill") and _tr.fill not in (None, "none"):
 
-                    _tr.update(opacity=0.7)
+                    _tr.update(opacity=0.4)
 
     except Exception:
 
