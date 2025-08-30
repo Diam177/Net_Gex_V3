@@ -256,5 +256,26 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict)
+# Приводим страйки к числовому типу (важно для вертикальной линии)
+strikes = [float(s) for s in df["Strike"].values]
+
+# Пытаемся достать цену из debug_meta провайдера
+price = None
+try:
+    dm = debug_meta()
+    price = (dm.get("price_probe") or {}).get("price")
+except Exception:
+    price = None
+
+# Доп. вариант: если цену уже положили в series_dict
+if price is None:
+    for _k in ("price","Price","_price","spot","Spot"):
+        if _k in series_dict:
+            try:
+                price = float(series_dict[_k])
+            except Exception:
+                pass
+            break
+
+fig = make_figure(strikes, series_dict["Net Gex"], toggles, series_dict, price=price)
 st.plotly_chart(fig, use_container_width=True)
