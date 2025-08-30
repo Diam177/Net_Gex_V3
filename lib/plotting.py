@@ -243,4 +243,25 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     # === end enforced tooltip text colors ===
 
+
+    # === enforced fill transparency (30%) ===
+
+    try:
+
+        for _tr in fig.data:
+
+            _n = (getattr(_tr, "name", None) or "").strip().lower()
+
+            if _n in ("put oi", "call oi", "put volume", "call volume", "ag", "pz", "pz_fp"):
+
+                if hasattr(_tr, "fill") and _tr.fill not in (None, "none"):
+
+                    _tr.update(opacity=0.7)
+
+    except Exception:
+
+        pass
+
+    # === end enforced fill transparency ===
+
     return fig
