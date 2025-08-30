@@ -220,7 +220,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     )
 
     if ticker:
-        fig.add_annotation(x=0.0, y=1.08, xref="paper", yref="paper",
+        fig.add_annotation(x=-0.32, y=1.08, xref="paper", yref="paper",
                            text=str(ticker), showarrow=False,
                            xanchor="left", font=dict(size=18))
 
@@ -231,34 +231,6 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     
 
-
-    
-
-    # === move ticker to the designated rectangle area ===
-
-    try:
-
-        if "layout" in fig and hasattr(fig, "add_annotation"):
-
-            fig.add_annotation(
-
-                text=ticker if 'ticker' in locals() else "",
-
-                xref="paper", yref="paper",
-
-                x=-0.32, y=1.08,
-
-                showarrow=False,
-
-                font=dict(size=16, color="white")
-
-            )
-
-    except Exception:
-
-        pass
-
-    # === end move ticker ===
 
     
 
