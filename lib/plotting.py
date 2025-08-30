@@ -207,7 +207,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     fig.update_layout(
         barmode="overlay", bargap=bargap, bargroupgap=0.0,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, legend_itemclick=False, legend_itemdoubleclick=False),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, itemclick=False, itemdoubleclick=False),
         margin=dict(l=40, r=40, t=40, b=40),
         xaxis=dict(title="Strike", type="category", categoryorder="array",
                    categoryarray=x_labels, tickmode="array", tickvals=x_labels,
