@@ -206,7 +206,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                                font=dict(size=14, color="#f0a000"))
     # --- dynamic right-axis title based on selected optional series ---
     try:
-        enabled_names = [name for name, on in (series_enabled or {}).items() if on]
+        enabled_names = [name for name, on in (series_enabled or {}).items() if on and name != "Net GEX"]
     except Exception:
         enabled_names = []
     base_title = "Other parameters"
