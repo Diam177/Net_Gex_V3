@@ -33,44 +33,80 @@ def robust_fill_iv(iv_dict, strikes, fallback=0.30):
             iv_dict[k] = best_val if best_val is not None else use_fallback
     return iv_dict
 
+def _adapt_v1_body_format(chain_json):
+    body = chain_json.get("body", None)
+    if not isinstance(body, list) or len(body)==0:
+        return None
+    root = body[0]
+    quote = root.get("quote", {})
+    expirations = root.get("expirationDates", []) or []
+    options = root.get("options", []) or []
+    return quote, expirations, options
+
 def extract_core_from_chain(chain_json):
     res = chain_json.get("optionChain", {}).get("result", [])
-    if not res:
-        raise ValueError("Invalid chain JSON: missing optionChain.result[0]")
-    root = res[0]
-    quote = root.get("quote", {})
-    S = float(quote.get("regularMarketPrice", quote.get("postMarketPrice", 0.0)))
-    t0 = int(quote.get("regularMarketTime", quote.get("postMarketTime", 0)))
-    expirations = root.get("expirationDates", [])
-    if not isinstance(expirations, list) or len(expirations)==0:
-        expirations = []
+    if res:
+        root = res[0]
+        quote = root.get("quote", {})
+        S = float(quote.get("regularMarketPrice", quote.get("postMarketPrice", 0.0)))
+        t0 = int(quote.get("regularMarketTime", quote.get("postMarketTime", 0)))
+        expirations = root.get("expirationDates", []) or []
+        blocks_by_date = {}
         for blk in root.get("options", []):
+            if "expirationDate" in blk:
+                blocks_by_date[int(blk["expirationDate"])] = blk
+        return quote, t0, S, expirations, blocks_by_date
+
+    v1 = _adapt_v1_body_format(chain_json)
+    if v1 is not None:
+        quote, expirations, options = v1
+        S = float(quote.get("regularMarketPrice", quote.get("postMarketPrice", 0.0)))
+        t0 = int(quote.get("regularMarketTime", quote.get("postMarketTime", 0)))
+        blocks_by_date = {}
+        for blk in options:
             e = blk.get("expirationDate", None)
-            if e is not None: expirations.append(int(e))
-    blocks_by_date = {}
-    for blk in root.get("options", []):
-        if "expirationDate" in blk:
-            blocks_by_date[int(blk["expirationDate"])] = blk
-    return quote, t0, S, expirations, blocks_by_date
+            if e is None:
+                continue
+            blocks_by_date[int(e)] = blk
+        return quote, t0, S, expirations, blocks_by_date
+
+    raise ValueError("Invalid chain JSON: missing optionChain.result[0] and body[0]")
+
+def _calls_puts_from_straddles(straddles):
+    calls, puts = [], []
+    for s in straddles or []:
+        c = s.get("call"); p = s.get("put")
+        if isinstance(c, dict): calls.append(c)
+        if isinstance(p, dict): puts.append(p)
+    return calls, puts
 
 def aggregate_series(block):
-    calls = block.get("calls", [])
-    puts  = block.get("puts",  [])
-    strikes = sorted(set([float(r.get("strike")) for r in calls + puts if r.get("strike") is not None]))
-    call_oi = {float(r["strike"]): int(r.get("openInterest") or 0) for r in calls}
-    put_oi  = {float(r["strike"]): int(r.get("openInterest") or 0) for r in puts}
-    call_vol= {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in calls}
-    put_vol = {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in puts}
+    calls = block.get("calls"); puts = block.get("puts")
+    if calls is None and puts is None and "straddles" in block:
+        calls, puts = _calls_puts_from_straddles(block.get("straddles", []))
+    if calls is None: calls = []
+    if puts is None:  puts  = []
+
+    strikes = sorted(set([float(r.get("strike")) for r in (calls + puts) if r.get("strike") is not None]))
+    call_oi = {float(r["strike"]): int(r.get("openInterest") or 0) for r in calls if r.get("strike") is not None}
+    put_oi  = {float(r["strike"]): int(r.get("openInterest") or 0) for r in puts  if r.get("strike") is not None}
+    call_vol= {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in calls if r.get("strike") is not None}
+    put_vol = {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in puts  if r.get("strike") is not None}
     iv_call = {}
     iv_put  = {}
     for r in calls:
-        k = float(r["strike"]); iv = r.get("impliedVolatility", None)
+        k = r.get("strike"); iv = r.get("impliedVolatility", None)
+        if k is None: continue
+        k = float(k)
         if iv is not None and (not isinstance(iv, float) or not math.isnan(iv)) and float(iv)>0:
             iv_call[k] = float(iv)
     for r in puts:
-        k = float(r["strike"]); iv = r.get("impliedVolatility", None)
+        k = r.get("strike"); iv = r.get("impliedVolatility", None)
+        if k is None: continue
+        k = float(k)
         if iv is not None and (not isinstance(iv, float) or not math.isnan(iv)) and float(iv)>0:
             iv_put[k] = float(iv)
+
     call_oi = {k: int(call_oi.get(k,0)) for k in strikes}
     put_oi  = {k: int(put_oi.get(k,0))  for k in strikes}
     call_vol= {k: int(call_vol.get(k,0)) for k in strikes}
@@ -122,7 +158,7 @@ def compute_series_metrics_for_expiry(S, t0, expiry_unix, block, day_high=None, 
         "put_oi": put_oi_arr.astype(int),
         "call_oi": call_oi_arr.astype(int),
         "put_vol": put_vol_arr.astype(int),
-        "call_vol": call_vol_arr.astype(int),
+        "call_vol": put_vol_arr.astype(int),
         "net_gex": net_gex,
         "ag": ag,
         "pz": pz,
@@ -174,6 +210,9 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         put_oi_vec  = np.array([s["put_oi"][k]  for k in s["strikes"]], dtype=float)
         vol_vec     = np.array([s["call_vol"][k] + s["put_vol"][k] for k in s["strikes"]], dtype=float)
         dOI_vec     = call_oi_vec - put_oi_vec
+
+        def gamma_safe(sig):
+            return bs_gamma(S, 1.0, max(sig,1e-8), max(s["T"],1e-8))  # scale-free helper not used directly
 
         gamma_vec = np.array([bs_gamma(S, float(k), float(sig), s["T"]) for k, sig in zip(s["strikes"], iv_vec)], dtype=float)
         dollar_per_unit = S * M_CONTRACT / 1000.0
