@@ -59,7 +59,7 @@ def _format_labels(vals):
             labels.append(str(v))
     return labels
 
-def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
+def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticker=None):
     strikes = np.asarray(strikes, dtype=float)
 
     # Determine indices to keep for bars
@@ -137,4 +137,14 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
         hovermode="x unified",
         height=560
     )
-    return fig
+    
+    # Add ticker label at top-left (inside chart, under 'График')
+    if ticker:
+        fig.add_annotation(
+            x=0.0, y=1.08, xref="paper", yref="paper",
+            text=str(ticker),
+            showarrow=False,
+            xanchor="left",
+            font=dict(size=18)
+        )
+return fig
