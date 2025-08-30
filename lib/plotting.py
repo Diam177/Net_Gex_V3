@@ -1,4 +1,4 @@
-# lib/plotting.py (robust + legacy API + ΔOI window + debug helpers)
+# lib/plotting.py (robust: legacy API + DataFrame API + ΔOI window + debug helpers + anti-overlap bars)
 from __future__ import annotations
 
 import math
@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-# --- Visual palette & specs (match your reference screenshots) ---
+# === Visual palette & specs (aligned with your reference screenshots) ===
 PALETTE = {
     "bg": "#0b0b0e",
     "fg": "#e6e6eb",
@@ -32,23 +32,17 @@ LINE_SPECS = {
     "marker_size": 5,
     "area_opacity": 0.28,
     "bar_opacity": 0.95,
-    "bar_gap": 0.15,
+    "bar_gap": 0.10,   # slightly larger to avoid visual overlap
 }
 
-# --- Normalization helpers ---
+# --- Normalization helpers: accept your column names with spaces/case ---
 _NORM_MAP = {
-    # strike
     "strike": "strike", "Strike": "strike", "K": "strike",
-    # net gex
-    "net gex": "net_gex", "Net Gex": "net_gex", "Net GEX": "net_gex",
-    "net_gex": "net_gex", "NET_GEX": "net_gex",
-    # OI
+    "net gex": "net_gex", "Net Gex": "net_gex", "Net GEX": "net_gex", "net_gex": "net_gex", "NET_GEX": "net_gex",
     "Put OI": "put_oi", "put_oi": "put_oi", "PUT_OI": "put_oi",
     "Call OI": "call_oi", "call_oi": "call_oi", "CALL_OI": "call_oi",
-    # Volume
     "Put Volume": "put_volume", "put_volume": "put_volume", "PUT_VOLUME": "put_volume",
     "Call Volume": "call_volume", "call_volume": "call_volume", "CALL_VOLUME": "call_volume",
-    # AG / PZ
     "AG": "ag", "ag": "ag",
     "PZ": "pz", "pz": "pz",
     "PZ_FP": "pz_fp", "PZ FP": "pz_fp", "pz_fp": "pz_fp",
@@ -60,9 +54,7 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         key = _NORM_MAP.get(str(c), None) or _NORM_MAP.get(str(c).strip(), None)
         if key is not None:
             ren[c] = key
-    if ren:
-        df = df.rename(columns=ren)
-    return df
+    return df.rename(columns=ren) if ren else df
 
 def _as_array(x):
     try:
@@ -77,8 +69,7 @@ def _pick_series(df: pd.DataFrame, candidates):
     return None
 
 def _infer_step(strikes: np.ndarray) -> float:
-    if strikes.size < 2:
-        return 1.0
+    if strikes.size < 2: return 1.0
     diffs = np.diff(np.unique(np.sort(strikes)))
     return float(np.median(diffs)) if diffs.size else 1.0
 
@@ -93,11 +84,35 @@ def _subset_strikes(df: pd.DataFrame, spot: Optional[float], max_per_side: int) 
     return out if not out.empty else df.copy()
 
 def _bar_widths(strikes: np.ndarray) -> np.ndarray:
-    step = _infer_step(strikes)
-    width = step * (1.0 - LINE_SPECS["bar_gap"])
-    return np.full_like(strikes, width, dtype=float)
+    """
+    Local width per bar: 90% of the minimal *local* spacing, computed from
+    nearest neighbors. Prevents overlap when spacing is irregular near ATM.
+    """
+    x = np.asarray(strikes, dtype=float)
+    n = x.size
+    if n <= 1:
+        return np.full_like(x, 1.0, dtype=float)
 
-# --- Core: deterministic contiguous ATM-window by |ΔOI| ---
+    order = np.argsort(x)
+    xs = x[order]
+    gaps = np.diff(xs)
+
+    gaps_prev = np.empty(n)
+    gaps_next = np.empty(n)
+    gaps_prev[0] = gaps[0]
+    gaps_prev[1:] = gaps
+    gaps_next[:-1] = gaps
+    gaps_next[-1] = gaps[-1]
+
+    local_step = np.minimum(gaps_prev, gaps_next)
+    local_step = np.clip(local_step, 1e-9, None)
+
+    width_sorted = (1.0 - LINE_SPECS["bar_gap"]) * local_step
+    widths = np.empty_like(width_sorted)
+    widths[order] = width_sorted
+    return widths
+
+# --- Deterministic contiguous ATM-window by |ΔOI| ---
 def _select_window_by_delta_oi(
     df: pd.DataFrame,
     spot: Optional[float],
@@ -135,15 +150,12 @@ def _select_window_by_delta_oi(
 
     def tails_attenuated(lo: int, hi: int) -> bool:
         k = 3
-        # left edge weights: lo .. lo+k-1
         left_slice = weights[lo:min(lo+k, hi+1)]
-        # right edge weights: hi-k+1 .. hi
         right_slice = weights[max(lo, hi-k+1):hi+1]
         left_ok = (np.nanmean(np.abs(left_slice)) <= tail_thr) if left_slice.size else True
         right_ok = (np.nanmean(np.abs(right_slice)) <= tail_thr) if right_slice.size else True
         return left_ok and right_ok
 
-    # Expand symmetrically
     while True:
         length = right - left + 1
         if length >= nmax or coverage_ok(left, right) or tails_attenuated(left, right):
@@ -170,98 +182,59 @@ def _select_window_by_delta_oi(
     return out
 
 # --- Public debug helper for selection window ---
-def selection_window_debug(df: pd.DataFrame | None = None, *, spot: Optional[float] = None,
-                           call_oi=None, put_oi=None,
+def selection_window_debug(df: pd.DataFrame, *, spot: Optional[float],
                            p: float = 0.95, q: float = 0.05, nmin: int = 15, nmax: int = 45) -> Dict[str, Any]:
-    """
-    Return diagnostics of the ΔOI window selection.
-    Accepts either a DataFrame with columns ('strike','call_oi','put_oi') or arrays via call_oi/put_oi.
-    """
-    if df is not None:
-        df = _normalize_columns(df.copy())
-        if "strike" not in df.columns:
-            raise ValueError("selection_window_debug: df must contain 'strike'")
-        co = _pick_series(df, ["call_oi", "Call OI", "callOI"])
-        po = _pick_series(df, ["put_oi", "Put OI", "putOI"])
-        strikes = df["strike"].astype(float).values
-        call = co.values if co is not None else None
-        put = po.values if po is not None else None
-    else:
-        strikes = None
+    df = _normalize_columns(df.copy())
+    if "strike" not in df.columns:
+        raise ValueError("selection_window_debug: df must contain 'strike'")
+    call = _pick_series(df, ["call_oi", "Call OI", "callOI"])
+    put  = _pick_series(df, ["put_oi", "Put OI", "putOI"])
+    if spot is None or call is None or put is None:
+        return {"error": "need spot and call_oi/put_oi columns present"}
 
-    if strikes is None:
-        raise ValueError("selection_window_debug: provide df with 'strike' and OI columns")
-
-    # compute weights
-    call = np.asarray(call, dtype=float)
-    put = np.asarray(put, dtype=float)
-    w = np.abs(call - put)
+    strikes = df["strike"].astype(float).values
+    w = np.abs(call.astype(float).values - put.astype(float).values)
     order = np.argsort(strikes)
-    strikes_s = strikes[order]
-    w_s = w[order]
-
-    n = len(strikes_s)
-    atm_idx = int(np.argmin(np.abs(strikes_s - float(spot)))) if spot is not None else None
-    w_total = float(np.nansum(w_s)) or 1.0
-    w_max = float(np.nanmax(w_s)) if n > 0 else 1.0
+    xs, ws = strikes[order], w[order]
+    atm_idx = int(np.argmin(np.abs(xs - float(spot))))
+    w_total = float(np.nansum(ws)) or 1.0
+    w_max = float(np.nanmax(ws)) if ws.size else 1.0
     tail_thr = q * w_max
 
-    # simulate expansion to capture exact bounds and metrics
-    if atm_idx is None:
-        return {"error": "spot is None", "columns": list(df.columns)}
-
     lo = hi = atm_idx
-
-    def coverage(lo, hi): return float(np.nansum(w_s[lo:hi+1])) / w_total
-    def edge_means(lo, hi):
+    def cov(a,b): return float(np.nansum(ws[a:b+1]))/w_total
+    def edges(a,b):
         k=3
-        left_slice = w_s[lo:min(lo+k, hi+1)]
-        right_slice = w_s[max(lo, hi-k+1):hi+1]
-        return float(np.nanmean(left_slice)) if left_slice.size else None, float(np.nanmean(right_slice)) if right_slice.size else None
+        L = float(np.nanmean(ws[a:min(a+k,b+1)]))
+        R = float(np.nanmean(ws[max(a,b-2):b+1]))
+        return L,R
 
-    stop_reason = None
+    stop = None
     while True:
-        length = hi - lo + 1
-        cov = coverage(lo, hi)
-        lm, rm = edge_means(lo, hi)
-        tails_ok = ((lm is None or lm <= tail_thr) and (rm is None or rm <= tail_thr))
+        if (hi-lo+1) >= nmax: stop="nmax"; break
+        if cov(lo,hi) >= p:   stop="coverage"; break
+        L,R = edges(lo,hi)
+        if L <= tail_thr and R <= tail_thr: stop="tails"; break
+        if lo==0 and hi==xs.size-1: stop="exhausted"; break
+        if lo>0: lo-=1
+        if hi<xs.size-1: hi+=1
 
-        if length >= nmax:
-            stop_reason = "nmax"; break
-        if cov >= p:
-            stop_reason = "coverage"; break
-        if tails_ok:
-            stop_reason = "tails"; break
-
-        expand_left = lo > 0
-        expand_right = hi < n - 1
-        if not expand_left and not expand_right:
-            stop_reason = "exhausted"; break
-        if expand_left and expand_right:
-            lo -= 1; hi += 1
-        elif expand_left:
-            lo -= 1
-        else:
-            hi += 1
-
-    while (hi - lo + 1) < nmin and (lo > 0 or hi < n - 1):
-        if lo > 0:
-            lo -= 1
-        if (hi - lo + 1) < nmin and hi < n - 1:
-            hi += 1
+    while (hi-lo+1) < nmin and (lo>0 or hi<xs.size-1):
+        if lo>0: lo-=1
+        if (hi-lo+1) < nmin and hi<xs.size-1: hi+=1
 
     return {
-        "spot": float(spot) if spot is not None else None,
-        "atm_strike": float(strikes_s[atm_idx]) if atm_idx is not None else None,
-        "bounds_idx": [int(lo), int(hi)],
-        "bounds_strikes": [float(strikes_s[lo]), float(strikes_s[hi])],
-        "window_len": int(hi - lo + 1),
-        "coverage_fraction": coverage(lo, hi),
-        "edge_means": {"left": float(np.nanmean(w_s[lo:min(lo+3, hi+1)])),
-                       "right": float(np.nanmean(w_s[max(lo, hi-2):hi+1]))},
+        "spot": float(spot),
+        "atm_strike": float(xs[atm_idx]),
+        "bounds_strikes": [float(xs[lo]), float(xs[hi])],
+        "window_len": int(hi-lo+1),
+        "coverage_fraction": cov(lo,hi),
+        "edge_means": {"left": float(np.nanmean(ws[lo:min(lo+3, hi+1)])),
+                       "right": float(np.nanmean(ws[max(lo, hi-2):hi+1]))},
         "tail_threshold": tail_thr,
         "total_weight": w_total,
         "max_weight": w_max,
+        "stop_reason": stop,
     }
 
 # --- Core figure builder (expects normalized df) ---
@@ -295,32 +268,27 @@ def _make_figure_core(
     # Net GEX bars
     if show_netgex and "net_gex" in dfv.columns:
         y = dfv["net_gex"].astype(float).values
-        pos_mask = y >= 0
-        neg_mask = ~pos_mask
-
-        if np.any(pos_mask):
-            fig.add_bar(x=x[pos_mask], y=y[pos_mask], width=widths[pos_mask],
-                        name="Net GEX", marker_color=PALETTE["net_pos"],
-                        opacity=LINE_SPECS["bar_opacity"], hovertemplate="Strike=%{x}<br>Net GEX=%{y}<extra></extra>",
+        pos = y >= 0
+        neg = ~pos
+        if np.any(pos):
+            fig.add_bar(x=x[pos], y=y[pos], width=widths[pos], name="Net GEX",
+                        marker_color=PALETTE["net_pos"], opacity=LINE_SPECS["bar_opacity"],
+                        hovertemplate="Strike=%{x}<br>Net GEX=%{y}<extra></extra>",
                         offset=0, showlegend=True)
-        if np.any(neg_mask):
-            fig.add_bar(x=x[neg_mask], y=y[neg_mask], width=widths[neg_mask],
-                        name="Net GEX", marker_color=PALETTE["net_neg"],
-                        opacity=LINE_SPECS["bar_opacity"], hovertemplate="Strike=%{x}<br>Net GEX=%{y}<extra></extra>",
+        if np.any(neg):
+            fig.add_bar(x=x[neg], y=y[neg], width=widths[neg], name="Net GEX",
+                        marker_color=PALETTE["net_neg"], opacity=LINE_SPECS["bar_opacity"],
+                        hovertemplate="Strike=%{x}<br>Net GEX=%{y}<extra></extra>",
                         offset=0, showlegend=False)
 
-    # Helper to add secondary lines/areas
+    # Secondary lines/areas on y2
     def add_aux(col: str, label: str, color_key: str, area=True, smoothing=LINE_SPECS["smoothing"]):
-        if col not in dfv.columns:
-            return
+        if col not in dfv.columns: return
         y = dfv[col].astype(float).values
-        if not np.any(np.isfinite(y)):  # all NaN or zeros
-            return
+        if not np.any(np.isfinite(y)): return
         fig.add_trace(go.Scatter(
             x=x, y=y, name=label, mode="lines+markers",
-            line=dict(width=LINE_SPECS["width_aux"],
-                      shape="spline", smoothing=smoothing,
-                      color=PALETTE[color_key]),
+            line=dict(width=LINE_SPECS["width_aux"], shape="spline", smoothing=smoothing, color=PALETTE[color_key]),
             marker=dict(size=LINE_SPECS["marker_size"], color=PALETTE[color_key]),
             fill="tozeroy" if area else None,
             opacity=LINE_SPECS["area_opacity"] if area else 1.0,
@@ -354,14 +322,15 @@ def _make_figure_core(
         template="plotly_dark",
         paper_bgcolor=PALETTE["bg"],
         plot_bgcolor=PALETTE["bg"],
-        font=dict(color=PALETTE["fg"], size=14,
-                  family="Inter, Segoe UI, system-ui, -apple-system, sans-serif"),
-        barmode="overlay", bargap=0.0,
+        font=dict(color=PALETTE["fg"], size=14, family="Inter, Segoe UI, system-ui, -apple-system, sans-serif"),
+        barmode="overlay",
+        bargap=0.0,
         margin=dict(l=70, r=70, t=60, b=90),
         title=dict(text=title or "", x=0.01, xanchor="left", y=0.98, yanchor="top"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0, bgcolor="rgba(0,0,0,0)"),
         hovermode="x unified",
     )
+
     fig.update_yaxes(title_text="Net GEX", gridcolor=PALETTE["grid"],
                      zeroline=True, zerolinewidth=1, zerolinecolor=PALETTE["grid"],
                      rangemode="tozero", showline=False)
@@ -369,53 +338,45 @@ def _make_figure_core(
                                   showgrid=False, zeroline=False))
 
     strikes_unique = np.unique(x)
-    if strikes_unique.size > 30:
-        every = max(1, int(round(strikes_unique.size / 30)))
+    if strikes_unique.size > 20:
+        every = max(1, int(round(strikes_unique.size / 20)))
         tickvals = strikes_unique[::every]
     else:
         tickvals = strikes_unique
-    fig.update_xaxes(title_text="Strike", tickmode="array", tickvals=tickvals,
-                     ticktext=[f"{v:g}" for v in tickvals], tickangle=60,
-                     showgrid=False, mirror=True, linecolor=PALETTE["grid"])
+    fig.update_xaxes(type="linear", title_text="Strike",
+                     tickmode="array", tickvals=tickvals,
+                     ticktext=[f"{v:g}" for v in tickvals],
+                     tickangle=60, showgrid=False, mirror=True, linecolor=PALETTE["grid"])
 
     return fig
 
-# --- Public API wrapper (DataFrame or legacy arrays) ---
+# === Public API wrapper (DataFrame or legacy arrays) ===
 def make_figure(*args, **kwargs):
-    # New API: df=DataFrame or positional first arg DataFrame
     spot = kwargs.pop("spot", None)
     title = kwargs.pop("title", None)
 
+    # New API
     if len(args) == 1 and isinstance(args[0], pd.DataFrame):
         df = _normalize_columns(args[0].copy())
         return _make_figure_core(df, spot=spot, title=title, **kwargs)
-
     if "df" in kwargs and isinstance(kwargs["df"], pd.DataFrame):
         df = _normalize_columns(kwargs.pop("df").copy())
         return _make_figure_core(df, spot=spot, title=title, **kwargs)
 
-    # Legacy: (strike_array, net_gex_array, toggles_dict, series_dict, **opts)
+    # Legacy API: (strike_array, net_gex_array, toggles_dict, series_dict, **opts)
     if len(args) >= 4:
-        strike_arr = _as_array(args[0])
-        netgex_arr = _as_array(args[1])
+        strike_arr = _as_array(args[0]); netgex_arr = _as_array(args[1])
         toggles = args[2] if isinstance(args[2], dict) else {}
-        series = args[3] if isinstance(args[3], dict) else {}
-
+        series  = args[3] if isinstance(args[3], dict) else {}
         data = {"strike": strike_arr, "net_gex": netgex_arr}
-        # optional series
         for k, v in series.items():
             key = _NORM_MAP.get(str(k), None) or _NORM_MAP.get(str(k).strip(), None)
             if key in {"put_oi","call_oi","put_volume","call_volume","ag","pz","pz_fp"}:
                 data[key] = _as_array(v)
+        if spot is None:  spot = series.get("spot")
+        if title is None: title = series.get("title")
 
-        if spot is None:
-            spot = series.get("spot")
-        if title is None:
-            title = series.get("title")
-
-        df_leg = pd.DataFrame({k: v for k, v in data.items() if v is not None})
-        df_leg = _normalize_columns(df_leg)
-
+        df_leg = _normalize_columns(pd.DataFrame({k: v for k, v in data.items() if v is not None}))
         def t(name, default=False): return bool(toggles.get(name, default))
         return _make_figure_core(
             df_leg, spot=spot, title=title,
