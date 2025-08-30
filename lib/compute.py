@@ -1,6 +1,5 @@
 import math, numpy as np
 from math import log, sqrt
-from dateutil import tz
 
 M_CONTRACT = 100.0
 
@@ -33,44 +32,111 @@ def robust_fill_iv(iv_dict, strikes, fallback=0.30):
             iv_dict[k] = best_val if best_val is not None else use_fallback
     return iv_dict
 
-def _adapt_v1_body_format(chain_json):
+def _first_nonempty_dict(*candidates):
+    for c in candidates:
+        if isinstance(c, dict) and len(c)>0:
+            return c
+    return {}
+
+def _extract_root_candidates(chain_json):
+    """Return list of possible roots containing (quote, expirationDates, options)."""
+    roots = []
+    # Yahoo canonical
+    try:
+        res = chain_json.get("optionChain", {}).get("result", [])
+        if isinstance(res, list) and len(res)>0 and isinstance(res[0], dict):
+            roots.append(res[0])
+    except Exception:
+        pass
+    # Provider v1: { meta, body: [...] } or { meta, body: {...} }
     body = chain_json.get("body", None)
-    if not isinstance(body, list) or len(body)==0:
-        return None
-    root = body[0]
-    quote = root.get("quote", {})
-    expirations = root.get("expirationDates", []) or []
-    options = root.get("options", []) or []
-    return quote, expirations, options
+    if isinstance(body, list) and len(body)>0 and isinstance(body[0], dict):
+        roots.append(body[0])
+    elif isinstance(body, dict):
+        roots.append(body)
+    # Some providers use 'data'
+    data = chain_json.get("data", None)
+    if isinstance(data, list) and len(data)>0 and isinstance(data[0], dict):
+        roots.append(data[0])
+    elif isinstance(data, dict):
+        roots.append(data)
+    # Some use 'result' directly
+    res2 = chain_json.get("result", None)
+    if isinstance(res2, list) and len(res2)>0 and isinstance(res2[0], dict):
+        roots.append(res2[0])
+    elif isinstance(res2, dict):
+        roots.append(res2)
+    # As a last resort try the object itself
+    if isinstance(chain_json, dict):
+        roots.append(chain_json)
+    # Deduplicate by id()
+    uniq = []
+    seen = set()
+    for r in roots:
+        if id(r) in seen: continue
+        seen.add(id(r)); uniq.append(r)
+    return uniq
+
+def _coerce_int(x, default=0):
+    try:
+        return int(x)
+    except Exception:
+        try:
+            return int(float(x))
+        except Exception:
+            return default
 
 def extract_core_from_chain(chain_json):
-    res = chain_json.get("optionChain", {}).get("result", [])
-    if res:
-        root = res[0]
-        quote = root.get("quote", {})
-        S = float(quote.get("regularMarketPrice", quote.get("postMarketPrice", 0.0)))
-        t0 = int(quote.get("regularMarketTime", quote.get("postMarketTime", 0)))
-        expirations = root.get("expirationDates", []) or []
-        blocks_by_date = {}
-        for blk in root.get("options", []):
-            if "expirationDate" in blk:
-                blocks_by_date[int(blk["expirationDate"])] = blk
-        return quote, t0, S, expirations, blocks_by_date
+    """Unified extractor for multiple formats.
+    Returns: (quote, t0, S, expirations: list[int], blocks_by_date: dict[int -> block]).
+    Raises ValueError with a clear message if nothing matches.
+    """
+    candidates = _extract_root_candidates(chain_json)
+    last_err = ""
+    for root in candidates:
+        try:
+            quote = _first_nonempty_dict(root.get("quote", {}), root.get("underlying", {}))
+            # robust price/time
+            S = None
+            for key in ("regularMarketPrice","postMarketPrice","last","lastPrice","price","close","regularMarketPreviousClose"):
+                if key in quote and quote[key] is not None:
+                    S = float(quote[key]); break
+            if S is None:
+                # some responses put price in root
+                for key in ("regularMarketPrice","postMarketPrice","last","lastPrice","price","close"):
+                    if key in root and root[key] is not None:
+                        S = float(root[key]); break
+            if S is None:
+                # give up on this root
+                raise KeyError("no price field")
+            t0 = 0
+            for key in ("regularMarketTime","postMarketTime","time","timestamp","lastTradeDate" ):
+                if key in quote and quote[key] is not None:
+                    t0 = _coerce_int(quote[key]); break
 
-    v1 = _adapt_v1_body_format(chain_json)
-    if v1 is not None:
-        quote, expirations, options = v1
-        S = float(quote.get("regularMarketPrice", quote.get("postMarketPrice", 0.0)))
-        t0 = int(quote.get("regularMarketTime", quote.get("postMarketTime", 0)))
-        blocks_by_date = {}
-        for blk in options:
-            e = blk.get("expirationDate", None)
-            if e is None:
-                continue
-            blocks_by_date[int(e)] = blk
-        return quote, t0, S, expirations, blocks_by_date
-
-    raise ValueError("Invalid chain JSON: missing optionChain.result[0] and body[0]")
+            expirations = root.get("expirationDates") or root.get("expirations") or []
+            # options container may be under 'options' or directly with calls/puts/straddles
+            options = root.get("options", None)
+            if options is None and ("calls" in root or "puts" in root or "straddles" in root):
+                # wrap single block as list
+                options = [root]
+            if not isinstance(options, list):
+                raise KeyError("no options list")
+            blocks_by_date = {}
+            for blk in options:
+                if not isinstance(blk, dict): continue
+                e = blk.get("expirationDate") or blk.get("expiry") or blk.get("expiryDate") or blk.get("expiration") or blk.get("expDate")
+                if e is None:
+                    # some responses put expiry only in meta; fallback to 0-index sentinel
+                    continue
+                e = _coerce_int(e)
+                blocks_by_date[e] = blk
+            if blocks_by_date:
+                return quote, t0, float(S), list(map(int, expirations)), blocks_by_date
+        except Exception as ex:
+            last_err = str(ex)
+            continue
+    raise ValueError("Invalid chain JSON: could not find a compatible root (last error: %s)" % last_err)
 
 def _calls_puts_from_straddles(straddles):
     calls, puts = [], []
@@ -158,7 +224,7 @@ def compute_series_metrics_for_expiry(S, t0, expiry_unix, block, day_high=None, 
         "put_oi": put_oi_arr.astype(int),
         "call_oi": call_oi_arr.astype(int),
         "put_vol": put_vol_arr.astype(int),
-        "call_vol": put_vol_arr.astype(int),
+        "call_vol": call_vol_arr.astype(int),
         "net_gex": net_gex,
         "ag": ag,
         "pz": pz,
@@ -186,6 +252,7 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         diffs = sorted([abs(xs[i+1]-xs[i]) for i in range(len(xs)-1)])
         mid = len(diffs)//2
         return diffs[mid] if len(diffs)%2==1 else 0.5*(diffs[mid-1]+diffs[mid])
+
     step = median_step(list(strikes_eval))
     beta0 = 1.0
     h_base = beta0 * S * max(sigma_atm, 1e-8) / math.sqrt(252.0)
@@ -210,9 +277,6 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         put_oi_vec  = np.array([s["put_oi"][k]  for k in s["strikes"]], dtype=float)
         vol_vec     = np.array([s["call_vol"][k] + s["put_vol"][k] for k in s["strikes"]], dtype=float)
         dOI_vec     = call_oi_vec - put_oi_vec
-
-        def gamma_safe(sig):
-            return bs_gamma(S, 1.0, max(sig,1e-8), max(s["T"],1e-8))  # scale-free helper not used directly
 
         gamma_vec = np.array([bs_gamma(S, float(k), float(sig), s["T"]) for k, sig in zip(s["strikes"], iv_vec)], dtype=float)
         dollar_per_unit = S * M_CONTRACT / 1000.0
