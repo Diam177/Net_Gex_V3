@@ -129,20 +129,28 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
         # Layout with full-width category axis
         fig.update_layout(
-        barmode="overlay",
-        bargap=bargap,
-        bargroupgap=0.0,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        margin=dict(l=40, r=40, t=40, b=40),
-        xaxis=dict( title="Strike", type="category", categoryorder="array", categoryarray=x_labels, tickmode="array", tickvals=x_labels, ticktext=x_labels, range=[-0.5, len(x_labels, showgrid=False)-0.5]
-        ),
-        yaxis=dict(title="Net Gex", showgrid=False),
-        yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
-        hovermode="x unified",
-        height=560
-    )
-
-    # Add ticker label at top-left (inside chart, under 'График')
+            barmode="overlay",
+            bargap=bargap,
+            bargroupgap=0.0,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            margin=dict(l=40, r=40, t=40, b=40),
+            xaxis=dict(
+                title="Strike",
+                type="category",
+                categoryorder="array",
+                categoryarray=x_labels,
+                tickmode="array",
+                tickvals=x_labels,
+                ticktext=x_labels,
+                range=[-0.5, len(x_labels)-0.5],
+                showgrid=False
+            ),
+            yaxis=dict(title="Net Gex", showgrid=False),
+            yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
+            hovermode="x unified",
+            height=560
+        )
+# Add ticker label at top-left (inside chart, under 'График')
     if ticker:
         fig.add_annotation(
             x=0.0, y=1.08, xref="paper", yref="paper",
