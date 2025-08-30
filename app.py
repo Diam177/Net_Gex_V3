@@ -209,7 +209,7 @@ day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
 metrics = compute_series_metrics_for_expiry(
-    S=float(quote.get("regularMarketPrice", S)),
+    S=float(quote.get("regularMarketPrice", S)); S_used=S,
     t0=int(quote.get("regularMarketTime", t0)),
     expiry_unix=selected_exp,
     block=selected_block,
@@ -256,5 +256,5 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict)
+fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used)
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
