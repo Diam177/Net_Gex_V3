@@ -9,7 +9,7 @@ from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
-st.title("Net GEX / AG / PZ / PZ_FP — Streamlit")
+st.title(ticker)
 
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
