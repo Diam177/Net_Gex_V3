@@ -115,16 +115,15 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 x=x_pos, y=y_pos, name="Net Gex +",
                 marker_color=POS_COLOR, opacity=0.92,
                 customdata=cd_pos,
-                text=[
-                    f"Strike: {row[0]}<br>"
-                    f"Call OI: {row[1]:,.0f}<br>"
-                    f"Put OI: {row[2]:,.0f}<br>"
-                    f"Call Volume: {row[3]:,.0f}<br>"
-                    f"Put Volume: {row[4]:,.0f}<br>"
-                    f"Net Gex: {row[5]:,.1f}"
-                    for row in cd_pos
-                ],
-                hovertemplate="%{text}<extra></extra>",
+                hovertemplate=(
+                    "Strike: %{customdata[0]}<br>"
+                    "Call OI: %{customdata[1]:,.0f}<br>"
+                    "Put OI: %{customdata[2]:,.0f}<br>"
+                    "Call Volume: %{customdata[3]:,.0f}<br>"
+                    "Put Volume: %{customdata[4]:,.0f}<br>"
+                    "Net Gex: %{customdata[5]:,.1f}"
+                    "<extra></extra>"
+                ),
                 hoverlabel=dict(bgcolor=POS_COLOR)
             ))
 
@@ -143,16 +142,15 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 x=x_neg, y=y_neg, name="Net Gex -",
                 marker_color=NEG_COLOR, opacity=0.92,
                 customdata=cd_neg,
-                text=[
-                    f"Strike: {row[0]}<br>"
-                    f"Call OI: {row[1]:,.0f}<br>"
-                    f"Put OI: {row[2]:,.0f}<br>"
-                    f"Call Volume: {row[3]:,.0f}<br>"
-                    f"Put Volume: {row[4]:,.0f}<br>"
-                    f"Net Gex: {row[5]:,.1f}"
-                    for row in cd_neg
-                ],
-                hovertemplate="%{text}<extra></extra>",
+                hovertemplate=(
+                    "Strike: %{customdata[0]}<br>"
+                    "Call OI: %{customdata[1]:,.0f}<br>"
+                    "Put OI: %{customdata[2]:,.0f}<br>"
+                    "Call Volume: %{customdata[3]:,.0f}<br>"
+                    "Put Volume: %{customdata[4]:,.0f}<br>"
+                    "Net Gex: %{customdata[5]:,.1f}"
+                    "<extra></extra>"
+                ),
                 hoverlabel=dict(bgcolor=NEG_COLOR)
             ))
 
@@ -177,6 +175,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         )
         fig.add_annotation(
             x=x_idx, y=1.0, xref="x", yref="paper",
+            textposition="none", # text hidden
             text=f"Price: {float(price):.2f}",
             showarrow=False,
             xanchor="center",
@@ -200,13 +199,14 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             categoryarray=x_labels,
             tickmode="array",
             tickvals=x_labels,
-            ticktext=x_labels,
+            ticktextposition="none", # text hidden
+            text=x_labels,
             range=[-0.5, len(x_labels)-0.5],
             showgrid=False
         ),
         yaxis=dict(title="Net Gex", showgrid=False),
         yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
-        hovermode="x",
+        hovermode="closest",
         height=560
     )
 
@@ -214,6 +214,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     if ticker:
         fig.add_annotation(
             x=0.0, y=1.08, xref="paper", yref="paper",
+            textposition="none", # text hidden
             text=str(ticker),
             showarrow=False,
             xanchor="left",
