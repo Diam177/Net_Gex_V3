@@ -54,3 +54,51 @@ def _autodetect_price(series_dict):
             except Exception:
                 pass
     return None
+
+def _finite_min_max(arr, default=(0.0, 1.0)):
+    import numpy as _np
+    a = _np.asarray(arr, dtype=float)
+    if a.size == 0:
+        return default
+    a = a[_np.isfinite(a)]
+    if a.size == 0:
+        return default
+    return float(a.min()), float(a.max())
+
+def _draw_price_line(fig, price_val, y_values):
+    # Надёжная отрисовка вертикальной линии через Scatter (поверх баров)
+    y_min, y_max = _finite_min_max(y_values, default=(0.0, 1.0))
+    # небольшие поля сверху/снизу
+    pad_top = 0.12 * (y_max - y_min if y_max != y_min else (abs(y_max) + 1.0))
+    pad_bot = 0.08  * (y_max - y_min if y_max != y_min else (abs(y_min) + 1.0))
+
+    y0 = y_min - pad_bot
+    y1 = y_max + pad_top
+
+    # Линия как trace (чтобы точно была видна)
+    fig.add_trace(go.Scatter(
+        x=[price_val, price_val],
+        y=[y0, y1],
+        mode="lines",
+        line=dict(color="#FFA500", width=3),
+        name="Price",
+        hoverinfo="skip",
+        showlegend=False,
+        yaxis="y"
+    ))
+
+    # Подпись над линией
+    fig.add_annotation(
+        x=price_val, y=y1,
+        text=f"Price: {price_val:.2f}",
+        showarrow=False,
+        yanchor="bottom",
+        xanchor="center",
+        font=dict(color="#FFA500", size=16)
+    )
+
+    # Зафиксируем диапазон Y, чтобы подпись не обрезалась
+    try:
+        fig.update_yaxes(range=[y0, y1], matches=None)
+    except Exception:
+        pass
