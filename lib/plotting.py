@@ -123,11 +123,14 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
         bargroupgap=0.0,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         margin=dict(l=40, r=40, t=40, b=40),
-        xaxis=dict(
-            title="Strike",
+        xaxis=dict(title="Strike",
             type="category",
             categoryorder="array",
-            categoryarray=x_labels
+            categoryarray=x_labels,
+        tickmode='array',
+        tickvals=x_labels,
+        ticktext=x_labels,
+        range=[-0.5, len(x_labels)-0.5]
         ),
         yaxis=dict(title="Net Gex (thousands)"),
         yaxis2=dict(title="Other series", overlaying="y", side="right"),
@@ -135,4 +138,3 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
         height=560
     )
     return fig
-
