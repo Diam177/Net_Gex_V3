@@ -17,11 +17,13 @@ def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nma
 
     i_atm = int(np.argmin(np.abs(strikes - float(S))))
     total_abs = abs_d.sum()
-    max_abs = abs_d.max() if n>0 else 0.0
+    max_abs = abs_d.max() if n > 0 else 0.0
 
     L = R = i_atm
+
     def coverage_ok(L, R):
-        if total_abs <= 0: return True
+        if total_abs <= 0:
+            return True
         return abs_d[L:R+1].sum() >= p * total_abs
 
     def tails_ok(L, R):
@@ -35,16 +37,16 @@ def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nma
     while (R - L + 1) < Nmax and not (coverage_ok(L, R) or tails_ok(L, R)):
         if L > 0: L -= 1
         if R < n - 1: R += 1
-        if L == 0 and R == n-1:
+        if L == 0 and R == n - 1:
             break
 
     while (R - L + 1) < Nmin:
         if L > 0: L -= 1
         if R < n - 1: R += 1
-        if L == 0 and R == n-1:
+        if L == 0 and R == n - 1:
             break
 
-    return np.arange(L, R+1, dtype=int)
+    return np.arange(L, R + 1, dtype=int)
 
 def _format_labels(vals):
     labels = []
@@ -93,7 +95,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         colors = [POS_COLOR if v >= 0 else NEG_COLOR for v in y]
         fig.add_trace(go.Bar(x=x_labels, y=y, name="Net Gex", marker_color=colors, opacity=0.92))
 
-    # Optional lines (use filtered x for alignment)
+    # Optional lines (aligned to filtered x)
     for name in ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]:
         if series_enabled.get(name, False) and name in series_dict:
             y_full = np.asarray(series_dict[name], dtype=float)[idx_keep]
@@ -101,7 +103,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 x=x_labels, y=y_full, name=name, mode="lines+markers", yaxis="y2"
             ))
 
-    # Vertical price line anchored to the NEAREST kept strike label
+    # Vertical price line anchored to the nearest kept strike
     if price is not None and n > 0:
         i_near = int(np.argmin(np.abs(strikes_keep - float(price))))
         x_line = x_labels[i_near]
@@ -117,27 +119,29 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             showarrow=False, font=dict(size=12, color="#f0a000")
         )
 
+    # Layout with full-width category axis
     fig.update_layout(
         barmode="overlay",
         bargap=bargap,
         bargroupgap=0.0,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         margin=dict(l=40, r=40, t=40, b=40),
-        xaxis=dict(title="Strike",
+        xaxis=dict(
+            title="Strike",
             type="category",
             categoryorder="array",
             categoryarray=x_labels,
-        tickmode='array',
-        tickvals=x_labels,
-        ticktext=x_labels,
-        range=[-0.5, len(x_labels)-0.5]
+            tickmode="array",
+            tickvals=x_labels,
+            ticktext=x_labels,
+            range=[-0.5, len(x_labels)-0.5]
         ),
         yaxis=dict(title="Net Gex (thousands)"),
         yaxis2=dict(title="Other series", overlaying="y", side="right"),
         hovermode="x unified",
         height=560
     )
-    
+
     # Add ticker label at top-left (inside chart, under 'График')
     if ticker:
         fig.add_annotation(
@@ -147,4 +151,5 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             xanchor="left",
             font=dict(size=18)
         )
-return fig
+
+    return fig
