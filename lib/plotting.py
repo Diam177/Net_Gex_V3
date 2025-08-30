@@ -204,7 +204,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         ),
         yaxis=dict(title="Net Gex", showgrid=False),
         yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
-        hovermode="x unified",
+        hovermode="closest",
         height=560
     )
 
