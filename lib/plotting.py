@@ -9,7 +9,7 @@ def _signed_colors(values):
     y = np.asarray(values, dtype=float)
     return np.where(y >= 0, POS, NEG)
 
-def make_figure(strikes, net_gex, series_enabled, series_dict):
+def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
     fig = go.Figure()
 
     # Net GEX как столбцы с окраской по знаку
