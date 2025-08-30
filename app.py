@@ -208,8 +208,10 @@ if selected_block is None:
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
+S_used = float(quote.get('regularMarketPrice', S))
 metrics = compute_series_metrics_for_expiry(
-    S=float(quote.get("regularMarketPrice", S)); S_used=S,
+    S=S_used
+S_used=S; S_used=S,
     t0=int(quote.get("regularMarketTime", t0)),
     expiry_unix=selected_exp,
     block=selected_block,
