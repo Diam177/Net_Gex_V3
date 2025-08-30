@@ -227,7 +227,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     
 
-    # === adjust ticker position to avoid overlap with Net GEX legend ===
+    # === adjust ticker position further left/up to avoid overlap ===
 
     try:
 
@@ -239,7 +239,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
                 xref="paper", yref="paper",
 
-                x=-0.15, y=1.08,  # левее обычного положения
+                x=-0.22, y=1.12,  # ещё левее и чуть выше
 
                 showarrow=False,
 
