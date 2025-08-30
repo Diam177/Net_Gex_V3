@@ -2,8 +2,8 @@
 import numpy as np
 import plotly.graph_objects as go
 
-POS_COLOR = "#48B4FF"   # голубые положительные
-NEG_COLOR = "#FF3B30"   # красные отрицательные
+POS_COLOR = "#48B4FF"   # positive bars (blue)
+NEG_COLOR = "#FF3B30"   # negative bars (red)
 
 def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nmax=49):
     strikes = np.asarray(strikes, dtype=float)
@@ -18,7 +18,6 @@ def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nma
     i_atm = int(np.argmin(np.abs(strikes - float(S))))
     total_abs = abs_d.sum()
     max_abs = abs_d.max() if n > 0 else 0.0
-
     L = R = i_atm
 
     def coverage_ok(L, R):
@@ -64,7 +63,6 @@ def _format_labels(vals):
 def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticker=None):
     strikes = np.asarray(strikes, dtype=float)
 
-    # Determine indices to keep for bars
     idx_keep = np.arange(len(strikes), dtype=int)
     if (price is not None) and ("Call OI" in series_dict) and ("Put OI" in series_dict):
         try:
@@ -74,12 +72,10 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     strikes_keep = strikes[idx_keep]
     x_labels = _format_labels(strikes_keep)
+    n = len(strikes_keep)
 
-    # Build figure
     fig = go.Figure()
 
-    # Adaptive gaps for small samples
-    n = len(strikes_keep)
     if n <= 5:
         bargap = 0.55
     elif n <= 10:
@@ -89,7 +85,6 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     else:
         bargap = 0.15
 
-    # Net Gex bars split by sign with custom hover
     if series_enabled.get("Net Gex", True):
         y_all = np.asarray(series_dict["Net Gex"], dtype=float)[idx_keep]
         call_oi_f = np.asarray(series_dict.get("Call OI", np.zeros_like(y_all)), dtype=float)[idx_keep]
@@ -100,61 +95,52 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         mask_pos = y_all >= 0
         mask_neg = ~mask_pos
 
-        # Positive bars
-        x_pos = [lbl for lbl, m in zip(x_labels, mask_pos) if m]
-        y_pos = y_all[mask_pos]
-        cd_pos = np.stack([
-            np.array([lbl for lbl, m in zip(x_labels, mask_pos) if m], dtype=object),
-            call_oi_f[mask_pos],
-            put_oi_f[mask_pos],
-            call_v_f[mask_pos],
-            put_v_f[mask_pos],
-            y_pos
-        ], axis=-1)
-        fig.add_trace(go.Bar(
-                x=x_pos, y=y_pos, name="Net Gex +",
-                marker_color=POS_COLOR, opacity=0.92,
-                customdata=cd_pos,
-                hovertemplate=(
-                    "Strike: %{customdata[0]}<br>"
-                    "Call OI: %{customdata[1]:,.0f}<br>"
-                    "Put OI: %{customdata[2]:,.0f}<br>"
-                    "Call Volume: %{customdata[3]:,.0f}<br>"
-                    "Put Volume: %{customdata[4]:,.0f}<br>"
-                    "Net Gex: %{customdata[5]:,.1f}"
-                    "<extra></extra>"
-                ),
-                hoverlabel=dict(bgcolor=POS_COLOR)
-            ))
+        def build_custom(x_lbls, mask, yvals):
+            x_use = [lbl for lbl, m in zip(x_lbls, mask) if m]
+            return x_use, np.stack([
+                np.array([lbl for lbl, m in zip(x_lbls, mask) if m], dtype=object),
+                call_oi_f[mask],
+                put_oi_f[mask],
+                call_v_f[mask],
+                put_v_f[mask],
+                yvals[mask]
+            ], axis=-1)
 
-        # Negative bars
-        x_neg = [lbl for lbl, m in zip(x_labels, mask_neg) if m]
-        y_neg = y_all[mask_neg]
-        cd_neg = np.stack([
-            np.array([lbl for lbl, m in zip(x_labels, mask_neg) if m], dtype=object),
-            call_oi_f[mask_neg],
-            put_oi_f[mask_neg],
-            call_v_f[mask_neg],
-            put_v_f[mask_neg],
-            y_neg
-        ], axis=-1)
-        fig.add_trace(go.Bar(
-                x=x_neg, y=y_neg, name="Net Gex -",
-                marker_color=NEG_COLOR, opacity=0.92,
-                customdata=cd_neg,
-                hovertemplate=(
-                    "Strike: %{customdata[0]}<br>"
-                    "Call OI: %{customdata[1]:,.0f}<br>"
-                    "Put OI: %{customdata[2]:,.0f}<br>"
-                    "Call Volume: %{customdata[3]:,.0f}<br>"
-                    "Put Volume: %{customdata[4]:,.0f}<br>"
-                    "Net Gex: %{customdata[5]:,.1f}"
-                    "<extra></extra>"
-                ),
-                hoverlabel=dict(bgcolor=NEG_COLOR)
-            ))
+        x_pos, cd_pos = build_custom(x_labels, mask_pos, y_all)
+        x_neg, cd_neg = build_custom(x_labels, mask_neg, y_all)
 
-    # Optional lines (aligned to filtered x)
+        fig.add_trace(go.Bar(
+            x=x_pos, y=y_all[mask_pos], name="Net Gex +",
+            marker_color=POS_COLOR, opacity=0.92,
+            customdata=cd_pos,
+            hovertemplate=(
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                "Net Gex: %{customdata[5]:,.1f}"
+                "<extra></extra>"
+            ),
+            hoverlabel=dict(bgcolor=POS_COLOR)
+        ))
+
+        fig.add_trace(go.Bar(
+            x=x_neg, y=y_all[mask_neg], name="Net Gex -",
+            marker_color=NEG_COLOR, opacity=0.92,
+            customdata=cd_neg,
+            hovertemplate=(
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                "Net Gex: %{customdata[5]:,.1f}"
+                "<extra></extra>"
+            ),
+            hoverlabel=dict(bgcolor=NEG_COLOR)
+        ))
+
     for name in ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]:
         if series_enabled.get(name, False) and name in series_dict:
             y_full = np.asarray(series_dict[name], dtype=float)[idx_keep]
@@ -162,30 +148,30 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 x=x_labels, y=y_full, name=name, mode="lines+markers", yaxis="y2"
             ))
 
-    # Vertical price line anchored to the nearest kept strike (use category index)
-    if price is not None and n > 0:
-        i_near = int(np.argmin(np.abs(strikes_keep - float(price))))
-        x_idx = i_near
-        fig.add_shape(
-            type="line",
-            x0=x_idx, x1=x_idx, xref="x",
-            y0=0, y1=1, yref="paper",
-            line=dict(width=2, color="#f0a000"),
-            layer="above"
-        )
-        fig.add_annotation(
-            x=x_idx, y=1.0, xref="x", yref="paper",
-            textposition="none", # text hidden
-            text=f"Price: {float(price):.2f}",
-            showarrow=False,
-            xanchor="center",
-            yanchor="bottom",
-            align="center",
-            yshift=8,
-            font=dict(size=12, color="#f0a000")
-        )
+    if (price is not None) and (n > 0):
+        try:
+            price_val = float(price)
+        except Exception:
+            price_val = None
+        if price_val is not None:
+            i_near = int(np.argmin(np.abs(strikes_keep - price_val)))
+            x_idx = i_near
+            fig.add_shape(
+                type="line",
+                x0=x_idx, x1=x_idx, xref="x",
+                y0=0, y1=1, yref="paper",
+                line=dict(width=2, color="#f0a000"),
+                layer="above"
+            )
+            fig.add_annotation(
+                x=x_idx, y=1.0, xref="x", yref="paper",
+                text=f"Price: {price_val:.2f}",
+                showarrow=False,
+                xanchor="center",
+                yanchor="bottom",
+                font=dict(size=12, color="#f0a000")
+            )
 
-    # Layout
     fig.update_layout(
         barmode="overlay",
         bargap=bargap,
@@ -199,8 +185,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             categoryarray=x_labels,
             tickmode="array",
             tickvals=x_labels,
-            ticktextposition="none", # text hidden
-            text=x_labels,
+            ticktext=x_labels,
             range=[-0.5, len(x_labels)-0.5],
             showgrid=False
         ),
@@ -210,11 +195,9 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         height=560
     )
 
-    # Add ticker label at top-left (inside chart, under 'График')
     if ticker:
         fig.add_annotation(
             x=0.0, y=1.08, xref="paper", yref="paper",
-            textposition="none", # text hidden
             text=str(ticker),
             showarrow=False,
             xanchor="left",
