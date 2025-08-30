@@ -1,161 +1,227 @@
 
-from __future__ import annotations
-
-from typing import Dict, Iterable, Optional
 import numpy as np
 import plotly.graph_objects as go
 
+POS_COLOR = "#48B4FF"   # positive Net Gex bars (blue)
+NEG_COLOR = "#FF3B30"   # negative Net Gex bars (red)
 
-# ---- Palette (kept identical usage-wise; tune only colors) ----
-COLORS = {
-    "net_pos": "#25B8FF",   # positive Net GEX bars
-    "net_neg": "#E5534B",   # negative Net GEX bars
-    "put_oi":  "#7B1030",   # maroon
-    "call_oi": "#1FC87B",   # green
-    "put_vol": "#8A5A00",   # brown
-    "call_vol":"#1C7ED6",   # blue
-    "ag":      "#A47BFF",   # violet
-    "pz":      "#FFD21A",   # yellow
-    "pz_fp":   "#C8CDD3",   # light gray
+# Line colors & fills for each optional series
+LINE_STYLE = {
+    "Put OI":     {"line": "#7F0020", "fill": "rgba(127,0,32,0.25)"},
+    "Call OI":    {"line": "#2FD06F", "fill": "rgba(47,208,111,0.25)"},
+    "Put Volume": {"line": "#8C5A0A", "fill": "rgba(140,90,10,0.25)"},
+    "Call Volume":{"line": "#2D83FF", "fill": "rgba(45,131,255,0.25)"},
+    "AG":         {"line": "#8A63F6", "fill": "rgba(138,99,246,0.25)"},
+    "PZ":         {"line": "#FFC400", "fill": "rgba(255,196,0,0.30)"},
+    "PZ_FP":      {"line": "#B0B8C5", "fill": "rgba(176,184,197,0.30)"},
 }
 
-def _rgba(hex_color: str, alpha: float) -> str:
-    hex_color = hex_color.lstrip("#")
-    r = int(hex_color[0:2], 16)
-    g = int(hex_color[2:4], 16)
-    b = int(hex_color[4:6], 16)
-    return f"rgba({r},{g},{b},{alpha})"
+def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nmax=49):
+    strikes = np.asarray(strikes, dtype=float)
+    call_oi = np.asarray(call_oi, dtype=float)
+    put_oi  = np.asarray(put_oi,  dtype=float)
+    d_oi = call_oi - put_oi
+    abs_d = np.abs(d_oi)
+    n = len(strikes)
+    if n == 0:
+        return np.array([], dtype=int)
 
+    i_atm = int(np.argmin(np.abs(strikes - float(S))))
+    total_abs = float(abs_d.sum())
+    max_abs = float(abs_d.max()) if n > 0 else 0.0
+    L = R = i_atm
 
-def _mk_hover_template(series_tail: str) -> str:
-    # Common hover "table" for line series; we keep content intact and only color via hoverlabel.
-    return (
-        "<b>Strike:</b> %{x}<br>"
-        "<b>Call OI:</b> %{customdata[0]}<br>"
-        "<b>Put OI:</b> %{customdata[1]}<br>"
-        "<b>Call Volume:</b> %{customdata[2]}<br>"
-        "<b>Put Volume:</b> %{customdata[3]}<br>"
-        f"<b>{series_tail}:</b> %{y}<extra></extra>"
-    )
+    def coverage_ok(L, R):
+        if total_abs <= 0:
+            return True
+        return float(abs_d[L:R+1].sum()) >= p * total_abs
 
+    def tails_ok(L, R):
+        k = 3
+        left_seg  = abs_d[L:min(L+k, R+1)]
+        right_seg = abs_d[max(R-k+1, L):R+1]
+        left_mean  = float(left_seg.mean())  if left_seg.size  else 0.0
+        right_mean = float(right_seg.mean()) if right_seg.size else 0.0
+        return (left_mean <= q * max_abs) and (right_mean <= q * max_abs)
 
-def make_figure(
-    strikes: Iterable,
-    net_gex: Iterable,
-    toggles: Dict[str, bool],
-    series_dict: Dict[str, np.ndarray],
-    price: Optional[float] = None,
-    ticker: Optional[str] = None,
-) -> go.Figure:
-    """Build main chart. Only hover label colors have been modified per request."""
-    x = np.asarray(strikes)
-    gex = np.asarray(net_gex, dtype=float)
+    while (R - L + 1) < Nmax and not (coverage_ok(L, R) or tails_ok(L, R)):
+        if L > 0: L -= 1
+        if R < n - 1: R += 1
+        if L == 0 and R == n - 1: break
+
+    while (R - L + 1) < Nmin:
+        if L > 0: L -= 1
+        if R < n - 1: R += 1
+        if L == 0 and R == n - 1: break
+
+    return np.arange(L, R + 1, dtype=int)
+
+def _format_labels(vals):
+    out = []
+    for v in vals:
+        try:
+            fv = float(v)
+            if abs(fv - int(round(fv))) < 1e-9:
+                out.append(str(int(round(fv))))
+            else:
+                out.append(f"{fv:g}")
+        except Exception:
+            out.append(str(v))
+    return out
+
+def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticker=None):
+    strikes = np.asarray(strikes, dtype=float)
+    net_gex = np.asarray(net_gex, dtype=float)
+
+    idx_keep = np.arange(len(strikes), dtype=int)
+    if (price is not None) and ("Call OI" in series_dict) and ("Put OI" in series_dict):
+        try:
+            idx_keep = _select_atm_window(strikes, series_dict["Call OI"], series_dict["Put OI"], float(price))
+        except Exception:
+            idx_keep = np.arange(len(strikes), dtype=int)
+
+    strikes_keep = strikes[idx_keep]
+    x_labels = _format_labels(strikes_keep)
+    n = len(strikes_keep)
 
     fig = go.Figure()
 
-    # ---- Net GEX bars (split into negative/positive) ----
-    neg_mask = gex < 0
-    pos_mask = gex > 0
+    # Adaptive bar spacing
+    if n <= 5: bargap = 0.55
+    elif n <= 10: bargap = 0.40
+    elif n <= 20: bargap = 0.28
+    else: bargap = 0.15
 
-    if np.any(neg_mask):
-        fig.add_bar(
-            x=x[neg_mask],
-            y=gex[neg_mask],
-            name="Net Gex -",
-            marker_color=COLORS["net_neg"],
-            hovertemplate="<b>Strike:</b> %{x}<br><b>Net GEX:</b> %{y}<extra></extra>",
-            hoverlabel=dict(
-                bgcolor=COLORS["net_neg"],   # (4) match bar color
-                bordercolor="white",         # (7) white border
-                font=dict(color="white"),    # keep white text for negative
+    # Shared arrays for hover customdata
+    call_oi_f = np.asarray(series_dict.get("Call OI", np.zeros_like(net_gex)), dtype=float)[idx_keep]
+    put_oi_f  = np.asarray(series_dict.get("Put OI",  np.zeros_like(net_gex)), dtype=float)[idx_keep]
+    call_v_f  = np.asarray(series_dict.get("Call Volume", np.zeros_like(net_gex)), dtype=float)[idx_keep]
+    put_v_f   = np.asarray(series_dict.get("Put Volume", np.zeros_like(net_gex)), dtype=float)[idx_keep]
+
+    # Net Gex bars
+    if series_enabled.get("Net Gex", True):
+        y_all = np.asarray(series_dict.get("Net Gex", net_gex), dtype=float)[idx_keep]
+        mask_pos = y_all >= 0
+        mask_neg = ~mask_pos
+
+        def build_cd(mask, yvals):
+            x_use = [lbl for lbl, m in zip(x_labels, mask) if m]
+            cd = np.stack([
+                np.array(x_use, dtype=object),
+                call_oi_f[mask],
+                put_oi_f[mask],
+                call_v_f[mask],
+                put_v_f[mask],
+                yvals[mask]
+            ], axis=-1)
+            return x_use, cd
+
+        x_pos, cd_pos = build_cd(mask_pos, y_all)
+        x_neg, cd_neg = build_cd(mask_neg, y_all)
+
+        fig.add_trace(go.Bar(
+            x=x_pos, y=y_all[mask_pos], name="Net GEX",
+            marker_color=POS_COLOR, opacity=0.92,
+            customdata=cd_pos,
+            hovertemplate=(
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                "Net Gex: %{customdata[5]:,.1f}"
+                "<extra></extra>"
             ),
-        )
-
-    if np.any(pos_mask):
-        fig.add_bar(
-            x=x[pos_mask],
-            y=gex[pos_mask],
-            name="Net Gex +",
-            marker_color=COLORS["net_pos"],
-            hovertemplate="<b>Strike:</b> %{x}<br><b>Net GEX:</b> %{y}<extra></extra>",
-            hoverlabel=dict(
-                bgcolor=COLORS["net_pos"],   # (5) match bar color
-                bordercolor="white",         # (7)
-                font=dict(color="black"),    # (6) black text for positive
+            hoverlabel=dict(bgcolor=POS_COLOR, bordercolor=POS_COLOR, font=dict(color="#000000"))
+        ))
+        fig.add_trace(go.Bar(
+            x=x_neg, y=y_all[mask_neg], name="Net GEX", showlegend=False,
+            marker_color=NEG_COLOR, opacity=0.92,
+            customdata=cd_neg,
+            hovertemplate=(
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                "Net Gex: %{customdata[5]:,.1f}"
+                "<extra></extra>"
             ),
-        )
+            hoverlabel=dict(bgcolor=NEG_COLOR)
+        ))
 
-    # Convenience: build customdata matrix used by all line traces
-    # order: [Call OI, Put OI, Call Volume, Put Volume]
-    cd_cols = [
-        np.asarray(series_dict.get("call_oi", np.zeros_like(gex)), dtype=float),
-        np.asarray(series_dict.get("put_oi", np.zeros_like(gex)), dtype=float),
-        np.asarray(series_dict.get("call_vol", np.zeros_like(gex)), dtype=float),
-        np.asarray(series_dict.get("put_vol", np.zeros_like(gex)), dtype=float),
+    # Optional series as smooth spline lines with fill
+    SERIES_ORDER = [
+        ("Put OI", "Put OI"),
+        ("Call OI", "Call OI"),
+        ("Put Volume", "Put Volume"),
+        ("Call Volume", "Call Volume"),
+        ("AG", "AG"),
+        ("PZ", "PZ"),
+        ("PZ_FP", "PZ_FP"),
     ]
-    customdata = np.vstack(cd_cols).T
 
-    def add_line(key: str, name: str, color_key: str, show: bool, tail_field: str, text_black: bool = False):
-        if not show:
-            return
-        y = np.asarray(series_dict.get(key, np.zeros_like(gex)), dtype=float)
-        fig.add_trace(
-            go.Scatter(
-                x=x,
-                y=y,
-                name=name,
-                mode="lines+markers",
-                line=dict(color=COLORS[color_key], width=1.2, shape="spline", smoothing=1.3),
-                marker=dict(color=COLORS[color_key], size=4, line=dict(width=0)),
-                fill="tozeroy",
-                fillcolor=_rgba(COLORS[color_key], 0.18),
-                customdata=customdata,
-                hovertemplate=_mk_hover_template(tail_field),
-                hoverlabel=dict(
-                    bgcolor=COLORS[color_key],         # same as line color
-                    bordercolor="white",                # (7) white border
-                    font=dict(color="black" if text_black else "white"),  # (1)(2)(3)
-                ),
-                yaxis="y2",  # these line series typically mapped to secondary axis; retain
+    for ser_key, ser_label in SERIES_ORDER:
+        if series_enabled.get(ser_key, False) and (ser_key in series_dict):
+            y_full = np.asarray(series_dict[ser_key], dtype=float)[idx_keep]
+            cd = np.stack([
+                np.array(x_labels, dtype=object),
+                call_oi_f, put_oi_f, call_v_f, put_v_f, y_full
+            ], axis=-1)
+
+            colors = LINE_STYLE.get(ser_key, {"line": "#BBBBBB", "fill": "rgba(187,187,187,0.2)"})
+            hovertemplate = (
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                f"{ser_label}: " + "%{customdata[5]:,.1f}"
+                "<extra></extra>"
             )
-        )
 
-    # Lines for each toggle. Only text color exceptions: Call OI, PZ, PZ_FP.
-    add_line("put_oi",   "Put OI",        "put_oi",   toggles.get("put_oi", False),   "Put OI")
-    add_line("call_oi",  "Call OI",       "call_oi",  toggles.get("call_oi", False),  "Call OI",  text_black=True)  # (1)
-    add_line("put_vol",  "Put Volume",    "put_vol",  toggles.get("put_vol", False),  "Put Volume")
-    add_line("call_vol", "Call Volume",   "call_vol", toggles.get("call_vol", False), "Call Volume")
-    add_line("ag",       "AG",            "ag",       toggles.get("ag", False),       "AG")
-    add_line("pz",       "PZ",            "pz",       toggles.get("pz", False),       "PZ", text_black=True)        # (2)
-    add_line("pz_fp",    "PZ_FP",         "pz_fp",    toggles.get("pz_fp", False),    "PZ_FP", text_black=True)     # (3)
+            fig.add_trace(go.Scatter(
+                x=x_labels, y=y_full, name=ser_key,
+                mode="lines+markers", yaxis="y2",
+                line=dict(color=colors["line"], width=1.1, shape="spline"),
+                marker=dict(color=colors["line"], size=5),
+                fill="tozeroy", fillcolor=colors["fill"], opacity=0.95,
+                customdata=cd, hovertemplate=hovertemplate,
+                hoverlabel=dict(bgcolor=colors["line"], font=dict(color="#000000"))
+            ))
 
-    # Price line (unchanged except we keep previously chosen width/format)
-    if price is not None:
-        fig.add_vline(
-            x=price,
-            line_color="#FFAE00",
-            line_width=1.2,
-            annotation_text=f"Price: {price:.2f}",
-            annotation_position="top",
-            annotation_font_color="#FFAE00",
-        )
+    # Price marker
+    if (price is not None) and (n > 0):
+        try: price_val = float(price)
+        except Exception: price_val = None
+        if price_val is not None:
+            i_near = int(np.argmin(np.abs(strikes_keep - price_val)))
+            x_idx = i_near
+            fig.add_shape(type="line", x0=x_idx, x1=x_idx, xref="x",
+                          y0=0, y1=1, yref="paper",
+                          line=dict(width=1, color="#f0a000"), layer="above")
+            fig.add_annotation(x=x_idx, y=1.0, xref="x", yref="paper",
+                               text=f"Price: {price_val:.2f}", showarrow=False,
+                               xanchor="center", yanchor="bottom",
+                               font=dict(size=14, color="#f0a000"))
 
-    # Axes & layout (left intact)
     fig.update_layout(
-        bargap=0.15,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0),
-        margin=dict(l=70, r=70, t=40, b=60),
-        template="plotly_dark",
-        xaxis=dict(title="Strike"),
-        yaxis=dict(title="Net GEX"),
-        yaxis2=dict(overlaying="y", side="right", title="Other series"),
+        barmode="overlay", bargap=bargap, bargroupgap=0.0,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        margin=dict(l=40, r=40, t=40, b=40),
+        xaxis=dict(title="Strike", type="category", categoryorder="array",
+                   categoryarray=x_labels, tickmode="array", tickvals=x_labels,
+                   ticktext=x_labels, range=[-0.5, len(x_labels)-0.5],
+                   showgrid=False, fixedrange=True),
+        yaxis=dict(title="Net GEX", showgrid=False, fixedrange=True),
+        yaxis2=dict(title="Other series", overlaying="y", side="right",
+                    showgrid=False, fixedrange=True),
+        hovermode="closest", height=560,
     )
 
-    # Make hover label border white globally as a fallback
-    fig.update_traces(hoverlabel=dict(bordercolor="white"), selector=dict())
-
-    # Chart title (if provided)
     if ticker:
-        fig.update_layout(title=dict(text=ticker, x=0.02, xanchor="left"))
+        fig.add_annotation(x=0.0, y=1.08, xref="paper", yref="paper",
+                           text=str(ticker), showarrow=False,
+                           xanchor="left", font=dict(size=18))
 
     return fig
