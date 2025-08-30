@@ -220,7 +220,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     )
 
     if ticker:
-        fig.add_annotation(x=-0.26, y=1.08, xref="paper", yref="paper",
+        fig.add_annotation(x=0.02, y=1.12, xref="paper", yref="paper",
                            text=str(ticker), showarrow=False,
                            xanchor="left", font=dict(size=18))
 
