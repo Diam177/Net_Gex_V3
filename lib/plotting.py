@@ -141,38 +141,54 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             hoverlabel=dict(bgcolor=NEG_COLOR)
         ))
 
-    for name in ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]:
-        if series_enabled.get(name, False) and name in series_dict:
-            y_full = np.asarray(series_dict[name], dtype=float)[idx_keep]
+    
+    # --- Optional line series with custom hover ---
+    SERIES_ORDER = [
+        ("Put OI", "Put OI"),
+        ("Call OI", "Call OI"),
+        ("Put Volume", "Put Volume"),
+        ("Call Volume", "Call Volume"),
+        ("AG", "AG"),
+        ("PZ", "PZ"),
+        ("PZ_FP", "PZ_FP"),
+    ]
+
+    # Precompute the shared components for customdata
+    call_oi_f = np.asarray(series_dict.get("Call OI", np.zeros(n)), dtype=float)[idx_keep]
+    put_oi_f  = np.asarray(series_dict.get("Put OI",  np.zeros(n)), dtype=float)[idx_keep]
+    call_v_f  = np.asarray(series_dict.get("Call Volume", np.zeros(n)), dtype=float)[idx_keep]
+    put_v_f   = np.asarray(series_dict.get("Put Volume", np.zeros(n)), dtype=float)[idx_keep]
+
+    for ser_key, ser_label in SERIES_ORDER:
+        if series_enabled.get(ser_key, False) and (ser_key in series_dict):
+            y_full = np.asarray(series_dict[ser_key], dtype=float)[idx_keep]
+            # customdata: Strike, Call OI, Put OI, Call Volume, Put Volume, SeriesValue
+            cd = np.stack([
+                    np.array(x_labels, dtype=object),
+                    call_oi_f,
+                    put_oi_f,
+                    call_v_f,
+                    put_v_f,
+                    y_full
+                 ], axis=-1)
+
+            hovertemplate = (
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                f"{ser_label}: " + "%{customdata[5]:,.1f}"
+                "<extra></extra>"
+            )
+
             fig.add_trace(go.Scatter(
-                x=x_labels, y=y_full, name=name, mode="lines+markers", yaxis="y2"
+                x=x_labels, y=y_full, name=ser_key, mode="lines+markers",
+                yaxis="y2",
+                customdata=cd,
+                hovertemplate=hovertemplate
             ))
-
-    if (price is not None) and (n > 0):
-        try:
-            price_val = float(price)
-        except Exception:
-            price_val = None
-        if price_val is not None:
-            i_near = int(np.argmin(np.abs(strikes_keep - price_val)))
-            x_idx = i_near
-            fig.add_shape(
-                type="line",
-                x0=x_idx, x1=x_idx, xref="x",
-                y0=0, y1=1, yref="paper",
-                line=dict(width=2, color="#f0a000"),
-                layer="above"
-            )
-            fig.add_annotation(
-                x=x_idx, y=1.0, xref="x", yref="paper",
-                text=f"Price: {price_val:.2f}",
-                showarrow=False,
-                xanchor="center",
-                yanchor="bottom",
-                font=dict(size=12, color="#f0a000")
-            )
-
-    fig.update_layout(
+fig.update_layout(
         barmode="overlay",
         bargap=bargap,
         bargroupgap=0.0,
@@ -180,7 +196,6 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         margin=dict(l=40, r=40, t=40, b=40),
         xaxis=dict(
             title="Strike",
-            fixedrange=True,
             type="category",
             categoryorder="array",
             categoryarray=x_labels,
@@ -190,8 +205,8 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             range=[-0.5, len(x_labels)-0.5],
             showgrid=False
         ),
-        yaxis=dict(title="Net Gex", showgrid=False, fixedrange=True),
-        yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False, fixedrange=True),
+        yaxis=dict(title="Net Gex", showgrid=False),
+        yaxis2=dict(title="Other series", overlaying="y", side="right", showgrid=False),
         hovermode="closest",
         height=560
     )
