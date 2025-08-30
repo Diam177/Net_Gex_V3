@@ -45,3 +45,12 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None):
         height=560
     )
     return fig
+
+def _autodetect_price(series_dict):
+    for k in ("price", "Price", "_price", "spot", "Spot"):
+        if isinstance(series_dict, dict) and k in series_dict:
+            try:
+                return float(series_dict[k])
+            except Exception:
+                pass
+    return None
