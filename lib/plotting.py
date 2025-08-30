@@ -89,13 +89,73 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     else:
         bargap = 0.15
 
-    # Net Gex bars with per-bar color by sign
+    
+    # Net Gex bars split by sign with custom hover (table-like) and colored hover box
     if series_enabled.get("Net Gex", True):
-        y = np.asarray(series_dict["Net Gex"], dtype=float)[idx_keep]
-        colors = [POS_COLOR if v >= 0 else NEG_COLOR for v in y]
-        fig.add_trace(go.Bar(x=x_labels, y=y, name="Net Gex", marker_color=colors, opacity=0.92))
+        y_all = np.asarray(series_dict["Net Gex"], dtype=float)[idx_keep]
+        call_oi_f = np.asarray(series_dict.get("Call OI", np.zeros_like(y_all)), dtype=float)[idx_keep]
+        put_oi_f  = np.asarray(series_dict.get("Put OI",  np.zeros_like(y_all)), dtype=float)[idx_keep]
+        call_v_f  = np.asarray(series_dict.get("Call Volume", np.zeros_like(y_all)), dtype=float)[idx_keep]
+        put_v_f   = np.asarray(series_dict.get("Put Volume", np.zeros_like(y_all)), dtype=float)[idx_keep]
 
-    # Optional lines (aligned to filtered x)
+        mask_pos = y_all >= 0
+        mask_neg = ~mask_pos
+
+        # Positive bars
+        x_pos = [lbl for lbl, m in zip(x_labels, mask_pos) if m]
+        y_pos = y_all[mask_pos]
+        cd_pos = np.stack([
+            np.array([lbl for lbl, m in zip(x_labels, mask_pos) if m], dtype=object),
+            call_oi_f[mask_pos],
+            put_oi_f[mask_pos],
+            call_v_f[mask_pos],
+            put_v_f[mask_pos],
+            y_pos
+        ], axis=-1)
+        fig.add_trace(go.Bar(
+            x=x_pos, y=y_pos, name="Net Gex +",
+            marker_color=POS_COLOR, opacity=0.92,
+            customdata=cd_pos,
+            hovertemplate=(
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                "Net GEX: %{customdata[5]:,.1f}"
+                "<extra></extra>"
+            ),
+            hoverlabel=dict(bgcolor=POS_COLOR)
+        ))
+
+        # Negative bars
+        x_neg = [lbl for lbl, m in zip(x_labels, mask_neg) if m]
+        y_neg = y_all[mask_neg]
+        cd_neg = np.stack([
+            np.array([lbl for lbl, m in zip(x_labels, mask_neg) if m], dtype=object),
+            call_oi_f[mask_neg],
+            put_oi_f[mask_neg],
+            call_v_f[mask_neg],
+            put_v_f[mask_neg],
+            y_neg
+        ], axis=-1)
+        fig.add_trace(go.Bar(
+            x=x_neg, y=y_neg, name="Net Gex -",
+            marker_color=NEG_COLOR, opacity=0.92,
+            customdata=cd_neg,
+            hovertemplate=(
+                "Strike: %{customdata[0]}<br>"
+                "Call OI: %{customdata[1]:,.0f}<br>"
+                "Put OI: %{customdata[2]:,.0f}<br>"
+                "Call Volume: %{customdata[3]:,.0f}<br>"
+                "Put Volume: %{customdata[4]:,.0f}<br>"
+                "Net GEX: %{customdata[5]:,.1f}"
+                "<extra></extra>"
+            ),
+            hoverlabel=dict(bgcolor=NEG_COLOR)
+        ))
+    # Optional lines
+ (aligned to filtered x)
     for name in ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]:
         if series_enabled.get(name, False) and name in series_dict:
             y_full = np.asarray(series_dict[name], dtype=float)[idx_keep]
