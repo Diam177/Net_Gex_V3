@@ -117,6 +117,43 @@ if selected_block is None:
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
+
+def compute_gflip(strikes_arr, gex_arr, spot=None):
+    import numpy as np, math
+    strikes = np.asarray(strikes_arr, dtype=float)
+    gex = np.asarray(gex_arr, dtype=float)
+    mask = np.isfinite(strikes) & np.isfinite(gex)
+    if mask.sum() < 2:
+        return None
+    strikes = strikes[mask]; gex = gex[mask]
+    order = np.argsort(strikes)
+    strikes = strikes[order]; gex = gex[order]
+
+    # find zero-crossings
+    crossings = []
+    for i in range(len(gex)-1):
+        gi, gj = gex[i], gex[i+1]
+        if gi * gj < 0:
+            ki, kj = strikes[i], strikes[i+1]
+            kflip = ki + (0.0 - gi) * (kj - ki) / (gj - gi)
+            crossings.append(float(kflip))
+
+    # exact zeros count as candidate flips
+    zeros = np.where(np.isclose(gex, 0.0, atol=1e-12))[0]
+    zero_strikes = [float(strikes[i]) for i in zeros]
+
+    cand = crossings + zero_strikes
+    if cand:
+        if spot is None or not np.isfinite(spot):
+            return float(cand[0])
+        return float(cand[int(np.argmin(np.abs(np.asarray(cand, dtype=float) - float(spot))))])
+
+    # no crossing: choose boundary inside range to keep line visible
+    if np.all(gex > 0):
+        return float(strikes[-1])
+    if np.all(gex < 0):
+        return float(strikes[0])
+    return None
 S_used = float(quote.get('regularMarketPrice', S))
 metrics = compute_series_metrics_for_expiry(
     S=S_used,
@@ -140,6 +177,9 @@ df = pd.DataFrame({
     "PZ": np.round(metrics["pz"], 6),
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
+
+g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S_used)
+
 table_csv = df.to_csv(index=False).encode('utf-8')
 table_download_placeholder.download_button(
     'Скачать таблицу', data=table_csv,
@@ -148,10 +188,10 @@ table_download_placeholder.download_button(
 
 # === Plot ===
 st.subheader("GammaStrat v4.5")
-cols = st.columns(8)
+cols = st.columns(9)
 toggles = {}
-names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
-defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
+names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
+defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False}
 for i, name in enumerate(names):
     with cols[i]:
         toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
@@ -167,5 +207,5 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used, ticker=ticker)
+fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used, ticker=ticker, g_flip=g_flip_val)
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
