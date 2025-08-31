@@ -283,7 +283,7 @@ try:
         if not _host or not _key:
             st.error("Не заданы RAPIDAPI_HOST/RAPIDAPI_KEY")
         else:
-            _df_prev = fetch_previous_session_ohlcv(symbol=_symbol_test, host=_host, api_key=_key,
+            _df_prev = fetch_previous_session_ohlcv(symbol=_symbol_test, host=_host, key=_key,
                                                     interval=_interval_test, range_="5d",
                                                     regular_hours_only=True)
             if _df_prev is None or _df_prev.empty:
