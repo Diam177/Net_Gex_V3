@@ -118,10 +118,22 @@ day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
 
-def compute_gflip(strikes_arr, gex_arr, spot=None):
-    import numpy as np, math
+
+def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=3, min_amp_ratio=0.03):
+    """
+    Practical flip:
+      - ищем ВСЕ точки пересечения нуля (строго)
+      - для каждой точки проверяем «устойчивость» знака после пересечения:
+          * знак сохраняется минимум на min_run соседних страйках
+          * средняя |Net Gex| на этом отрезке >= min_amp_ratio * max(|Net Gex|) по ряду
+      - возвращаем ближайшую к spot устойчивую точку (если spot не задан — первую устойчивую)
+      - если нет устойчивых пересечений, используем ближайшее strict-пересечение
+      - если весь ряд одного знака — возвращаем границу диапазона (внутри видимой области)
+    """
+    import numpy as np
     strikes = np.asarray(strikes_arr, dtype=float)
     gex = np.asarray(gex_arr, dtype=float)
+
     mask = np.isfinite(strikes) & np.isfinite(gex)
     if mask.sum() < 2:
         return None
@@ -129,26 +141,67 @@ def compute_gflip(strikes_arr, gex_arr, spot=None):
     order = np.argsort(strikes)
     strikes = strikes[order]; gex = gex[order]
 
-    # find zero-crossings
+    max_abs = float(np.nanmax(np.abs(gex))) if np.any(np.isfinite(gex)) else 0.0
+    if max_abs <= 0:
+        return None
+    amp_thresh = max_abs * float(min_amp_ratio)
+
+    # Найти строгие пересечения нуля (между соседними точками)
     crossings = []
     for i in range(len(gex)-1):
         gi, gj = gex[i], gex[i+1]
-        if gi * gj < 0:
+        if np.isfinite(gi) and np.isfinite(gj) and (gi * gj < 0):
             ki, kj = strikes[i], strikes[i+1]
             kflip = ki + (0.0 - gi) * (kj - ki) / (gj - gi)
-            crossings.append(float(kflip))
+            # оценка устойчивости после пересечения — берём «после» сторону знака gj
+            post_sign = np.sign(gj)
+            j = i+1
+            run_idx = []
+            while j < len(gex) and np.sign(gex[j]) == post_sign:
+                run_idx.append(j); j += 1
+            run_len = len(run_idx)
+            mean_abs = float(np.nanmean(np.abs(gex[run_idx]))) if run_idx else 0.0
+            crossings.append({
+                "k": float(kflip),
+                "i": i,
+                "run_len": run_len,
+                "mean_abs": mean_abs,
+                "stable": (run_len >= int(min_run)) and (mean_abs >= amp_thresh)
+            })
 
-    # exact zeros count as candidate flips
-    zeros = np.where(np.isclose(gex, 0.0, atol=1e-12))[0]
-    zero_strikes = [float(strikes[i]) for i in zeros]
+    # Точные нули тоже считаем кандидатами
+    zero_idx = [int(t) for t in np.where(np.isclose(gex, 0.0, atol=max_abs*1e-6))[0].tolist()]
+    for zi in zero_idx:
+        # устойчивость определяем по «после» стороне (zi+1 …)
+        j = zi+1
+        post_sign = np.sign(gex[j]) if j < len(gex) else 0.0
+        run_idx = []
+        while j < len(gex) and np.sign(gex[j]) == post_sign:
+            run_idx.append(j); j += 1
+        run_len = len(run_idx)
+        mean_abs = float(np.nanmean(np.abs(gex[run_idx]))) if run_idx else 0.0
+        crossings.append({
+            "k": float(strikes[zi]),
+            "i": zi,
+            "run_len": run_len,
+            "mean_abs": mean_abs,
+            "stable": (run_len >= int(min_run)) and (mean_abs >= amp_thresh)
+        })
 
-    cand = crossings + zero_strikes
-    if cand:
+    if crossings:
+        # Устойчивые кандидаты
+        stable = [c for c in crossings if c["stable"]]
+        if stable:
+            if spot is None or not np.isfinite(spot):
+                return float(stable[0]["k"])
+            k_arr = np.array([c["k"] for c in stable], dtype=float)
+            return float(k_arr[np.argmin(np.abs(k_arr - float(spot)))])
+        # fallback: ближайшее strict-пересечение
+        k_arr = np.array([c["k"] for c in crossings], dtype=float)
         if spot is None or not np.isfinite(spot):
-            return float(cand[0])
-        return float(cand[int(np.argmin(np.abs(np.asarray(cand, dtype=float) - float(spot))))])
-
-    # no crossing: choose boundary inside range to keep line visible
+            return float(k_arr[0])
+        return float(k_arr[np.argmin(np.abs(k_arr - float(spot)))])
+    # весь ряд одного знака
     if np.all(gex > 0):
         return float(strikes[-1])
     if np.all(gex < 0):
