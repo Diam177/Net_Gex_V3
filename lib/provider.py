@@ -233,7 +233,7 @@ def fetch_option_chain(
 
 
 # ---------- OHLCV: последняя полностью закрытая сессия ----------
-def fetch_previous_session_ohlcv(symbol: str, host: str, key: str | None = None, api_key: str | None = None,
+def fetch_previous_session_ohlcv(symbol: str, host: str, key: Optional[str] = None, api_key: Optional[str] = None,
                                  interval: str = "1m", range_: str = "5d",
                                  timeout: int = DEFAULT_TIMEOUT,
                                  regular_hours_only: bool = True):
