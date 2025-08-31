@@ -9,26 +9,18 @@ from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
-st.title("Net GEX / AG / PZ / PZ_FP — Streamlit")
-
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 
 with st.sidebar:
-    st.markdown("### RapidAPI")
-    st.write("Ключи читаются из `.streamlit/secrets.toml` или переменных окружения.")
-    st.text(f"HOST: {RAPIDAPI_HOST or '—'}")
-    st.text(f"KEY:  {'set' if RAPIDAPI_KEY else '—'}")
-
-# === Inputs ===
-col_t, col_e = st.columns([1,1])
-with col_t:
+    # Controls in sidebar
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
-with col_e:
-    st.caption("Экспирация по умолчанию — ближайшая будущая")
     expiry_placeholder = st.empty()
-
+    data_status_placeholder = st.empty()
+    download_placeholder = st.empty()
+# === Inputs ===
+# Перенесено в левый сайдбар
 st.divider()
 
 col_f = st.container()
