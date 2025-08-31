@@ -165,10 +165,13 @@ names = ["Net GEX","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_F
 defaults = {"Net GEX": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
 for i, name in enumerate(names):
     with cols[i]:
-        toggles[name] = color_hex = LABEL_COLOR.get(name)
-if name != "Net GEX" and color_hex:
-    st.markdown(f"<span style='color:{color_hex}; font-weight:600'>{name}</span>", unsafe_allow_html=True)
-st.toggle("", value=defaults.get(name, False, label_visibility='collapsed'), key=f"tgl_{name}")
+        color_hex = LABEL_COLOR.get(name)
+        if name != "Net GEX" and color_hex:
+            st.markdown(f"<span style='color:{color_hex}; font-weight:600'>{name}</span>", unsafe_allow_html=True)
+            toggles[name] = st.toggle("", value=defaults.get(name, False), key=f"tgl_{name}", label_visibility="collapsed")
+        else:
+            toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
+, key=f"tgl_{name}", label_visibility="collapsed")
 
 series_dict = {
     "Net GEX": df["Net GEX"].values,
