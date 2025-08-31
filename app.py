@@ -19,10 +19,9 @@ with st.sidebar:
     expiry_placeholder = st.empty()
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
+    table_download_placeholder = st.empty()
 # === Inputs ===
 # Перенесено в левый сайдбар
-st.divider()
-
 col_f = st.container()
 
 raw_data = None
@@ -130,7 +129,6 @@ metrics = compute_series_metrics_for_expiry(
 )
 
 # === Table ===
-st.divider()
 df = pd.DataFrame({
     "Strike": metrics["strikes"],
     "Put OI": metrics["put_oi"],
@@ -142,10 +140,13 @@ df = pd.DataFrame({
     "PZ": np.round(metrics["pz"], 6),
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
-st.dataframe(df, use_container_width=True)
+table_csv = df.to_csv(index=False).encode('utf-8')
+table_download_placeholder.download_button(
+    'Скачать таблицу', data=table_csv,
+    file_name=f"{ticker}_{selected_exp}_table.csv", mime='text/csv'
+)
 
 # === Plot ===
-st.divider()
 st.subheader("GammaStrat v4.5")
 cols = st.columns(8)
 toggles = {}
