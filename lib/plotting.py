@@ -205,16 +205,22 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                                xanchor="center", yanchor="bottom",
                                font=dict(size=14, color="#f0a000"))
 
+    
+        # Build dynamic right-axis title (exclude Net Gex; show only specific series)
+        whitelist = ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
+        picked = [k for k in whitelist if series_enabled.get(k, False)]
+        right_title = "Other parameters" + ((" (" + ", ".join(picked) + ")") if picked else "")
+    
     fig.update_layout(
         barmode="overlay", bargap=bargap, bargroupgap=0.0,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=40, r=40, t=40, b=40),
         xaxis=dict(title="Strike", type="category", categoryorder="array",
                    categoryarray=x_labels, tickmode="array", tickvals=x_labels,
                    ticktext=x_labels, range=[-0.5, len(x_labels)-0.5],
                    showgrid=False, fixedrange=True),
         yaxis=dict(title="Net GEX", showgrid=False, fixedrange=True),
-        yaxis2=dict(title="Other series", overlaying="y", side="right",
+        yaxis2=dict(title=right_title, overlaying="y", side="right",
                     showgrid=False, fixedrange=True),
         hovermode="closest", height=560,
     )
