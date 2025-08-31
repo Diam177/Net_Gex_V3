@@ -148,36 +148,29 @@ table_download_placeholder.download_button(
 
 # === Plot ===
 st.subheader("GammaStrat v4.5")
-cols = st.columns(8)
-toggles = {}
-names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
-# Отображаемая метка для первого тумблера
-labels_map = {"Net Gex": "Net GEX"}
-defaults = {"Net Gex": True}
 
-# CSS: окраска подписи тумблера в цвет линии ТОЛЬКО когда тумблер включён.
-css = r"""
+css = """
 <style>
-/* Put OI */    div[data-testid="stHorizontalBlock"] > div:nth-child(2):has([role="switch"][aria-checked="true"]) label{ color:#7F0020 !important; }
-/* Call OI */   div[data-testid="stHorizontalBlock"] > div:nth-child(3):has([role="switch"][aria-checked="true"]) label{ color:#2FD06F !important; }
-/* Put Vol */   div[data-testid="stHorizontalBlock"] > div:nth-child(4):has([role="switch"][aria-checked="true"]) label{ color:#8C5A0A !important; }
-/* Call Vol */  div[data-testid="stHorizontalBlock"] > div:nth-child(5):has([role="switch"][aria-checked="true"]) label{ color:#2D83FF !important; }
-/* AG */        div[data-testid="stHorizontalBlock"] > div:nth-child(6):has([role="switch"][aria-checked="true"]) label{ color:#8A63F6 !important; }
-/* PZ */        div[data-testid="stHorizontalBlock"] > div:nth-child(7):has([role="switch"][aria-checked="true"]) label{ color:#FFC400 !important; }
-/* PZ_FP */     div[data-testid="stHorizontalBlock"] > div:nth-child(8):has([role="switch"][aria-checked="true"]) label{ color:#B0B8C5 !important; }
+/* Цвета подписей тумблеров (2..8) под цвета линий чарта */
+div[data-testid="stHorizontalBlock"] > div:nth-child(2) label { color:#7F0020 !important; } /* Put OI */
+div[data-testid="stHorizontalBlock"] > div:nth-child(3) label { color:#2FD06F !important; } /* Call OI */
+div[data-testid="stHorizontalBlock"] > div:nth-child(4) label { color:#8C5A0A !important; } /* Put Volume */
+div[data-testid="stHorizontalBlock"] > div:nth-child(5) label { color:#2D83FF !important; } /* Call Volume */
+div[data-testid="stHorizontalBlock"] > div:nth-child(6) label { color:#8A63F6 !important; } /* AG */
+div[data-testid="stHorizontalBlock"] > div:nth-child(7) label { color:#FFC400 !important; } /* PZ */
+div[data-testid="stHorizontalBlock"] > div:nth-child(8) label { color:#B0B8C5 !important; } /* PZ_FP */
 </style>
 """
 st.markdown(css, unsafe_allow_html=True)
 
 cols = st.columns(8)
 toggles = {}
+names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
+defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
 for i, name in enumerate(names):
     with cols[i]:
-        toggles[name] = st.toggle(labels_map.get(name, name), value=defaults.get(name, False), key=f"tgl_{name}")
-
-series_enabled = toggles
-
-
+        label = "Net GEX" if name == "Net Gex" else name
+        toggles[name] = st.toggle(label, value=defaults.get(name, False), key=f"tgl_{name}")
 
 series_dict = {
     "Net Gex": df["Net Gex"].values,
