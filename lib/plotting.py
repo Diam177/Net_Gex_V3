@@ -69,7 +69,7 @@ def _format_labels(vals):
             out.append(str(v))
     return out
 
-def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticker=None):
+def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticker=None, g_flip=None):
     strikes = np.asarray(strikes, dtype=float)
     net_gex = np.asarray(net_gex, dtype=float)
 
@@ -204,6 +204,22 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                                text=f"Price: {price_val:.2f}", showarrow=False,
                                xanchor="center", yanchor="bottom",
                                font=dict(size=14, color="#f0a000"))
+        # G-Flip marker (optional, dashed)
+        try:
+            if series_enabled.get("G-Flip", False) and (g_flip is not None) and (n > 0):
+                k_val = float(g_flip)
+                i_near_g = int(np.argmin(np.abs(strikes_keep - k_val)))
+                x_idx_g = i_near_g
+                fig.add_shape(type="line", x0=x_idx_g, x1=x_idx_g, xref="x",
+                              y0=0, y1=1, yref="paper",
+                              line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
+                fig.add_annotation(x=x_idx_g, y=1.0, xref="x", yref="paper",
+                                   text=f"G-Flip: {k_val:.2f}", showarrow=False,
+                                   xanchor="center", yanchor="bottom",
+                                   font=dict(size=14, color="#AAAAAA"))
+        except Exception:
+            pass
+
 
     
         # Build dynamic right-axis title (exclude Net Gex; show only specific series)
