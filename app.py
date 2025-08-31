@@ -151,37 +151,32 @@ st.subheader("GammaStrat v4.5")
 cols = st.columns(8)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
-# Переименовываем только отображаемую метку Net Gex -> Net GEX (ключ остаётся прежним)
+# Отображаемая метка для первого тумблера
 labels_map = {"Net Gex": "Net GEX"}
-
-# Цвета линий для подписей (используются только когда тумблер включён)
-label_colors = {
-    "Put OI": "#7F0020",
-    "Call OI": "#2FD06F",
-    "Put Volume": "#8C5A0A",
-    "Call Volume": "#2D83FF",
-    "AG": "#8A63F6",
-    "PZ": "#FFC400",
-    "PZ_FP": "#B0B8C5",
-}
-
 defaults = {"Net Gex": True}
+
+# CSS: окраска подписи тумблера в цвет линии ТОЛЬКО когда тумблер включён.
+css = r"""
+<style>
+/* Put OI */    div[data-testid="stHorizontalBlock"] > div:nth-child(2):has([role="switch"][aria-checked="true"]) label{ color:#7F0020 !important; }
+/* Call OI */   div[data-testid="stHorizontalBlock"] > div:nth-child(3):has([role="switch"][aria-checked="true"]) label{ color:#2FD06F !important; }
+/* Put Vol */   div[data-testid="stHorizontalBlock"] > div:nth-child(4):has([role="switch"][aria-checked="true"]) label{ color:#8C5A0A !important; }
+/* Call Vol */  div[data-testid="stHorizontalBlock"] > div:nth-child(5):has([role="switch"][aria-checked="true"]) label{ color:#2D83FF !important; }
+/* AG */        div[data-testid="stHorizontalBlock"] > div:nth-child(6):has([role="switch"][aria-checked="true"]) label{ color:#8A63F6 !important; }
+/* PZ */        div[data-testid="stHorizontalBlock"] > div:nth-child(7):has([role="switch"][aria-checked="true"]) label{ color:#FFC400 !important; }
+/* PZ_FP */     div[data-testid="stHorizontalBlock"] > div:nth-child(8):has([role="switch"][aria-checked="true"]) label{ color:#B0B8C5 !important; }
+</style>
+"""
+st.markdown(css, unsafe_allow_html=True)
+
 cols = st.columns(8)
 toggles = {}
 for i, name in enumerate(names):
     with cols[i]:
-        display_label = labels_map.get(name, name)
-        if name == "Net Gex":
-            # Для Net GEX просто показываем метку и тумблер как обычно
-            toggles[name] = st.toggle(display_label, value=defaults.get(name, False), key=f"tgl_{name}")
-        else:
-            # Спрячем штатную метку и выведем свою цветную рядом
-            val = st.toggle(display_label, value=defaults.get(name, False), key=f"tgl_{name}", label_visibility="collapsed")
-            toggles[name] = val
-            color = label_colors.get(name) if val else "#FFFFFF"
-            st.markdown(f"<span style='margin-left:8px; font-weight:600; color:{color}'>{display_label}</span>", unsafe_allow_html=True)
+        toggles[name] = st.toggle(labels_map.get(name, name), value=defaults.get(name, False), key=f"tgl_{name}")
 
 series_enabled = toggles
+
 
 
 series_dict = {
