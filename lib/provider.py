@@ -319,18 +319,18 @@ def fetch_previous_session_ohlcv(symbol: str, host: str, key: str,
     df_raw = None
     # 1) v2 + symbol
     try:
-        df_raw = _try("https://yahoo-finance15.p.rapidapi.com/api/v2/stock/history", params_symbol)
+        df_raw = _try("https://{host}/api/v2/stock/history", params_symbol)
     except FileNotFoundError:
         pass
     # 2) v1 + symbol
     if df_raw is None or df_raw.empty:
         try:
-            df_raw = _try("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", params_symbol)
+            df_raw = _try("https://{host}/api/v1/stock/history", params_symbol)
         except FileNotFoundError:
             pass
     # 3) v1 + ticker (на всякий случай для старых бэкендов)
     if df_raw is None or df_raw.empty:
-        df_raw = _try("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", params_ticker)
+        df_raw = _try("https://{host}/api/v1/stock/history", params_ticker)
 
     # Ожидаемые поля: timestamp_unix, open, high, low, close, volume
     cols = {"timestamp_unix": "timestamp_unix", "timestamp": "timestamp_unix"}
@@ -361,7 +361,7 @@ def fetch_previous_session_ohlcv(symbol: str, host: str, key: str,
         day_df = day_df[(day_df["datetime"].dt.time >= pd.to_datetime("09:30").time()) &
                         (day_df["datetime"].dt.time <= pd.to_datetime("16:00").time())]
 
-    return day_df[["datetime","open","high","close","low","volume"]].rename(columns={"high":"high","low":"low"}).reset_index(drop=True)
+    return day_df[["datetime","open","high","low","close","volume"]].reset_index(drop=True)
 
 
 import requests, pandas as pd
@@ -384,13 +384,15 @@ def fetch_previous_session_ohlcv(symbol: str, host: str, key: str,
                                  interval: str = "1m", range_: str = "5d",
                                  timeout: int = 15, regular_hours_only: bool = True) -> pd.DataFrame:
     headers = {"x-rapidapi-host": host, "x-rapidapi-key": key}
-    variants = [
-        ("https://yahoo-finance15.p.rapidapi.com/api/v2/stock/history", {"symbol": symbol, "interval": interval, "range": range_}),
-        ("https://yahoo-finance15.p.rapidapi.com/api/v2/stock/history", {"ticker": symbol, "interval": interval, "range": range_}),
-        ("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", {"symbol": symbol, "interval": interval, "range": range_}),
-        ("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", {"ticker": symbol, "interval": interval, "range": range_}),
-        ("https://yahoo-finance15.p.rapidapi.com/api/v1/market/history", {"symbol": symbol, "interval": interval, "range": range_}),
-        ("https://yahoo-finance15.p.rapidapi.com/api/v1/market/history", {"ticker": symbol, "interval": interval, "range": range_}),
+    variants = [("https://{host}/api/v2/markets/stock/history", {"symbol": symbol, "interval": interval, "limit": 640}),
+        ("https://{host}/api/v2/markets/stock/history", {"ticker": symbol, "interval": interval, "limit": 640}),
+        
+        ("https://{host}/api/v2/stock/history", {"symbol": symbol, "interval": interval, "range": range_}),
+        ("https://{host}/api/v2/stock/history", {"ticker": symbol, "interval": interval, "range": range_}),
+        ("https://{host}/api/v1/stock/history", {"symbol": symbol, "interval": interval, "range": range_}),
+        ("https://{host}/api/v1/stock/history", {"ticker": symbol, "interval": interval, "range": range_}),
+        ("https://{host}/api/v1/market/history", {"symbol": symbol, "interval": interval, "range": range_}),
+        ("https://{host}/api/v1/market/history", {"ticker": symbol, "interval": interval, "range": range_}),
     ]
 
     last_err = None
