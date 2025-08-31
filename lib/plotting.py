@@ -200,7 +200,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
             fig.add_shape(type="line", x0=x_idx, x1=x_idx, xref="x",
                           y0=0, y1=1, yref="paper",
                           line=dict(width=1, color="#f0a000"), layer="above")
-            fig.add_annotation(x=x_idx, y=1.0, xref="x", yref="paper",
+            fig.add_annotation(x=x_idx, y=1.08, xref="x", yref="paper",
                                text=f"Price: {price_val:.2f}", showarrow=False,
                                xanchor="center", yanchor="bottom",
                                font=dict(size=14, color="#f0a000"))
@@ -213,15 +213,23 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 fig.add_shape(type="line", x0=x_idx_g, x1=x_idx_g, xref="x",
                               y0=0, y1=1, yref="paper",
                               line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
-                fig.add_annotation(x=x_idx_g, y=1.0, xref="x", yref="paper",
+                fig.add_annotation(x=x_idx_g, y=1.08, xref="x", yref="paper",
                                    text=f"G-Flip: {k_val:.2f}", showarrow=False,
-                                   xanchor="center", yanchor="bottom",
+                                   xanchor="center", yanchor="top",
                                    font=dict(size=14, color="#AAAAAA"))
+                # add legend entry (non-clickable via layout at end)
+                try:
+                    yvals = np.asarray(series_dict.get("Net Gex", net_gex), dtype=float)[idx_keep]
+                    y_min = float(np.nanmin(yvals)) if np.any(np.isfinite(yvals)) else 0.0
+                    y_max = float(np.nanmax(yvals)) if np.any(np.isfinite(yvals)) else 1.0
+                    fig.add_trace(go.Scatter(
+                        x=[x_idx_g, x_idx_g], y=[y_min, y_max], name="G-Flip",
+                        mode="lines", line=dict(color="#AAAAAA", width=1, dash="dash"),
+                        hoverinfo="skip", showlegend=True, yaxis="y"))
+                except Exception:
+                    pass
         except Exception:
             pass
-
-
-    
         # Build dynamic right-axis title (exclude Net Gex; show only specific series)
         whitelist = ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
         picked = [k for k in whitelist if series_enabled.get(k, False)]
