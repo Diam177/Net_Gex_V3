@@ -9,6 +9,17 @@ from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
+
+# Label colors for parameter toggles (must match line colors in plotting.LINE_STYLE)
+LABEL_COLOR = {
+    "Put OI": "#7F0020",
+    "Call OI": "#2FD06F",
+    "Put Volume": "#8C5A0A",
+    "Call Volume": "#2D83FF",
+    "AG": "#8A63F6",
+    "PZ": "#FFC400",
+    "PZ_FP": "#B0B8C5",
+}
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
@@ -135,7 +146,7 @@ df = pd.DataFrame({
     "Call OI": metrics["call_oi"],
     "Put Volume": metrics["put_vol"],
     "Call Volume": metrics["call_vol"],
-    "Net Gex": metrics["net_gex"],
+    "Net GEX": metrics["net_gex"],
     "AG": metrics["ag"],
     "PZ": np.round(metrics["pz"], 6),
     "PZ_FP": np.round(metrics["pz_fp"], 6),
@@ -148,32 +159,19 @@ table_download_placeholder.download_button(
 
 # === Plot ===
 st.subheader("GammaStrat v4.5")
-
-css = """
-<style>
-/* Цвета подписей тумблеров (2..8) под цвета линий чарта */
-div[data-testid="stHorizontalBlock"] > div:nth-child(2) label { color:#7F0020 !important; } /* Put OI */
-div[data-testid="stHorizontalBlock"] > div:nth-child(3) label { color:#2FD06F !important; } /* Call OI */
-div[data-testid="stHorizontalBlock"] > div:nth-child(4) label { color:#8C5A0A !important; } /* Put Volume */
-div[data-testid="stHorizontalBlock"] > div:nth-child(5) label { color:#2D83FF !important; } /* Call Volume */
-div[data-testid="stHorizontalBlock"] > div:nth-child(6) label { color:#8A63F6 !important; } /* AG */
-div[data-testid="stHorizontalBlock"] > div:nth-child(7) label { color:#FFC400 !important; } /* PZ */
-div[data-testid="stHorizontalBlock"] > div:nth-child(8) label { color:#B0B8C5 !important; } /* PZ_FP */
-</style>
-"""
-st.markdown(css, unsafe_allow_html=True)
-
 cols = st.columns(8)
 toggles = {}
-names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
-defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
+names = ["Net GEX","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
+defaults = {"Net GEX": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
 for i, name in enumerate(names):
     with cols[i]:
-        label = "Net GEX" if name == "Net Gex" else name
-        toggles[name] = st.toggle(label, value=defaults.get(name, False), key=f"tgl_{name}")
+        toggles[name] = color_hex = LABEL_COLOR.get(name)
+if name != "Net GEX" and color_hex:
+    st.markdown(f"<span style='color:{color_hex}; font-weight:600'>{name}</span>", unsafe_allow_html=True)
+st.toggle("", value=defaults.get(name, False, label_visibility='collapsed'), key=f"tgl_{name}")
 
 series_dict = {
-    "Net Gex": df["Net Gex"].values,
+    "Net GEX": df["Net GEX"].values,
     "Put OI": df["Put OI"].values,
     "Call OI": df["Call OI"].values,
     "Put Volume": df["Put Volume"].values,
@@ -183,5 +181,5 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used, ticker=ticker)
+fig = make_figure(df["Strike"].values, df["Net GEX"].values, toggles, series_dict, price=S_used, ticker=ticker)
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
