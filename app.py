@@ -168,11 +168,9 @@ for i, name in enumerate(names):
         color_hex = LABEL_COLOR.get(name)
         if name != "Net GEX" and color_hex:
             st.markdown(f"<span style='color:{color_hex}; font-weight:600'>{name}</span>", unsafe_allow_html=True)
-            toggles[name] = st.toggle("", value=defaults.get(name, False), key=f"tgl_{name}", label_visibility="collapsed")
+            toggles[name] = st.toggle(" ", value=defaults.get(name, False), key=f"tgl_{name}")
         else:
             toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
-, key=f"tgl_{name}", label_visibility="collapsed")
-
 series_dict = {
     "Net GEX": df["Net GEX"].values,
     "Put OI": df["Put OI"].values,
