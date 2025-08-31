@@ -159,6 +159,7 @@ def fetch_option_chain(
         {"url": f"{base_url}/api/yahoo/finance/options", "mode": "query_symbol"},
     ]
 
+    api_key = api_key or key
     headers = {
         "X-RapidAPI-Key": api_key,
         "X-RapidAPI-Host": host,
@@ -232,7 +233,7 @@ def fetch_option_chain(
 
 
 # ---------- OHLCV: последняя полностью закрытая сессия ----------
-def fetch_previous_session_ohlcv(symbol: str, host: str, api_key: str,
+def fetch_previous_session_ohlcv(symbol: str, host: str, key: str | None = None, api_key: str | None = None,
                                  interval: str = "1m", range_: str = "5d",
                                  timeout: int = DEFAULT_TIMEOUT,
                                  regular_hours_only: bool = True):
@@ -243,6 +244,7 @@ def fetch_previous_session_ohlcv(symbol: str, host: str, api_key: str,
     """
     base_url = f"https://{host}"
     url = f"{base_url}/api/v2/stock/history"
+    api_key = api_key or key
     headers = {
         "X-RapidAPI-Key": api_key,
         "X-RapidAPI-Host": host,
@@ -253,6 +255,15 @@ def fetch_previous_session_ohlcv(symbol: str, host: str, api_key: str,
     if r.status_code != 200:
         raise RuntimeError(f"HTTP {r.status_code} {url} {params} -> {r.text[:200]}")
     js = r.json()
+
+if r.status_code == 404 or (r.status_code == 200 and not r.text.strip()):
+    # fallback to markets path with limit
+    url2 = f"{base_url}/api/v2/markets/stock/history"
+    params2 = {"symbol": symbol, "interval": interval, "limit": 640}
+    r2 = requests.get(url2, headers=headers, params=params2, timeout=timeout)
+    r2.raise_for_status()
+    js = r2.json()
+    items = js.get("body", js.get("items", []))
     items = js.get("body", [])
     if not items:
         return pd.DataFrame(columns=["datetime","open","high","low","close","volume"])
