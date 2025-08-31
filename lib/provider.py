@@ -285,3 +285,80 @@ def fetch_previous_session_ohlcv(symbol: str, host: str, api_key: str,
 
     day_df = day_df.drop(columns=["date", "timestamp_unix"]).reset_index(drop=True)
     return day_df[["datetime","open","high","low","close","volume"]]
+
+
+# ===== Added for intraday previous session fetch (fallback v2→v1) =====
+import requests, pandas as pd
+
+def _parse_history_json(js):
+    items = js.get("body", [])
+    if not isinstance(items, list):
+        # иногда приходит под ключом "items"
+        items = js.get("items", [])
+    return pd.DataFrame(items)
+
+def fetch_previous_session_ohlcv(symbol: str, host: str, key: str,
+                                 interval: str = "1m", range_: str = "5d",
+                                 timeout: int = 15, regular_hours_only: bool = True) -> pd.DataFrame:
+    """
+    Возвращает минутные свечи за последнюю полностью закрытую сессию.
+    Колонки: ['datetime','open','high','low','close','volume'] (tz=America/New_York).
+    Никаких домыслов: берём только то, что пришло от провайдера.
+    """
+    headers = {"x-rapidapi-host": host, "x-rapidapi-key": key}
+    params_symbol = {"symbol": symbol, "interval": interval, "range": range_}
+    params_ticker = {"ticker": symbol, "interval": interval, "range": range_}
+
+    def _try(url, params):
+        r = requests.get(url, headers=headers, params=params, timeout=timeout)
+        if r.status_code == 404 or "does not exist" in r.text:
+            raise FileNotFoundError("endpoint")
+        r.raise_for_status()
+        return _parse_history_json(r.json())
+
+    df_raw = None
+    # 1) v2 + symbol
+    try:
+        df_raw = _try("https://yahoo-finance15.p.rapidapi.com/api/v2/stock/history", params_symbol)
+    except FileNotFoundError:
+        pass
+    # 2) v1 + symbol
+    if df_raw is None or df_raw.empty:
+        try:
+            df_raw = _try("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", params_symbol)
+        except FileNotFoundError:
+            pass
+    # 3) v1 + ticker (на всякий случай для старых бэкендов)
+    if df_raw is None or df_raw.empty:
+        df_raw = _try("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", params_ticker)
+
+    # Ожидаемые поля: timestamp_unix, open, high, low, close, volume
+    cols = {"timestamp_unix": "timestamp_unix", "timestamp": "timestamp_unix"}
+    if "timestamp" in df_raw.columns and "timestamp_unix" not in df_raw.columns:
+        df_raw = df_raw.rename(columns=cols)
+
+    required = ["timestamp_unix", "open", "high", "low", "close", "volume"]
+    missing = [c for c in required if c not in df_raw.columns]
+    if missing:
+        raise ValueError(f"Unexpected payload, missing: {missing}")
+
+    df_raw = df_raw[required].copy()
+    dt = pd.to_datetime(df_raw["timestamp_unix"], unit="s", utc=True).dt.tz_convert("America/New_York")
+    df = (df_raw.assign(datetime=dt)
+                 .sort_values("datetime")
+                 .reset_index(drop=True))
+
+    # выделяем последнюю полностью закрытую дату в NY
+    df["date"] = df["datetime"].dt.date
+    today_ny = pd.Timestamp.now(tz="America/New_York").date()
+    past_dates = [d for d in df["date"].unique() if d != today_ny]
+    if not past_dates:
+        return pd.DataFrame(columns=["datetime","open","high","low","close","volume"])
+    last_full = max(past_dates)
+    day_df = df[df["date"] == last_full].copy()
+
+    if regular_hours_only:
+        day_df = day_df[(day_df["datetime"].dt.time >= pd.to_datetime("09:30").time()) &
+                        (day_df["datetime"].dt.time <= pd.to_datetime("16:00").time())]
+
+    return day_df[["datetime","open","high","close","low","volume"]].rename(columns={"high":"high","low":"low"}).reset_index(drop=True)
