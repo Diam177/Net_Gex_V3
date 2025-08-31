@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import pandas as pd
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -228,3 +229,59 @@ def fetch_option_chain(
 
     _LAST_DEBUG_META = meta
     raise RuntimeError("Option chain fetch failed. Tried:\n" + "\n".join(errors))
+
+
+# ---------- OHLCV: последняя полностью закрытая сессия ----------
+def fetch_previous_session_ohlcv(symbol: str, host: str, api_key: str,
+                                 interval: str = "1m", range_: str = "5d",
+                                 timeout: int = DEFAULT_TIMEOUT,
+                                 regular_hours_only: bool = True):
+    """
+    Возвращает минутные свечи за последнюю полностью закрытую сессию.
+    Колонки: ['datetime','open','high','low','close','volume'] (tz=America/New_York).
+    Никаких домыслов — только пришедшие данные; фильтруем по датам.
+    """
+    base_url = f"https://{host}"
+    url = f"{base_url}/api/v2/stock/history"
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": host,
+        "Accept": "application/json",
+    }
+    params = {"symbol": symbol, "interval": interval, "range": range_}
+    r = requests.get(url, headers=headers, params=params, timeout=timeout)
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} {url} {params} -> {r.text[:200]}")
+    js = r.json()
+    items = js.get("body", [])
+    if not items:
+        return pd.DataFrame(columns=["datetime","open","high","low","close","volume"])
+
+    df = pd.DataFrame(items)
+    # защищённо берем нужные столбцы
+    needed_cols = ["timestamp_unix","open","high","low","close","volume"]
+    for c in needed_cols:
+        if c not in df.columns:
+            raise RuntimeError(f"Missing column '{c}' in stock/history response")
+
+
+    # Конвертация времени → America/New_York
+    dt = pd.to_datetime(df["timestamp_unix"], unit="s", utc=True).dt.tz_convert("America/New_York")
+    df = df.assign(datetime=dt).sort_values("datetime")
+    df["date"] = df["datetime"].dt.date
+
+    today_ny = pd.Timestamp.now(tz="America/New_York").date()
+    past_dates = [d for d in df["date"].unique() if d != today_ny]
+    if not past_dates:
+        return pd.DataFrame(columns=["datetime","open","high","low","close","volume"])
+    last_full = max(past_dates)
+
+    day_df = df[df["date"] == last_full].copy()
+    if regular_hours_only:
+        # Срез только регулярных торгов 09:30–16:00 NY
+        t_open = pd.to_datetime("09:30").time()
+        t_close = pd.to_datetime("16:00").time()
+        day_df = day_df[(day_df["datetime"].dt.time >= t_open) & (day_df["datetime"].dt.time <= t_close)]
+
+    day_df = day_df.drop(columns=["date", "timestamp_unix"]).reset_index(drop=True)
+    return day_df[["datetime","open","high","low","close","volume"]]
