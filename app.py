@@ -148,9 +148,81 @@ table_download_placeholder.download_button(
 
 # === Plot ===
 st.subheader("GammaStrat v4.5")
+
+<style>
+/* Base: target the first horizontal block of 8 columns (toggles row) */
+div[data-testid="stHorizontalBlock"] > div:nth-child(1) [role="switch"][aria-checked="true"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(1) [role="switch"][aria-checked="true"] [data-testid="stThumb"]{
+  background: #48B4FF !important; /* Net GEX knob ON = positive bar color */
+}
+
+/* Put OI */
+div[data-testid="stHorizontalBlock"] > div:nth-child(2) [role="switch"][aria-checked="true"]{
+  background: #7F0020 !important; border-color: #7F0020 !important;
+}
+div[data-testid="stHorizontalBlock"] > div:nth-child(2) [role="switch"][aria-checked="false"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(2) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
+  background: #7F0020 !important;
+}
+
+/* Call OI */
+div[data-testid="stHorizontalBlock"] > div:nth-child(3) [role="switch"][aria-checked="true"]{
+  background: #2FD06F !important; border-color: #2FD06F !important;
+}
+div[data-testid="stHorizontalBlock"] > div:nth-child(3) [role="switch"][aria-checked="false"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(3) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
+  background: #2FD06F !important;
+}
+
+/* Put Volume */
+div[data-testid="stHorizontalBlock"] > div:nth-child(4) [role="switch"][aria-checked="true"]{
+  background: #8C5A0A !important; border-color: #8C5A0A !important;
+}
+div[data-testid="stHorizontalBlock"] > div:nth-child(4) [role="switch"][aria-checked="false"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(4) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
+  background: #8C5A0A !important;
+}
+
+/* Call Volume */
+div[data-testid="stHorizontalBlock"] > div:nth-child(5) [role="switch"][aria-checked="true"]{
+  background: #2D83FF !important; border-color: #2D83FF !important;
+}
+div[data-testid="stHorizontalBlock"] > div:nth-child(5) [role="switch"][aria-checked="false"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(5) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
+  background: #2D83FF !important;
+}
+
+/* AG */
+div[data-testid="stHorizontalBlock"] > div:nth-child(6) [role="switch"][aria-checked="true"]{
+  background: #8A63F6 !important; border-color: #8A63F6 !important;
+}
+div[data-testid="stHorizontalBlock"] > div:nth-child(6) [role="switch"][aria-checked="false"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(6) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
+  background: #8A63F6 !important;
+}
+
+/* PZ */
+div[data-testid="stHorizontalBlock"] > div:nth-child(7) [role="switch"][aria-checked="true"]{
+  background: #FFC400 !important; border-color: #FFC400 !important;
+}
+div[data-testid="stHorizontalBlock"] > div:nth-child(7) [role="switch"][aria-checked="false"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(7) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
+  background: #FFC400 !important;
+}
+
+/* PZ_FP */
+div[data-testid="stHorizontalBlock"] > div:nth-child(8) [role="switch"][aria-checked="true"]{
+  background: #B0B8C5 !important; border-color: #B0B8C5 !important;
+}
+div[data-testid="stHorizontalBlock"] > div:nth-child(8) [role="switch"][aria-checked="false"]::after,
+div[data-testid="stHorizontalBlock"] > div:nth-child(8) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
+  background: #B0B8C5 !important;
+}
+</style>
 cols = st.columns(8)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
+labels_map = {"Net Gex": "Net GEX"}
 defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
 for i, name in enumerate(names):
     with cols[i]:
