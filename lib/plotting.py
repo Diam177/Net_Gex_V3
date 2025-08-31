@@ -225,25 +225,11 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                     fig.add_trace(go.Scatter(
                         x=[x_idx_g, x_idx_g], y=[y_min, y_max], name="G-Flip",
                         mode="lines", line=dict(color="#AAAAAA", width=1, dash="dash"),
-                        hoverinfo="skip", showlegend=True, yaxis="y")
+                        hoverinfo="skip", showlegend=True, yaxis="y"))
                 except Exception:
                     pass
         except Exception:
             pass
-
-    # --- add dummy trace for G-Flip legend if enabled ---
-    try:
-        if series_enabled.get("G-Flip", False):
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
-                                     line=dict(color="#AAAAAA", dash="dash"),
-                                     name="G-Flip",
-                                     hoverinfo="skip",
-                                     showlegend=True))
-    except Exception:
-        pass
-
-
-    
         # Build dynamic right-axis title (exclude Net Gex; show only specific series)
         whitelist = ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
         picked = [k for k in whitelist if series_enabled.get(k, False)]
