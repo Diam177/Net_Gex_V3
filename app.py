@@ -9,21 +9,20 @@ from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
-st.title("GammaStrat V4.2")
-
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 
 with st.sidebar:
-    # Переносим в сайдбар: ввод тикера и выбор экспирации
+    # Controls in sidebar
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
     expiry_placeholder = st.empty()
+    data_status_placeholder = st.empty()
+    download_placeholder = st.empty()
+    table_download_placeholder = st.empty()
 # === Inputs ===
-# (перенесены в левый сайдбар)
-st.divider()
-st.subheader("Источник данных")
-col_f, col_u = st.columns([1,1])
+# Перенесено в левый сайдбар
+col_f = st.container()
 
 raw_data = None
 raw_bytes = None
@@ -39,98 +38,16 @@ with col_f:
         try:
             base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
             raw_data, raw_bytes = base_json, base_bytes
-            st.success("Данные получены из RapidAPI.")
+            data_status_placeholder.success("Данные получены")
         except Exception as e:
             st.error(f"Ошибка запроса RapidAPI: {e}")
     else:
         st.warning("Не заданы RAPIDAPI_HOST/RAPIDAPI_KEY. Можно загрузить JSON вручную.")
 
-# === Upload ===
-with col_u:
-    up = st.file_uploader("Или загрузите файл JSON от провайдера", type=["json"], accept_multiple_files=False)
-    if up is not None:
-        try:
-            raw_bytes = up.read()
-            raw_data  = json.loads(raw_bytes.decode("utf-8", errors="ignore"))
-            st.success("Загружен JSON из файла.")
-        except Exception as e:
-            st.error(f"Ошибка чтения JSON: {e}")
+
 
 if raw_data is None:
     st.stop()
-
-# === DEBUG BLOCK (виден всегда, ещё до парсинга) ===
-def _sniff_roots(d: dict):
-    out = {}
-    try:
-        oc = d.get("optionChain", {}).get("result", [])
-        out["optionChain.result[0]"] = list(oc[0].keys())[:50] if isinstance(oc, list) and oc else None
-    except Exception as e:
-        out["optionChain.result[0]"] = f"err: {e}"
-    for name in ["body", "data", "result"]:
-        try:
-            node = d.get(name)
-            if isinstance(node, list) and node:
-                out[f"{name}[0]"] = list(node[0].keys())[:50]
-            elif isinstance(node, dict):
-                out[name] = list(node.keys())[:50]
-            else:
-                out[name] = None
-        except Exception as e:
-            out[name] = f"err: {e}"
-    return out
-
-with st.expander("🔎 Debug / Скачать сырые данные", expanded=False):
-    meta = debug_meta()
-    st.markdown("**Endpoint, который сработал:**")
-    st.code(json.dumps(meta.get("used", {}), ensure_ascii=False, indent=2), language="json")
-
-    st.markdown("**Все попытки:**")
-    st.code(json.dumps(meta.get("attempts", []), ensure_ascii=False, indent=2), language="json")
-
-    st.markdown("**Где найден корень данных (root):**")
-    st.write(meta.get("root_path"))
-
-    st.markdown("**Цена до/после поиска источника цены:**")
-    st.code(json.dumps({
-        "price_before": meta.get("price_before"),
-        "t0_before": meta.get("t0_before"),
-        "price_after": meta.get("price_after"),
-        "t0_after": meta.get("t0_after"),
-        "price_source": meta.get("price_source"),
-    }, ensure_ascii=False, indent=2), language="json")
-
-    if "quote_attempts" in meta:
-        st.markdown("**Попытки получить цену (quotes):**")
-        st.code(json.dumps(meta["quote_attempts"], ensure_ascii=False, indent=2), language="json")
-
-    st.markdown("**Обнаруженная структура корней:**")
-    try:
-        st.code(json.dumps(_sniff_roots(raw_data), ensure_ascii=False, indent=2), language="json")
-    except Exception as e:
-        st.write(f"sniff error: {e}")
-
-    # Скачать ровно то, что пришло от провайдера (RAW)
-    st.download_button(
-        "⬇️ Скачать RAW JSON провайдера",
-        data=raw_bytes if raw_bytes is not None else json.dumps(raw_data).encode("utf-8"),
-        file_name=f"{ticker}_raw_provider.json",
-        mime="application/json",
-    )
-    # Скачивание «красивой» версии распарсенного JSON
-    st.download_button(
-        "⬇️ Скачать распарсенный JSON (pretty)",
-        data=json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name=f"{ticker}_parsed_pretty.json",
-        mime="application/json",
-    )
-    # Скачивание meta-лога
-    st.download_button(
-        "⬇️ Скачать debug-meta",
-        data=json.dumps(meta, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name=f"{ticker}_debug_meta.json",
-        mime="application/json",
-    )
 
 # === Parse core ===
 try:
@@ -150,14 +67,14 @@ default_exp = choose_default_expiration(expirations, now_unix)
 def fmt_ts(ts):
     return datetime.datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d")
 
-exp_labels = [f"{e}  ({fmt_ts(e)})" for e in expirations]
+exp_labels = [fmt_ts(e) for e in expirations]
 try:
     default_index = expirations.index(default_exp)
 except ValueError:
     default_index = 0
 
-sel_label = expiry_placeholder.selectbox("Expiration (UTC)", options=exp_labels, index=default_index)
-selected_exp = int(sel_label.split()[0])
+sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index=default_index)
+selected_exp = expirations[exp_labels.index(sel_label)]
 
 # Если выбранной даты нет в уже пришедшем блоке — дотягиваем конкретный expiry
 if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
@@ -170,8 +87,8 @@ if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
         st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
 # Кнопка "Скачать сырой JSON"
-st.download_button(
-    "Скачать сырой JSON от провайдера",
+download_placeholder.download_button(
+    "Скачать JSON",
     data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
     file_name=f"{ticker}_{selected_exp}_raw.json",
     mime="application/json"
@@ -212,8 +129,6 @@ metrics = compute_series_metrics_for_expiry(
 )
 
 # === Table ===
-st.divider()
-st.subheader("Таблица")
 df = pd.DataFrame({
     "Strike": metrics["strikes"],
     "Put OI": metrics["put_oi"],
@@ -225,70 +140,21 @@ df = pd.DataFrame({
     "PZ": np.round(metrics["pz"], 6),
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
-st.dataframe(df, use_container_width=True)
+table_csv = df.to_csv(index=False).encode('utf-8')
+table_download_placeholder.download_button(
+    'Скачать таблицу', data=table_csv,
+    file_name=f"{ticker}_{selected_exp}_table.csv", mime='text/csv'
+)
 
 # === Plot ===
-st.divider()
-st.subheader("График")
-
-css = r"""
-<style>
-div[data-testid="stHorizontalBlock"] > div:nth-child(1) [role="switch"][aria-checked="true"] [data-testid="stThumb"]{
-  background: #48B4FF !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(2) [role="switch"][aria-checked="true"]{
-  background: #7F0020 !important; border-color: #7F0020 !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(2) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
-  background: #7F0020 !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(3) [role="switch"][aria-checked="true"]{
-  background: #2FD06F !important; border-color: #2FD06F !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(3) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
-  background: #2FD06F !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(4) [role="switch"][aria-checked="true"]{
-  background: #8C5A0A !important; border-color: #8C5A0A !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(4) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
-  background: #8C5A0A !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(5) [role="switch"][aria-checked="true"]{
-  background: #2D83FF !important; border-color: #2D83FF !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(5) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
-  background: #2D83FF !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(6) [role="switch"][aria-checked="true"]{
-  background: #8A63F6 !important; border-color: #8A63F6 !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(6) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
-  background: #8A63F6 !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(7) [role="switch"][aria-checked="true"]{
-  background: #FFC400 !important; border-color: #FFC400 !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(7) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
-  background: #FFC400 !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(8) [role="switch"][aria-checked="true"]{
-  background: #B0B8C5 !important; border-color: #B0B8C5 !important;
-}
-div[data-testid="stHorizontalBlock"] > div:nth-child(8) [role="switch"][aria-checked="false"] [data-testid="stThumb"]{
-  background: #B0B8C5 !important;
-}
-</style>
-"""
-st.markdown(css, unsafe_allow_html=True)
+st.subheader("GammaStrat v4.5")
 cols = st.columns(8)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
-labels_map = {"Net Gex": "Net GEX"}
 defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
 for i, name in enumerate(names):
     with cols[i]:
-        toggles[name] = st.toggle(labels_map.get(name, name), value=defaults.get(name, False), key=f"tgl_{name}")
+        toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
 
 series_dict = {
     "Net Gex": df["Net Gex"].values,
