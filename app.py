@@ -45,16 +45,7 @@ with col_f:
     else:
         st.warning("Не заданы RAPIDAPI_HOST/RAPIDAPI_KEY. Можно загрузить JSON вручную.")
 
-# === Upload ===
-with col_u:
-    up = st.file_uploader("Или загрузите файл JSON от провайдера", type=["json"], accept_multiple_files=False)
-    if up is not None:
-        try:
-            raw_bytes = up.read()
-            raw_data  = json.loads(raw_bytes.decode("utf-8", errors="ignore"))
-            st.success("Загружен JSON из файла.")
-        except Exception as e:
-            st.error(f"Ошибка чтения JSON: {e}")
+
 
 if raw_data is None:
     st.stop()
