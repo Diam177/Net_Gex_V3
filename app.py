@@ -9,17 +9,6 @@ from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
-
-# Label colors for parameter toggles (must match line colors in plotting.LINE_STYLE)
-LABEL_COLOR = {
-    "Put OI": "#7F0020",
-    "Call OI": "#2FD06F",
-    "Put Volume": "#8C5A0A",
-    "Call Volume": "#2D83FF",
-    "AG": "#8A63F6",
-    "PZ": "#FFC400",
-    "PZ_FP": "#B0B8C5",
-}
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
@@ -146,7 +135,7 @@ df = pd.DataFrame({
     "Call OI": metrics["call_oi"],
     "Put Volume": metrics["put_vol"],
     "Call Volume": metrics["call_vol"],
-    "Net GEX": metrics["net_gex"],
+    "Net Gex": metrics["net_gex"],
     "AG": metrics["ag"],
     "PZ": np.round(metrics["pz"], 6),
     "PZ_FP": np.round(metrics["pz_fp"], 6),
@@ -161,18 +150,14 @@ table_download_placeholder.download_button(
 st.subheader("GammaStrat v4.5")
 cols = st.columns(8)
 toggles = {}
-names = ["Net GEX","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
-defaults = {"Net GEX": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
+names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
+defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False}
 for i, name in enumerate(names):
     with cols[i]:
-        color_hex = LABEL_COLOR.get(name)
-        if name != "Net GEX" and color_hex:
-            st.markdown(f"<span style='color:{color_hex}; font-weight:600'>{name}</span>", unsafe_allow_html=True)
-            toggles[name] = st.toggle(" ", value=defaults.get(name, False), key=f"tgl_{name}")
-        else:
-            toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
+        toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
+
 series_dict = {
-    "Net GEX": df["Net GEX"].values,
+    "Net Gex": df["Net Gex"].values,
     "Put OI": df["Put OI"].values,
     "Call OI": df["Call OI"].values,
     "Put Volume": df["Put Volume"].values,
@@ -182,5 +167,5 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-fig = make_figure(df["Strike"].values, df["Net GEX"].values, toggles, series_dict, price=S_used, ticker=ticker)
+fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used, ticker=ticker)
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
