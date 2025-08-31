@@ -362,3 +362,87 @@ def fetch_previous_session_ohlcv(symbol: str, host: str, key: str,
                         (day_df["datetime"].dt.time <= pd.to_datetime("16:00").time())]
 
     return day_df[["datetime","open","high","close","low","volume"]].rename(columns={"high":"high","low":"low"}).reset_index(drop=True)
+
+
+import requests, pandas as pd
+
+def _parse_history_json(js):
+    # Accept multiple possible shapes
+    for key in ("body", "items", "result", "results", "data"):
+        if isinstance(js.get(key), list):
+            return pd.DataFrame(js[key])
+    # Sometimes the payload is a dict of arrays
+    if isinstance(js, dict):
+        # Try to coerce to DataFrame if keys look like columns
+        try:
+            return pd.DataFrame(js)
+        except Exception:
+            pass
+    return pd.DataFrame()
+
+def fetch_previous_session_ohlcv(symbol: str, host: str, key: str,
+                                 interval: str = "1m", range_: str = "5d",
+                                 timeout: int = 15, regular_hours_only: bool = True) -> pd.DataFrame:
+    headers = {"x-rapidapi-host": host, "x-rapidapi-key": key}
+    variants = [
+        ("https://yahoo-finance15.p.rapidapi.com/api/v2/stock/history", {"symbol": symbol, "interval": interval, "range": range_}),
+        ("https://yahoo-finance15.p.rapidapi.com/api/v2/stock/history", {"ticker": symbol, "interval": interval, "range": range_}),
+        ("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", {"symbol": symbol, "interval": interval, "range": range_}),
+        ("https://yahoo-finance15.p.rapidapi.com/api/v1/stock/history", {"ticker": symbol, "interval": interval, "range": range_}),
+        ("https://yahoo-finance15.p.rapidapi.com/api/v1/market/history", {"symbol": symbol, "interval": interval, "range": range_}),
+        ("https://yahoo-finance15.p.rapidapi.com/api/v1/market/history", {"ticker": symbol, "interval": interval, "range": range_}),
+    ]
+
+    last_err = None
+    df_raw = pd.DataFrame()
+    for url, params in variants:
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=timeout)
+            if r.status_code == 404 or "does not exist" in r.text:
+                last_err = f"404 at {url} with params keys {list(params.keys())}"
+                continue
+            r.raise_for_status()
+            df_raw = _parse_history_json(r.json())
+            if not df_raw.empty:
+                break
+            last_err = f"Empty payload at {url}"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e} at {url}"
+            continue
+
+    if df_raw.empty:
+        raise RuntimeError(f"All history endpoints failed. Last error: {last_err}")
+
+    # Normalize columns
+    if "timestamp_unix" not in df_raw.columns:
+        if "timestamp" in df_raw.columns and pd.api.types.is_integer_dtype(df_raw["timestamp"]):
+            df_raw = df_raw.rename(columns={"timestamp": "timestamp_unix"})
+        elif "date" in df_raw.columns and pd.api.types.is_integer_dtype(df_raw["date"]):
+            df_raw = df_raw.rename(columns={"date": "timestamp_unix"})
+
+    required = ["timestamp_unix", "open", "high", "low", "close", "volume"]
+    missing = [c for c in required if c not in df_raw.columns]
+    if missing:
+        raise ValueError(f"Unexpected payload (missing columns: {missing}); head: {df_raw.head(3).to_dict()}")
+
+    df_raw = df_raw[required].copy()
+    dt = pd.to_datetime(df_raw["timestamp_unix"], unit="s", utc=True).dt.tz_convert("America/New_York")
+    df = (df_raw.assign(datetime=dt)
+                 .sort_values("datetime")
+                 .reset_index(drop=True))
+
+    # Select last fully closed NY session
+    df["date"] = df["datetime"].dt.date
+    today_ny = pd.Timestamp.now(tz="America/New_York").date()
+    past_dates = [d for d in df["date"].unique() if d != today_ny]
+    if not past_dates:
+        return pd.DataFrame(columns=["datetime","open","high","low","close","volume"])
+    last_full = max(past_dates)
+    day_df = df[df["date"] == last_full].copy()
+
+    if regular_hours_only:
+        start_t = pd.to_datetime("09:30").time()
+        end_t   = pd.to_datetime("16:00").time()
+        day_df = day_df[(day_df["datetime"].dt.time >= start_t) & (day_df["datetime"].dt.time <= end_t)]
+
+    return day_df[["datetime","open","high","low","close","volume"]].reset_index(drop=True)
