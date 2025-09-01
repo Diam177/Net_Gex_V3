@@ -168,6 +168,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         # stretch x-axis to session range
         fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]], fixedrange=True)
         fig.update_yaxes(fixedrange=True)
+        fig.update_layout(xaxis_rangeslider_visible=False)
 
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
 
