@@ -7,7 +7,7 @@ from lib.provider import fetch_option_chain, debug_meta
 from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
-from lib.plotting import make_figure
+from lib.plotting import make_figure, _select_atm_window
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 # === Secrets / env ===
@@ -270,6 +270,13 @@ st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 try:
     import numpy as _np
     _strike = _np.asarray(df["Strike"].values, dtype=float)
+    # match visible window of the first chart
+    _idx_keep = _np.arange(len(_strike), dtype=int)
+    try:
+        _idx_keep = _select_atm_window(_strike, _np.asarray(df["Call OI"].values, dtype=float), _np.asarray(df["Put OI"].values, dtype=float), float(S_used))
+    except Exception:
+        _idx_keep = _np.arange(len(_strike), dtype=int)
+
     def _nan_argmax(a):
         a = _np.asarray(a, dtype=float)
         if not _np.any(_np.isfinite(a)): 
@@ -282,19 +289,19 @@ try:
         return int(_np.nanargmin(a))
 
     _max_levels = {}
-    i_cv = _nan_argmax(df["Call Volume"].values)
-    if i_cv is not None: _max_levels["call_volume_max"] = float(_strike[i_cv])
-    i_pv = _nan_argmax(df["Put Volume"].values)
-    if i_pv is not None: _max_levels["put_volume_max"] = float(_strike[i_pv])
-    i_ag = _nan_argmax(df["AG"].values)
-    if i_ag is not None: _max_levels["ag_max"] = float(_strike[i_ag])
-    i_pz = _nan_argmax(df["PZ"].values)
-    if i_pz is not None: _max_levels["pz_max"] = float(_strike[i_pz])
+    i_cv = _nan_argmax(_np.asarray(df["Call Volume"].values, dtype=float)[_idx_keep])
+    if i_cv is not None: _max_levels["call_volume_max"] = float(_strike[_idx_keep[i_cv]])
+    i_pv = _nan_argmax(_np.asarray(df["Put Volume"].values, dtype=float)[_idx_keep])
+    if i_pv is not None: _max_levels["put_volume_max"] = float(_strike[_idx_keep[i_pv]])
+    i_ag = _nan_argmax(_np.asarray(df["AG"].values, dtype=float)[_idx_keep])
+    if i_ag is not None: _max_levels["ag_max"] = float(_strike[_idx_keep[i_ag]])
+    i_pz = _nan_argmax(_np.asarray(df["PZ"].values, dtype=float)[_idx_keep])
+    if i_pz is not None: _max_levels["pz_max"] = float(_strike[_idx_keep[i_pz]])
     # Call OI max / Put OI min
-    i_coi = _nan_argmax(df["Call OI"].values)
-    if i_coi is not None: _max_levels["call_oi_max"] = float(_strike[i_coi])
-    i_poi_min = _nan_argmin(df["Put OI"].values)
-    if i_poi_min is not None: _max_levels["put_oi_min"] = float(_strike[i_poi_min])
+    i_coi = _nan_argmax(_np.asarray(df["Call OI"].values, dtype=float)[_idx_keep])
+    if i_coi is not None: _max_levels["call_oi_max"] = float(_strike[_idx_keep[i_coi]])
+    i_poi_max = _nan_argmax(_np.asarray(df["Put OI"].values, dtype=float)[_idx_keep])
+    if i_poi_max is not None: _max_levels["put_oi_max"] = float(_strike[_idx_keep[i_poi_max]])
     # G-Flip level (already computed as g_flip_val if available)
     if 'g_flip_val' in locals() and g_flip_val is not None:
         try:
@@ -304,17 +311,13 @@ try:
     \
 # Net GEX extrema (by strike)
     try:
-        gex_vals = _np.asarray(df["Net Gex"].values, dtype=float)
+        gex_vals = _np.asarray(df["Net Gex"].values, dtype=float)[_idx_keep]
         i_ng_pos = _nan_argmax(gex_vals)
-        if i_ng_pos is not None: _max_levels["max_pos_gex"] = float(_strike[i_ng_pos])
+        if i_ng_pos is not None: _max_levels["max_pos_gex"] = float(_strike[_idx_keep[i_ng_pos]])
         # min (most negative)
         if _np.any(_np.isfinite(gex_vals)):
             i_ng_neg = int(_np.nanargmin(gex_vals))
-            _max_levels["max_neg_gex"] = float(_strike[i_ng_neg])
-        # abs max NG
-        if _np.any(_np.isfinite(gex_vals)):
-            i_ng_abs = int(_np.nanargmax(_np.abs(gex_vals)))
-            _max_levels["ng"] = float(_strike[i_ng_abs])
+            _max_levels["max_neg_gex"] = float(_strike[_idx_keep[i_ng_neg]])
     except Exception:
         pass
     st.session_state['first_chart_max_levels'] = _max_levels
