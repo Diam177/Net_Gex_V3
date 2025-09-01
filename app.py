@@ -3,11 +3,10 @@ import pandas as pd
 import numpy as np
 import time, json, math, io, datetime
 
-from lib.provider import fetch_option_chain, debug_meta, fetch_previous_session_ohlcv
+from lib.provider import fetch_option_chain, debug_meta
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
-from lib.intraday_chart import make_intraday_levels_figure
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 # === Secrets / env ===
@@ -263,34 +262,3 @@ series_dict = {
 
 fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used, ticker=ticker, g_flip=g_flip_val)
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-
-# ------------------------
-# Intraday Price — Previous Session (TEST)
-# ------------------------
-try:
-    st.markdown("---")
-    st.subheader("Intraday Price — Previous Session (TEST)")
-    _col1, _col2 = st.columns([1,1])
-    with _col1:
-        _symbol_test = st.text_input("Symbol", value=str(locals().get('ticker','SPY')) if 'ticker' in locals() else 'SPY', key='test_symbol')
-    with _col2:
-        _interval_test = st.selectbox("Interval", options=["1m","2m","5m","15m"], index=0, key='test_intrvl')
-
-    if st.button("Load Previous Session", key='btn_prev_session'):
-        _host = RAPIDAPI_HOST
-        _key  = RAPIDAPI_KEY
-        if not _host or not _key:
-            st.error("Не заданы RAPIDAPI_HOST/RAPIDAPI_KEY")
-        else:
-            _df_prev = fetch_previous_session_ohlcv(symbol=_symbol_test, host=_host, key=_key,
-                                                    interval=_interval_test, range_="5d",
-                                                    regular_hours_only=True)
-            if _df_prev is None or _df_prev.empty:
-                st.warning("Нет данных за последнюю полностью закрытую сессию.")
-            else:
-                _fig_price = make_intraday_levels_figure(_df_prev, levels={}, zones={}, title=_symbol_test)
-                st.plotly_chart(_fig_price, use_container_width=True, config={"displayModeBar": False})
-                st.caption(f"Bars: {_df_prev.shape[0]} · From {_df_prev['datetime'].min()} to {_df_prev['datetime'].max()}")
-except Exception as _e:
-    st.warning(f"Test section error: {_e}")
