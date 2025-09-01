@@ -193,7 +193,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         except Exception:
             _ts0 = pd.to_datetime(df_plot["ts"].iloc[0], utc=True).tz_convert("America/New_York")
         _date_text = f"{_ts0.strftime('%b')} {_ts0.day}, {_ts0.year}"
-        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=0.30, text=_date_text, showarrow=False, align="left")
+        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=-0.10, text=_date_text, showarrow=False, align="left")
         # Move 'Time' axis title slightly up (closer to the axis)
         fig.update_xaxes(title_standoff=5)
     
