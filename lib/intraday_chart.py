@@ -136,19 +136,19 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Could not detect last session.")
             return
 
-        # Build hourly ticks starting exactly at session start and including the session end
-        _ts_start = df_plot["ts"].iloc[0]
-        _ts_end = df_plot["ts"].iloc[-1]
-        try:
-            import pandas as _pd
-            _ticks = _pd.date_range(start=_ts_start, end=_ts_end, freq="1H")
-            # Ensure both endpoints are present
-            if len(_ticks) == 0 or _ticks[0] != _ts_start:
-                _ticks = _ticks.insert(0, _ts_start)
-            if _ticks[-1] != _ts_end:
-                _ticks = _ticks.append(_pd.DatetimeIndex([_ts_end]))
-            tickvals = list(_ticks)
-            ticktext = [t.strftime("%H:%M") for t in _ticks]
+        # Build fixed RTH (ET) scale: 09:30–16:00 with 30-minute step
+        import pandas as _pd
+        _tz_et = "America/New_York"
+        _ts0 = df_plot["ts"].iloc[0]
+        if _ts0.tzinfo is None:
+            _ts0 = _pd.to_datetime(_ts0, utc=True)
+        _ts0_et = _ts0.tz_convert(_tz_et)
+        _session_date_et = _ts0_et.normalize()
+        session_start_et = _session_date_et + _pd.Timedelta(hours=9, minutes=30)
+        session_end_et = _session_date_et + _pd.Timedelta(hours=16)
+        _ticks_et = _pd.date_range(start=session_start_et, end=session_end_et, freq="30min")
+        tickvals = list(_ticks_et.tz_convert("UTC"))
+        ticktext = [t.strftime("%H:%M") for t in _ticks_et]
         except Exception:
             # Fallback: simple start/end if pandas not available for some reason
             tickvals = [_ts_start, _ts_end]
@@ -188,7 +188,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
         
         # stretch x-axis to session range
-        fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
+        fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
