@@ -15,23 +15,20 @@ def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", 
 
 def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
     """Return DataFrame with columns: ts, open, high, low, close, volume."""
-    import pandas as _pd
-
     def to_dt(rec: Dict[str, Any]):
-        # Try common timestamp fields
         if "timestamp_unix" in rec:
-            return _pd.to_datetime(rec["timestamp_unix"], unit="s", utc=True)
+            return pd.to_datetime(rec["timestamp_unix"], unit="s", utc=True)
         if "timestamp" in rec:
             try:
-                return _pd.to_datetime(rec["timestamp"], utc=True)
+                return pd.to_datetime(rec["timestamp"], utc=True)
             except Exception:
-                return _pd.to_datetime(str(rec["timestamp"]), utc=True, errors="coerce")
+                return pd.to_datetime(str(rec["timestamp"]), utc=True, errors="coerce")
         if "t" in rec:
             try:
-                return _pd.to_datetime(rec["t"], unit="s", utc=True)
+                return pd.to_datetime(rec["t"], unit="s", utc=True)
             except Exception:
-                return _pd.to_datetime(str(rec["t"]), utc=True, errors="coerce")
-        return _pd.NaT
+                return pd.to_datetime(str(rec["t"]), utc=True, errors="coerce")
+        return pd.NaT
 
     records = []
     if isinstance(raw_json, dict):
@@ -40,13 +37,11 @@ def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
         elif isinstance(raw_json.get("data"), dict):
             for k in ("items", "body", "candles"):
                 if isinstance(raw_json["data"].get(k), list):
-                    records = raw_json["data"][k]
-                    break
+                    records = raw_json["data"][k]; break
         elif isinstance(raw_json.get("result"), dict):
-            for k in ("candles", "items", "body"):
+            for k in ("candles","items","body"):
                 if isinstance(raw_json["result"].get(k), list):
-                    records = raw_json["result"][k]
-                    break
+                    records = raw_json["result"][k]; break
         elif isinstance(raw_json.get("candles"), list):
             records = raw_json["candles"]
     elif isinstance(raw_json, list):
@@ -58,18 +53,15 @@ def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
             "ts": to_dt(r),
             "open": r.get("open") or r.get("o"),
             "high": r.get("high") or r.get("h"),
-            "low": r.get("low") or r.get("l"),
-            "close": r.get("close") or r.get("c"),
+            "low":  r.get("low")  or r.get("l"),
+            "close":r.get("close")or r.get("c"),
             "volume": r.get("volume") or r.get("v"),
         })
     dfc = pd.DataFrame(rows).dropna(subset=["ts"]).sort_values("ts")
     return dfc
 
 def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame:
-    """
-    Keep only the last continuous session. A new session starts if the gap between
-    neighboring candles is greater than gap_minutes.
-    """
+    """Keep only the last continuous session by time gaps > gap_minutes."""
     if dfc.empty:
         return dfc
     d = dfc.sort_values("ts").copy()
@@ -78,8 +70,25 @@ def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame
     last_id = int(sess_id.iloc[-1])
     return d.loc[sess_id == last_id].reset_index(drop=True)
 
+def _build_rth_ticks_30m(df_plot: pd.DataFrame):
+    """Build ET 09:30–16:00 ticks (30m). Return (tickvals_utc, ticktext)."""
+    tz_et = "America/New_York"
+    ts0 = df_plot["ts"].iloc[0]
+    if ts0.tzinfo is None:
+        ts0 = pd.to_datetime(ts0, utc=True)
+    # convert first candle timestamp to ET to get that calendar date in New York
+    ts0_et = ts0.tz_convert(tz_et)
+    session_date_et = ts0_et.normalize()
+    session_start_et = session_date_et + pd.Timedelta(hours=9, minutes=30)
+    session_end_et   = session_date_et + pd.Timedelta(hours=16)
+    ticks_et = pd.date_range(start=session_start_et, end=session_end_et, freq="30min")
+    # Plotly x values are UTC in our data; keep tickvals in UTC for alignment
+    tickvals = list(ticks_et.tz_convert("UTC"))
+    ticktext = [t.strftime("%H:%M") for t in ticks_et]
+    return tickvals, ticktext
+
 def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
-    """UI section 'Key Levels' (candles + debug)."""
+    """UI section 'Key Levels' (candles + VWAP, no interactions)."""
     st.subheader("Key Levels")
     with st.container():
         c1, c2, c3, c4 = st.columns([1,1,1,1])
@@ -130,30 +139,21 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Candles are empty or not recognized.")
             return
 
-        # Use only the last trading session and stretch it
         df_plot = _take_last_session(dfc, gap_minutes=60)
         if df_plot.empty:
             st.warning("Could not detect last session.")
             return
 
-        # Build fixed RTH (ET) scale: 09:30–16:00 with 30-minute step
-        import pandas as _pd
-        _tz_et = "America/New_York"
-        _ts0 = df_plot["ts"].iloc[0]
-        if _ts0.tzinfo is None:
-            _ts0 = _pd.to_datetime(_ts0, utc=True)
-        _ts0_et = _ts0.tz_convert(_tz_et)
-        _session_date_et = _ts0_et.normalize()
-        session_start_et = _session_date_et + _pd.Timedelta(hours=9, minutes=30)
-        session_end_et = _session_date_et + _pd.Timedelta(hours=16)
-        _ticks_et = _pd.date_range(start=session_start_et, end=session_end_et, freq="30min")
-        tickvals = list(_ticks_et.tz_convert("UTC"))
-        ticktext = [t.strftime("%H:%M") for t in _ticks_et]
-        except Exception:
-            # Fallback: simple start/end if pandas not available for some reason
-            tickvals = [_ts_start, _ts_end]
-            ticktext = [_ts_start.strftime("%H:%M"), _ts_end.strftime("%H:%M")]
-    
+        # compute VWAP
+        vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
+        tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
+        cum_vol = vol.cumsum()
+        vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
+        vwap = vwap.fillna(method="ffill")
+
+        # build fixed RTH ticks
+        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
+
         fig = go.Figure(data=[
             go.Candlestick(
                 x=df_plot["ts"],
@@ -164,6 +164,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                 name="Price"
             )
         ])
+        fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
         fig.update_layout(
             height=560,
             margin=dict(l=90, r=20, t=50, b=50),
@@ -178,16 +179,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             font=dict(color="white"),
             template=None
         )
-        # Compute VWAP for the session
-        vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
-        tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
-        cum_vol = vol.cumsum()
-        vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
-        vwap = vwap.fillna(method="ffill")
-        # Add VWAP line
-        fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
-        
-        # stretch x-axis to session range
+        # fix ranges, remove interactions and rangeslider
         fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
