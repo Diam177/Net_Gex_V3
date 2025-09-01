@@ -23,11 +23,11 @@ with st.sidebar:
     download_placeholder = st.empty()
     table_download_placeholder = st.empty()
 
-    # ---- Перенесённые на боковую панель контролы Key Levels ----
+    # ---- Контролы Key Levels (оставили только Interval/Limit) ----
     st.markdown("### Key Levels — Controls")
     st.selectbox("Interval", ["1m","2m","5m","15m","30m","1h","1d"], index=0, key="kl_interval")
     st.number_input("Limit", min_value=100, max_value=1000, value=640, step=10, key="kl_limit")
-    st.toggle("Last session", value=False, key="kl_last_session")
+    # Last session убран из сайдбара — теперь он над чартом
     # -------------------------------------------------------------
 
 raw_data = None
@@ -38,7 +38,7 @@ def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
     data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
     return data, content
 
-# === Загрузка данных только из API (блок загрузки JSON удалён) ===
+# === Загрузка данных только из API ===
 if RAPIDAPI_HOST and RAPIDAPI_KEY:
     try:
         base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
