@@ -8,6 +8,99 @@ import requests
 
 DEFAULT_TIMEOUT = 20
 
+def _normalize_candles_payload(raw_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Нормализация форматов ответа по историческим свечам (intraday).
+    Возвращает {"records": List[dict], "root": <path-string>} без модификации значений.
+    Поддерживает:
+      - {"meta": {...}, "body": [ {timestamp/timestamp_unix, open, high, low, close, volume}, ... ]}
+      - {"data": {..., "items": [...]}} / {"result": {...}} / {"candles": [...]}
+    """
+    # 1) Прямой формат: meta/body
+    body = raw_json.get("body")
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        return {"records": body, "root": "body"}
+
+    # 2) data.items
+    data = raw_json.get("data")
+    if isinstance(data, dict):
+        items = data.get("items") or data.get("body") or data.get("candles")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return {"records": items, "root": "data.items|body|candles"}
+
+    # 3) result.candles
+    result = raw_json.get("result")
+    if isinstance(result, dict):
+        items = result.get("candles") or result.get("items") or result.get("body")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return {"records": items, "root": "result.candles|items|body"}
+
+    # 4) candles на верхнем уровне
+    items = raw_json.get("candles")
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        return {"records": items, "root": "candles"}
+
+    # Fallback: если пришёл массив верхнего уровня
+    if isinstance(raw_json, list):
+        return {"records": raw_json, "root": "<list>"}
+
+    return {"records": [], "root": "locate_failed"}
+
+
+def fetch_stock_history(ticker: str,
+                        host: str,
+                        api_key: str,
+                        interval: str = "1m",
+                        limit: int = 640,
+                        dividend: Optional[bool] = None,
+                        timeout: int = DEFAULT_TIMEOUT) -> Tuple[Dict[str, Any], bytes]:
+    """
+    Получить исторические свечи у провайдера RapidAPI YH Finance:
+    GET https://{host}/api/v2/markets/stock/history?symbol=...&interval=...&limit=...
+    Возвращаем (json_dict, raw_bytes) без преобразований.
+    """
+    base_url = f"https://{host}"
+    url = f"{base_url}/api/v2/markets/stock/history"
+    params = {"symbol": ticker, "interval": interval, "limit": int(limit)}
+    if dividend is not None:
+        params["dividend"] = "true" if dividend else "false"
+
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": host,
+        "Accept": "application/json",
+    }
+
+    meta = {
+        "when": datetime.datetime.utcnow().isoformat() + "Z",
+        "endpoint": url,
+        "params": params.copy(),
+        "headers": {"X-RapidAPI-Host": host},
+        "ok": False,
+        "error": None,
+    }
+
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=timeout)
+        raw_bytes = r.content
+        r.raise_for_status()
+        data = r.json()
+        meta["ok"] = True
+
+        # Для отладки сохраним короткую сводку
+        payload = _normalize_candles_payload(data)
+        meta["records"] = len(payload.get("records", []))
+        meta["root_path"] = payload.get("root", "?")
+        global _LAST_DEBUG_META
+        _LAST_DEBUG_META = meta
+
+        return data, raw_bytes
+    except Exception as e:
+        meta["error"] = str(e)
+        global _LAST_DEBUG_META
+        _LAST_DEBUG_META = meta
+        raise
+
 # Глобальная «память» для отладочной панели в UI
 _LAST_DEBUG_META: Dict[str, Any] = {}
 
