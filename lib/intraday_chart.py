@@ -148,10 +148,11 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         ])
         fig.update_layout(
             height=560,
-            margin=dict(l=10, r=10, t=30, b=30),
+            margin=dict(l=90, r=20, t=50, b=50),
             xaxis_title="Time",
             yaxis_title="Price",
             showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             dragmode=False,
             hovermode=False,
             plot_bgcolor="#161B22",
@@ -169,7 +170,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
         
         # stretch x-axis to session range
-        fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]], fixedrange=True)
+        fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]], fixedrange=True, dtick=3600000, tickformat="%H:%M")
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
