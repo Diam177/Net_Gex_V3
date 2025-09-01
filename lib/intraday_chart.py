@@ -100,8 +100,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             dbg = st.toggle("Debug", value=False, key="kl_debug")
         with c4:
             uploader = st.file_uploader("JSON (optional)", type=["json","txt"], accept_multiple_files=False, label_visibility="collapsed", key="kl_uploader")
-        # New: Last session toggle (default OFF)
-        last_session_toggle = st.toggle("Last session", value=False, key="kl_last_session")
+        last_session = st.toggle("Last session", value=False, key="kl_last_session")
 
         candles_json, candles_bytes = None, None
 
@@ -141,44 +140,53 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Candles are empty or not recognized.")
             return
 
-        last_session_toggle = st.session_state.get('kl_last_session', False)
-        if last_session_toggle:
+        last_session = st.session_state.get("kl_last_session", False)
+        if last_session:
             df_plot = _take_last_session(dfc, gap_minutes=60)
-            has_price = not df_plot.empty and ('open' in df_plot.columns)
+            has_price = not df_plot.empty
         else:
-            df_plot, sess_bounds, has_price = _slice_current_session_or_skeleton(dfc)
+            # Compute ET RTH for today and slice; if no candles yet, make skeleton range
+            tz_et = "America/New_York"
+            now_utc = pd.Timestamp.utcnow().tz_localize("UTC")
+            now_et = now_utc.tz_convert(tz_et)
+            et_date = now_et.normalize()
+            start_et = et_date + pd.Timedelta(hours=9, minutes=30)
+            end_et   = et_date + pd.Timedelta(hours=16)
+            start_utc, end_utc = start_et.tz_convert("UTC"), end_et.tz_convert("UTC")
+            mask = (dfc["ts"] >= start_utc) & (dfc["ts"] <= end_utc)
+            df_today = dfc.loc[mask].sort_values("ts")
+            if df_today.empty:
+                df_plot = pd.DataFrame({"ts":[start_utc, end_utc]})
+                has_price = False
+            else:
+                df_plot = df_today.reset_index(drop=True)
+                has_price = True
         if df_plot.empty:
             st.warning("Could not detect last session.")
             return
 
         # compute VWAP
         vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
-        tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
-        cum_vol = vol.cumsum()
-        vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
-        vwap = vwap.fillna(method="ffill")
+        if has_price:
+            tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
+            vol = df_plot.get("volume", df_plot.get("v"))
+            if vol is None:
+                vol = 0*df_plot["close"]
+            vol = pd.to_numeric(vol, errors="coerce").fillna(0)
+            cum_vol = vol.cumsum()
+            vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
+            vwap = vwap.fillna(method="ffill")
+        else:
+            vwap = None
 
         # build fixed RTH ticks
         tickvals, ticktext = _build_rth_ticks_30m(df_plot)
 
         fig = go.Figure()
-        # Apply fixed ET ticks
-        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
-        fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, range=[tickvals[0], tickvals[-1]])
-        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
         if has_price:
-            fig.add_trace(go.Candlestick(
-                x=df_plot["ts"],
-                open=df_plot["open"],
-                high=df_plot["high"],
-                low=df_plot["low"],
-                close=df_plot["close"],
-                name="Price"
-            ))
+            fig.add_trace(go.Candlestick(x=df_plot["ts"], open=df_plot.get("open"), high=df_plot.get("high"), low=df_plot.get("low"), close=df_plot.get("close"), name="Price"))
+        if has_price and vwap is not None:
             fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
-        else:
-            # Market closed: no price/VWAP traces, show annotation
-            fig.add_annotation(text="Market closed", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
 
         # --- Key Levels: horizontal lines from first chart maxima ---
         levels = {}
@@ -259,7 +267,9 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                     )
         except Exception:
             pass
-        fig.update_layout(
+                if not has_price:
+            fig.add_annotation(text="Market closed", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(size=16, color="white"))
+fig.update_layout(
             height=560,
             margin=dict(l=90, r=20, t=50, b=50),
             xaxis_title="Time",
