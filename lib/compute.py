@@ -155,7 +155,7 @@ def aggregate_series(block):
 
     strikes = sorted(set([float(r.get("strike")) for r in (calls + puts) if r.get("strike") is not None]))
     call_oi = {float(r["strike"]): int(r.get("openInterest") or 0) for r in calls if r.get("strike") is not None}
-    put_oi  = {float(r["strike"]): int(r.get("openInterest") or 0) for r in puts  if r.get("strike") is not None} # FIXED (restored condition)t("strike") is not None}
+    put_oi  = {float(r["strike"]): int(r.get("openInterest") or 0) for r in puts  if r.get("strike") is not None}
     call_vol= {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in calls if r.get("strike") is not None}
     put_vol = {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in puts  if r.get("strike") is not None}
     iv_call = {}
