@@ -301,7 +301,23 @@ try:
             _max_levels["gflip"] = float(g_flip_val)
         except Exception:
             pass
-    st.session_state['first_chart_max_levels'] = _max_levels
+    \
+# Net GEX extrema (by strike)
+    try:
+        gex_vals = _np.asarray(df["Net Gex"].values, dtype=float)
+        i_ng_pos = _nan_argmax(gex_vals)
+        if i_ng_pos is not None: _max_levels["max_pos_gex"] = float(_strike[i_ng_pos])
+        # min (most negative)
+        if _np.any(_np.isfinite(gex_vals)):
+            i_ng_neg = int(_np.nanargmin(gex_vals))
+            _max_levels["max_neg_gex"] = float(_strike[i_ng_neg])
+        # abs max NG
+        if _np.any(_np.isfinite(gex_vals)):
+            i_ng_abs = int(_np.nanargmax(_np.abs(gex_vals)))
+            _max_levels["ng"] = float(_strike[i_ng_abs])
+    except Exception:
+        pass
+st.session_state['first_chart_max_levels'] = _max_levels
 except Exception as _e:
     # Silent: don't break UI if something's missing
     pass
