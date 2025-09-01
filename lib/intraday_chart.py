@@ -165,6 +165,84 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             )
         ])
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
+
+        # ----- Horizontal lines from the first chart (max levels) -----
+        # We read precomputed price levels (strikes) from Streamlit session_state.
+        # Expected keys (any of these dicts can be present): first_chart_max_levels, opt_max_levels,
+        # key_levels, levels, max_levels. Within the dict we look for common field names.
+        def _pick_level(dct, name_variants):
+            # Return first numeric value found under any key in name_variants;
+            # also support nested dicts containing fields like price/strike/value.
+            for k, v in dct.items():
+                kl = k.replace("_", "").replace("-", "").lower()
+                for cand in name_variants:
+                    if kl == cand:
+                        try:
+                            return float(v)
+                        except Exception:
+                            pass
+                    # handle nested dicts where the outer key matches and inner has 'price/strike/value'
+                    if kl == cand and isinstance(v, dict):
+                        for leaf in ("price", "strike", "level", "value"):
+                            if leaf in v:
+                                try:
+                                    return float(v[leaf])
+                                except Exception:
+                                    pass
+            # try nested dicts one level down (without relying on exact outer key match)
+            for v in dct.values():
+                if isinstance(v, dict):
+                    got = _pick_level(v, name_variants)
+                    if got is not None:
+                        return got
+            return None
+
+        # Candidate containers
+        _containers = [st.session_state]
+        for _k in ("first_chart_max_levels", "opt_max_levels", "key_levels", "levels", "max_levels"):
+            if isinstance(st.session_state.get(_k), dict):
+                _containers.append(st.session_state[_k])
+
+        # Variants for each level name (normalized: lowercase, no underscores/hyphens)
+        _variants = {
+            "call": ["callvolumemaxstrike", "callvolumemax", "maxcallvolume", "callmax", "callmaxstrike", "callmaxlevel"],
+            "put":  ["putvolumemaxstrike", "putvolumemax", "maxputvolume", "putmax", "putmaxstrike", "putmaxlevel"],
+            "ag":   ["agmax", "aggammamax", "aggregategammamax", "aggmax"],
+            "pz":   ["pzmax", "pressurezonemax", "maxpz"],
+            "gflip":["gflip", "gflipstrike", "gammaflip", "gammagflip", "gfliplevel"]
+        }
+
+        _levels_found = {}
+        for _name, _keys in _variants.items():
+            val = None
+            for _d in _containers:
+                val = _pick_level(_d, _keys)
+                if val is not None:
+                    break
+            if val is not None:
+                _levels_found[_name] = val
+
+        # Draw horizontal lines if levels are present.
+        # We use shapes (add_hline) so we don't impact traces/legend or interactions.
+        try:
+            import math
+            for _nm, _y in _levels_found.items():
+                if _y is None or (isinstance(_y, float) and (math.isnan(_y) or math.isinf(_y))):
+                    continue
+                fig.add_hline(y=float(_y), line_dash="dot", line_width=1)
+        except Exception:
+            # Fallback via Scatter if add_hline is unavailable in the runtime
+            try:
+                _x0, _x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
+                for _nm, _y in _levels_found.items():
+                    fig.add_trace(go.Scatter(x=[_x0, _x1], y=[_y, _y], mode="lines", name=f"{_nm}_lvl",
+                                             line=dict(dash="dot", width=1)))
+            except Exception:
+                pass
+
+        # Optional debug block
+        if 'kl_debug' in st.session_state and st.session_state['kl_debug']:
+            st.write("Max levels from first chart (detected):", _levels_found)
         fig.update_layout(
             height=560,
             margin=dict(l=90, r=20, t=60, b=80),
