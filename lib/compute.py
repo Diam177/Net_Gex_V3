@@ -154,11 +154,10 @@ def aggregate_series(block):
     if puts is None:  puts  = []
 
     strikes = sorted(set([float(r.get("strike")) for r in (calls + puts) if r.get("strike") is not None]))
-    call_oi = {float(r['strike']): int(r.get('openInterest') or 0) for r in calls if r.get('strike') is not None}
-    put_oi  = {float(r['strike']): int(r.get('openInterest') or 0) for r in puts  if r.get('strike') is not None}
-    call_vol= {float(r['strike']): int(r.get('volume') or 0)       for r in calls if r.get('strike') is not None}
-    put_vol = {float(r['strike']): int(r.get('volume') or 0)       for r in puts  if r.get('strike') is not None}
-
+    call_oi = {float(r["strike"]): int(r.get("openInterest") or 0) for r in calls if r.get("strike") is not None}
+    put_oi  = {float(r["strike"]): int(r.get("openInterest") or 0) for r in puts  if r.get("strike") is not None} # FIXED (restored condition)t("strike") is not None}
+    call_vol= {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in calls if r.get("strike") is not None}
+    put_vol = {float(r["strike"]): int(r.get("volume") or 0) if r.get("volume") is not None else 0 for r in puts  if r.get("strike") is not None}
     iv_call = {}
     iv_put  = {}
     for r in calls:
@@ -335,7 +334,7 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         WdK = Wd_kernel(K, S, h)
         for w, c in zip(W_time, prep):
             j = int(np.argmin(np.abs(c["Ks"] - K)))
-            val += w * c['AG_hat'][j] * c['Stab_hat'][j] * c['Act_hat'][j]
+            val += w * WdK * c["AG_hat"][j] * c["Stab_hat"][j] * c["Act_hat"][j]
         pz_vals.append(val)
     pz_vals = np.array(pz_vals, dtype=float)
     pz_norm = (pz_vals / pz_vals.max()) if pz_vals.max()>0 else np.zeros_like(pz_vals)
@@ -375,7 +374,7 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         stab = Stab_at_K(K)
         agloc = AG_loc(K)
         hf = abs(HF_at_K(K))
-        val = stab * ((agloc**delta_par) if agloc>0 else 0.0) / (eps_small + hf)
+        val = Wd_kernel(K, S, h) * stab * ((agloc**delta_par) if agloc>0 else 0.0) / (eps_small + hf)
         pzfp_vals.append(val)
     pzfp_vals = np.array(pzfp_vals, dtype=float)
     pzfp_norm = (pzfp_vals / pzfp_vals.max()) if pzfp_vals.max()>0 else np.zeros_like(pzfp_vals)
