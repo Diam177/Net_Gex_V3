@@ -167,7 +167,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
         fig.update_layout(
             height=560,
-            margin=dict(l=90, r=20, t=50, b=50),
+            margin=dict(l=90, r=20, t=60, b=80),
             xaxis_title="Time",
             yaxis_title="Price",
             showlegend=True,
@@ -179,6 +179,19 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             font=dict(color="white"),
             template=None
         )
+        # ----- Annotations: ticker (top-left) & session date (bottom-left) -----
+        # Place ticker at the top-left in the paper coordinates (doesn't affect axes).
+        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=1.10, text=str(ticker), showarrow=False, align="left")
+        # Build ET session date label like 'Sep 1, 2025' from first candle timestamp
+        try:
+            _ts0 = pd.to_datetime(df_plot["ts"].iloc[0]).tz_convert("America/New_York")
+        except Exception:
+            _ts0 = pd.to_datetime(df_plot["ts"].iloc[0], utc=True).tz_convert("America/New_York")
+        _date_text = f"{_ts0.strftime('%b')} {_ts0.day}, {_ts0.year}"
+        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=-0.20, text=_date_text, showarrow=False, align="left")
+        # Move 'Time' axis title slightly up (closer to the axis)
+        fig.update_xaxes(title_standoff=5)
+    
         # fix ranges, remove interactions and rangeslider
         fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
         fig.update_yaxes(fixedrange=True)
