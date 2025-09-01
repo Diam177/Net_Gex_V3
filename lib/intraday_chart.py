@@ -1,84 +1,148 @@
-# lib/intraday_chart.py
+
 from __future__ import annotations
-import numpy as np
+import os, json, datetime
+from typing import Optional, Dict, Any
 import pandas as pd
 import plotly.graph_objects as go
-from typing import Dict, Optional, Tuple
+import streamlit as st
 
-def compute_vwap(df: pd.DataFrame) -> pd.Series:
-    # df: ['datetime','high','low','close','volume']
-    tp = (df["high"] + df["low"] + df["close"]) / 3.0
-    pv = tp * df["volume"].clip(lower=0)
-    cum_pv = pv.cumsum()
-    cum_v  = df["volume"].clip(lower=0).cumsum().replace(0, np.nan)
-    return cum_pv / cum_v
+from .provider import fetch_stock_history, debug_meta
 
-def _add_hline(fig: go.Figure, y: float, name: str, dash: str = "solid", width: float = 2.0):
-    if y is None or (isinstance(y, float) and np.isnan(y)):
-        return
-    fig.add_hline(y=y, line_width=width, line_dash=dash,
-                  annotation_text=name, annotation_position="top left")
+@st.cache_data(show_spinner=False, ttl=60)
+def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
+    data, content = fetch_stock_history(ticker, host, key, interval=interval, limit=int(limit), dividend=dividend)
+    return data, content
 
-def _add_zone(fig: go.Figure, lo: float, hi: float, name: str, fillcolor: str, opacity: float = 0.18):
-    if lo is None or hi is None or not (hi > lo):
-        return
-    fig.add_shape(type="rect", xref="x", yref="y",
-                  x0=fig.layout.xaxis.range[0] if fig.layout.xaxis.range else None,
-                  x1=fig.layout.xaxis.range[1] if fig.layout.xaxis.range else None,
-                  y0=lo, y1=hi, line=dict(width=0),
-                  fillcolor=fillcolor, opacity=opacity, layer="below")
-    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
-                             line=dict(color=fillcolor), name=name, showlegend=True))
+def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
+    """Вернуть DataFrame со свечами: ts, open, high, low, close, volume."""
+    def to_dt(rec: Dict[str, Any]):
+        import pandas as _pd
+        if "timestamp_unix" in rec:
+            return _pd.to_datetime(rec["timestamp_unix"], unit="s", utc=True)
+        if "timestamp" in rec:
+            try:
+                return _pd.to_datetime(rec["timestamp"], utc=True)
+            except Exception:
+                return _pd.to_datetime(str(rec["timestamp"]), utc=True, errors="coerce")
+        if "t" in rec:
+            try:
+                return _pd.to_datetime(rec["t"], unit="s", utc=True)
+            except Exception:
+                return _pd.to_datetime(str(rec["t"]), utc=True, errors="coerce")
+        return _pd.NaT
 
-def make_intraday_levels_figure(
-    df: pd.DataFrame,
-    levels: Dict[str, Optional[float]] | None = None,
-    zones: Dict[str, Optional[Tuple[float, float]]] | None = None,
-    title: str = "",
-) -> go.Figure:
-    """
-    Ожидает df с колонками: ['datetime','open','high','low','close','volume'] — одна сессия.
-    levels: ключи (опционально): 'main_resistance','main_support','max_neg_gex','max_pos_gex',
-            'max_ag','g_flip','global_call_vol_level','global_put_vol_level'
-    zones:  ключи (опционально): 'resistance_zone'=(lo,hi), 'support_zone'=(lo,hi), 'buffer_zone'=(lo,hi)
-    """
-    levels = levels or {}
-    zones  = zones  or {}
-    df = df.copy().sort_values("datetime")
-    df["datetime"] = pd.to_datetime(df["datetime"])
+    records = []
+    if isinstance(raw_json, dict):
+        if isinstance(raw_json.get("body"), list):
+            records = raw_json["body"]
+        elif isinstance(raw_json.get("data"), dict):
+            for k in ("items","body","candles"):
+                if isinstance(raw_json["data"].get(k), list):
+                    records = raw_json["data"][k]; break
+        elif isinstance(raw_json.get("result"), dict):
+            for k in ("candles","items","body"):
+                if isinstance(raw_json["result"].get(k), list):
+                    records = raw_json["result"][k]; break
+        elif isinstance(raw_json.get("candles"), list):
+            records = raw_json["candles"]
+    elif isinstance(raw_json, list):
+        records = raw_json
 
-    fig = go.Figure()
-    # Свечи
-    fig.add_trace(go.Candlestick(
-        x=df["datetime"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
-        name="Price", increasing_line_width=1.2, decreasing_line_width=1.2
-    ))
-    # VWAP
-    vwap = compute_vwap(df)
-    fig.add_trace(go.Scatter(x=df["datetime"], y=vwap, mode="lines", name="VWAP", line=dict(width=2)))
+    rows = []
+    for r in (records or []):
+        rows.append({
+            "ts": to_dt(r),
+            "open": r.get("open") or r.get("o"),
+            "high": r.get("high") or r.get("h"),
+            "low":  r.get("low")  or r.get("l"),
+            "close":r.get("close")or r.get("c"),
+            "volume": r.get("volume") or r.get("v"),
+        })
+    dfc = pd.DataFrame(rows).dropna(subset=["ts"]).sort_values("ts")
+    return dfc
 
-    # Линии
-    _add_hline(fig, levels.get("main_resistance"), "Main Resistance", "solid", 3)
-    _add_hline(fig, levels.get("main_support"),    "Main Support",    "solid", 3)
-    _add_hline(fig, levels.get("global_call_vol_level"), "Global Call Vol", "dot", 2)
-    _add_hline(fig, levels.get("global_put_vol_level"),  "Global Put Vol",  "dot", 2)
-    _add_hline(fig, levels.get("max_neg_gex"), "Max Neg GEX", "dash", 2)
-    _add_hline(fig, levels.get("max_pos_gex"), "Max Pos GEX", "dash", 2)
-    _add_hline(fig, levels.get("max_ag"),      "Max AG",      "dash", 2)
-    _add_hline(fig, levels.get("g_flip"),      "G-Flip Zone", "dash", 2)
+def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
+    """UI-секция 'Key Levels' (свечи + отладка)."""
+    st.subheader("Key Levels")
+    with st.container():
+        c1, c2, c3, c4 = st.columns([1,1,1,1])
+        with c1:
+            interval = st.selectbox("Interval", ["1m","2m","5m","15m","30m","1h","1d"], index=0, key="kl_interval")
+        with c2:
+            limit = st.number_input("Limit", min_value=100, max_value=1000, value=640, step=10, key="kl_limit")
+        with c3:
+            dbg = st.toggle("Debug", value=False, key="kl_debug")
+        with c4:
+            uploader = st.file_uploader("JSON (optional)", type=["json","txt"], accept_multiple_files=False, label_visibility="collapsed", key="kl_uploader")
 
-    # Зоны
-    if zones.get("resistance_zone"): _add_zone(fig, *zones["resistance_zone"], "Resistance Zone", "#3DAF6A")
-    if zones.get("support_zone"):    _add_zone(fig, *zones["support_zone"],    "Support Zone",    "#FF6A3D")
-    if zones.get("buffer_zone"):     _add_zone(fig, *zones["buffer_zone"],     "Buffer Zone",     "#3066BE")
+        # Источники данных
+        candles_json, candles_bytes = None, None
 
-    fig.update_layout(
-        title=title, template="plotly_dark",
-        xaxis_title="Time", yaxis_title="Price",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.02),
-        margin=dict(l=40, r=20, t=50, b=40), hovermode="x unified",
-    )
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=False)
-    return fig
+        if uploader is not None:
+            try:
+                up_bytes = uploader.read()
+                candles_json = json.loads(up_bytes.decode("utf-8"))
+                candles_bytes = up_bytes
+            except Exception as e:
+                st.error(f"Ошибка чтения JSON: {e}")
+
+        if candles_json is None:
+            test_path = "/mnt/data/TEST ENDPOINT.TXT"
+            if os.path.exists(test_path):
+                try:
+                    with open(test_path, "rb") as f:
+                        tb = f.read()
+                    candles_json = json.loads(tb.decode("utf-8"))
+                    candles_bytes = tb
+                    st.info("Использован локальный тестовый файл: TEST ENDPOINT.TXT")
+                except Exception:
+                    pass
+
+        if candles_json is None and rapid_host and rapid_key:
+            try:
+                candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))
+                st.success("Свечи получены от провайдера")
+            except Exception as e:
+                st.error(f"Ошибка запроса свечей: {e}")
+
+        if candles_json is None:
+            st.warning("Нет данных для чарта Key Levels (загрузите JSON или задайте RAPIDAPI_HOST/RAPIDAPI_KEY).")
+            return
+
+        dfc = _normalize_candles_json(candles_json)
+        if dfc.empty:
+            st.warning("Данные свечей не распознаны.")
+            return
+
+        fig = go.Figure(data=[
+            go.Candlestick(
+                x=dfc["ts"],
+                open=dfc["open"],
+                high=dfc["high"],
+                low=dfc["low"],
+                close=dfc["close"],
+                name="Price"
+            )
+        ])
+        fig.update_layout(
+            height=420,
+            margin=dict(l=10, r=10, t=30, b=30),
+            xaxis_title="Time",
+            yaxis_title="Price",
+            showlegend=True,
+            template="plotly_dark" if st.get_option("theme.base") == "dark" else None
+        )
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+        st.download_button(
+            "Скачать JSON (Key Levels)",
+            data=candles_bytes if isinstance(candles_bytes, (bytes, bytearray)) else json.dumps(candles_json, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name=f"{ticker}_{interval}_candles.json",
+            mime="application/json",
+            key="kl_download"
+        )
+
+        if dbg:
+            with st.expander("Debug: provider meta & head"):
+                st.json(debug_meta())
+                st.write(dfc.head(10))
