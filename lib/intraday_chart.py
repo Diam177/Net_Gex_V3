@@ -147,7 +147,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             )
         ])
         fig.update_layout(
-            height=420,
+            height=560,
             margin=dict(l=10, r=10, t=30, b=30),
             xaxis_title="Time",
             yaxis_title="Price",
