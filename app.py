@@ -325,4 +325,3 @@ except Exception as _e:
     # Silent: don't break UI if something's missing
     pass
 render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
-
