@@ -87,43 +87,11 @@ def _build_rth_ticks_30m(df_plot: pd.DataFrame):
     ticktext = [t.strftime("%H:%M") for t in ticks_et]
     return tickvals, ticktext
 
-def _et_session_bounds_for_ts(ts_utc: pd.Timestamp):
-    """Return ET RTH bounds for the *calendar* date of ts_utc."""
-    tz_et = "America/New_York"
-    if ts_utc.tzinfo is None:
-        ts_utc = pd.to_datetime(ts_utc, utc=True)
-    ts_et = ts_utc.tz_convert(tz_et)
-    d_et = ts_et.normalize()
-    start_et = d_et + pd.Timedelta(hours=9, minutes=30)
-    end_et   = d_et + pd.Timedelta(hours=16)
-    return start_et.tz_convert("UTC"), end_et.tz_convert("UTC")
-
-
-def _format_session_date_et(ts_like) -> str:
-    """Format ET calendar date as 'Sep 1, 2025' from a timestamp-like value."""
-    tz_et = "America/New_York"
-    ts = pd.to_datetime(ts_like, utc=True)
-    ts_et = ts.tz_convert(tz_et)
-    y = ts_et.year
-    m = ts_et.strftime("%b")
-    d = ts_et.day
-    return f"{m} {d}, {y}"
-def _slice_current_session_or_skeleton(dfc: pd.DataFrame):
-    """Return (df, (start,end), has_price) for *today's* ET session.
-    If no candles yet, return a 2-row skeleton with only timestamps and has_price=False.
-    """
-    now_utc = pd.Timestamp.now(tz="UTC")
-    start_utc, end_utc = _et_session_bounds_for_ts(now_utc)
-    mask = (dfc["ts"] >= start_utc) & (dfc["ts"] <= end_utc)
-    df_today = dfc.loc[mask].sort_values("ts").reset_index(drop=True)
-    if not df_today.empty and {"open","high","low","close"}.issubset(df_today.columns):
-        return df_today, (start_utc, end_utc), True
-    # skeleton
-    return pd.DataFrame({"ts":[start_utc, end_utc]}), (start_utc, end_utc), False
-
 
 def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
-    """UI section 'Key Levels' (adds 'Last session' toggle and 'Market closed' state)."""
+    """Key Levels: add 'Last session' toggle.
+    OFF -> current ET session; if no candles yet, render full frame with key levels only and 'Market closed' label.
+    ON  -> nearest finished session (previous trading day)."""
     st.subheader("Key Levels")
     with st.container():
         c1, c2, c3, c4 = st.columns([1,1,1,1])
@@ -136,23 +104,26 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         with c4:
             uploader = st.file_uploader("JSON (optional)", type=["json"], accept_multiple_files=False, label_visibility="collapsed", key="kl_uploader")
 
-        # New toggle
+        # Toggle (default OFF)
         last_session = st.toggle("Last session", value=False, key="kl_last_session")
 
+        # Load candles
         candles_json, candles_bytes = None, None
         if uploader is not None:
             try:
-                candles_bytes = uploader.read()
-                candles_json = json.loads(candles_bytes.decode("utf-8"))
+                up_bytes = uploader.read()
+                candles_json = json.loads(up_bytes.decode("utf-8"))
+                candles_bytes = up_bytes
             except Exception as e:
                 st.error(f"Invalid JSON: {e}")
                 return
-        elif rapid_host and rapid_key:
-            try:
-                candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit), dividend=None)
-            except Exception as e:
-                st.error(f"Provider error: {e}")
-                return
+        else:
+            if rapid_host and rapid_key:
+                try:
+                    candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit), dividend=None)
+                except Exception as e:
+                    st.error(f"Provider error: {e}")
+                    return
 
         if candles_json is None:
             st.warning("No data for Key Levels (upload JSON or set RAPIDAPI_HOST/RAPIDAPI_KEY).")
@@ -163,16 +134,31 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Candles are empty or not recognized.")
             return
 
+        # Choose session
         if last_session:
             df_plot = _take_last_session(dfc, gap_minutes=60)
             has_price = (not df_plot.empty) and {"open","high","low","close"}.issubset(df_plot.columns)
         else:
-            df_plot, sess_bounds, has_price = _slice_current_session_or_skeleton(dfc)
+            # Current ET session bounds
+            tz_et = "America/New_York"
+            now_et = pd.Timestamp.now(tz=tz_et)
+            d = now_et.normalize()
+            start_et = d + pd.Timedelta(hours=9, minutes=30)
+            end_et   = d + pd.Timedelta(hours=16)
+            start_utc, end_utc = start_et.tz_convert("UTC"), end_et.tz_convert("UTC")
+            mask = (dfc["ts"] >= start_utc) & (dfc["ts"] <= end_utc)
+            cur = dfc.loc[mask].sort_values("ts").reset_index(drop=True)
+            if not cur.empty and {"open","high","low","close"}.issubset(cur.columns):
+                df_plot = cur
+                has_price = True
+            else:
+                # Skeleton frame: only timestamps for axes/ticks
+                df_plot = pd.DataFrame({"ts":[start_utc, end_utc]})
+                has_price = False
 
-        # Build VWAP (only if price exists)
+        # VWAP only if price is present
         vwap = None
         if has_price:
-            # Typical price VWAP: ((H+L+C)/3 * Vol).cumsum() / Vol.cumsum()
             vol = df_plot.get("volume", df_plot.get("v"))
             if vol is None:
                 vol = 0*df_plot["close"]
@@ -184,32 +170,27 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
             vwap = vwap.fillna(method="ffill")
 
-        # Build fixed RTH ticks (works also with skeleton)
+        # Ticks for ET RTH (uses existing helper)
         tickvals, ticktext = _build_rth_ticks_30m(df_plot)
 
+        # Figure
         fig = go.Figure()
         if has_price:
             fig.add_trace(go.Candlestick(
                 x=df_plot["ts"],
-                open=df_plot["open"],
-                high=df_plot["high"],
-                low=df_plot["low"],
-                close=df_plot["close"],
+                open=df_plot["open"], high=df_plot["high"],
+                low=df_plot["low"], close=df_plot["close"],
                 name="Price"
             ))
             if vwap is not None:
                 fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
         else:
-            # Center label when market closed / pre-open
             fig.add_annotation(text="Market closed", xref="paper", yref="paper",
                                x=0.5, y=0.5, showarrow=False,
                                font=dict(size=16, color="white"))
 
-        # Horizontal key levels from first chart (if present)
-        try:
-            levels = dict(st.session_state.get("first_chart_max_levels", {}))
-        except Exception:
-            levels = {}
+        # Horizontal key levels (from first chart)
+        levels = dict(st.session_state.get("first_chart_max_levels", {}))
         def _fmt_int(x):
             try:
                 return f"{int(round(float(x)))}"
@@ -234,19 +215,15 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         if not df_plot.empty:
             x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
         else:
-            # Fallback to tick range if any
             x0, x1 = (tickvals[0], tickvals[-1]) if tickvals else (None, None)
 
         def _add_line(tag, label):
             y = levels.get(tag)
-            if y is None or x0 is None:
-                return
-            fig.add_trace(go.Scatter(
-                x=[x0, x1], y=[y, y], mode="lines",
-                name=f"{label} ({_fmt_int(y)})",
-                line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
-                hoverinfo="skip", showlegend=True
-            ))
+            if y is None or x0 is None: return
+            fig.add_trace(go.Scatter(x=[x0, x1], y=[y, y], mode="lines",
+                                     name=f"{label} ({_fmt_int(y)})",
+                                     line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
+                                     hoverinfo="skip", showlegend=True))
         for tag, label in [
             ("max_neg_gex", "Max Neg GEX"),
             ("max_pos_gex", "Max Pos GEX"),
@@ -260,21 +237,10 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         ]:
             _add_line(tag, label)
 
-        # Layout
-        
-        # --- Date label (ET) at bottom-left ---
-        try:
-            if not df_plot.empty:
-                date_ts = df_plot["ts"].iloc[0]
-            else:
-                # fallback to tickvals (first value)
-                date_ts = tickvals[0] if tickvals else pd.Timestamp.now(tz="UTC")
-            _date_label = _format_session_date_et(date_ts)
-        except Exception:
-            _date_label = None
-fig.update_layout(
+        # Layout (unchanged except tick labels applied)
+        fig.update_layout(
             height=560,
-            margin=dict(l=90, r=20, t=50, b=70),
+            margin=dict(l=90, r=20, t=50, b=50),
             xaxis_title="Time",
             yaxis_title="Price",
             showlegend=True,
@@ -285,14 +251,127 @@ fig.update_layout(
             paper_bgcolor="#161B22",
             font=dict(color="white"),
         )
-        # place ET date label at bottom-left (outside plot)
-        if _date_label:
-            fig.add_annotation(text=_date_label, xref="paper", yref="paper", x=0, y=-0.12,
-                               xanchor="left", yanchor="top", showarrow=False,
-                               font=dict(size=12, color="white"))
         fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext,
-                         range=[tickvals[0], tickvals[-1]] if tickvals else None, rangeslider_visible=False)
+                         range=[tickvals[0], tickvals[-1]] if tickvals else None)
 
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
+
+        # Download original JSON
+        st.download_button(
+            "Скачать JSON (Key Levels)",
+            data=candles_bytes if isinstance(candles_bytes, (bytes, bytearray)) else json.dumps(candles_json, ensure_ascii=False, indent=2).encode("utf-8"),
+            file_name=f"{ticker}_{interval}_candles.json",
+            mime="application/json",
+            key="kl_download"
+        )
+
+        if dbg:
+            with st.expander("Debug: provider meta & head"):
+                st.json(debug_meta())
+                st.write(df_plot.head(10))
+
+        def _fmt_int(x):
+            try:
+                return f"{int(round(float(x)))}"
+            except Exception:
+                return str(x)
+        # colors consistent with first chart
+        try:
+            from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
+            _cmap = {
+                "max_pos_gex": POS_COLOR,
+                "max_neg_gex": NEG_COLOR,
+                "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
+                "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
+                "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2E86C1"),
+                "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#AF601A"),
+                "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
+                "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
+                "gflip":       "#AAAAAA",
+            }
+        except Exception:
+            _cmap = {}
+        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
+        x_mid = df_plot["ts"].iloc[len(df_plot)//2]
+        def _add_line(tag, label):
+            y = levels.get(tag)
+            if y is None:
+                return
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[y, y], mode="lines",
+                name=f"{label} ({_fmt_int(y)})",
+                line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
+                hoverinfo="skip", showlegend=True
+            ))
+        _add_line("max_neg_gex", "Max Neg GEX")
+        _add_line("max_pos_gex", "Max Pos GEX")
+        _add_line("put_oi_max",  "Max Put OI")
+        _add_line("call_oi_max", "Max Call OI")
+        _add_line("put_vol_max", "Max Put Volume")
+        _add_line("call_vol_max","Max Call Volume")
+        _add_line("ag_max",      "AG")
+        _add_line("pz_max",      "PZ")
+        _add_line("gflip",       "G-Flip")
+        # --- Same-strike consolidated labels (exact strike match) ---
+        try:
+            order_pairs = [
+                ("max_neg_gex", "Max Neg GEX"),
+                ("max_pos_gex", "Max Pos GEX"),
+                ("put_oi_max",  "Max Put OI"),
+                ("call_oi_max", "Max Call OI"),
+                ("put_vol_max", "Max Put Volume"),
+                ("call_vol_max","Max Call Volume"),
+                ("ag_max",      "AG"),
+                ("pz_max",      "PZ"),
+                ("gflip",       "G-Flip"),
+            ]
+            groups = {}
+            for tag, label in order_pairs:
+                y = levels.get(tag)
+                if y is None:
+                    continue
+                key = float(y)
+                groups.setdefault(key, []).append(label)
+            for y, labels in groups.items():
+                if len(labels) >= 2:
+                    text = " + ".join(labels)
+                    fig.add_annotation(
+                        x=x_mid, y=y, xref="x", yref="y",
+                        text=text, showarrow=False, xanchor="center", yshift=12, align="center",
+                        bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
+                        borderwidth=1, font=dict(size=11)
+                    )
+        except Exception:
+            pass
+        fig.update_layout(
+            height=560,
+            margin=dict(l=90, r=20, t=50, b=50),
+            xaxis_title="Time",
+            yaxis_title="Price",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            dragmode=False,
+            hovermode=False,
+            plot_bgcolor="#161B22",
+            paper_bgcolor="#161B22",
+            font=dict(color="white"),
+            template=None
+        )
+        # fix ranges, remove interactions and rangeslider
+        fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
+        fig.update_yaxes(fixedrange=True)
+        fig.update_layout(xaxis_rangeslider_visible=False)
+
+        # show date below Time
+        try:
+            _ts0 = df_plot["ts"].iloc[0]
+            _ts0 = pd.to_datetime(_ts0, utc=True) if getattr(_ts0, "tzinfo", None) is None else _ts0
+            _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
+            fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
+        except Exception:
+            pass
+
+        fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
 
         st.download_button(
