@@ -154,6 +154,15 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             showlegend=True,
             template="plotly_dark" if st.get_option("theme.base") == "dark" else None
         )
+        # Compute VWAP for the session
+        vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
+        tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
+        cum_vol = vol.cumsum()
+        vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
+        vwap = vwap.fillna(method="ffill")
+        # Add VWAP line
+        fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
+        
         # stretch x-axis to session range
         fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]])
 
