@@ -100,6 +100,8 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             dbg = st.toggle("Debug", value=False, key="kl_debug")
         with c4:
             uploader = st.file_uploader("JSON (optional)", type=["json","txt"], accept_multiple_files=False, label_visibility="collapsed", key="kl_uploader")
+        # New: Last session toggle (default OFF)
+        last_session_toggle = st.toggle("Last session", value=False, key="kl_last_session")
 
         candles_json, candles_bytes = None, None
 
@@ -139,7 +141,12 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Candles are empty or not recognized.")
             return
 
-        df_plot = _take_last_session(dfc, gap_minutes=60)
+        last_session_toggle = st.session_state.get('kl_last_session', False)
+        if last_session_toggle:
+            df_plot = _take_last_session(dfc, gap_minutes=60)
+            has_price = not df_plot.empty and ('open' in df_plot.columns)
+        else:
+            df_plot, sess_bounds, has_price = _slice_current_session_or_skeleton(dfc)
         if df_plot.empty:
             st.warning("Could not detect last session.")
             return
@@ -154,17 +161,24 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         # build fixed RTH ticks
         tickvals, ticktext = _build_rth_ticks_30m(df_plot)
 
-        fig = go.Figure(data=[
-            go.Candlestick(
+        fig = go.Figure()
+        # Apply fixed ET ticks
+        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
+        fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext, range=[tickvals[0], tickvals[-1]])
+        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
+        if has_price:
+            fig.add_trace(go.Candlestick(
                 x=df_plot["ts"],
                 open=df_plot["open"],
                 high=df_plot["high"],
                 low=df_plot["low"],
                 close=df_plot["close"],
                 name="Price"
-            )
-        ])
-        fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
+            ))
+            fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
+        else:
+            # Market closed: no price/VWAP traces, show annotation
+            fig.add_annotation(text="Market closed", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
 
         # --- Key Levels: horizontal lines from first chart maxima ---
         levels = {}
