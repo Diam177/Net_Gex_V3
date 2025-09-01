@@ -154,7 +154,10 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             showlegend=True,
             dragmode=False,
             hovermode=False,
-            template="plotly_dark" if st.get_option("theme.base") == "dark" else None
+            plot_bgcolor="#161B22",
+            paper_bgcolor="#161B22",
+            font=dict(color="white"),
+            template=None
         )
         # Compute VWAP for the session
         vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
