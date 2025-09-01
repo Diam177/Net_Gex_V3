@@ -4,6 +4,7 @@ import numpy as np
 import time, json, math, io, datetime
 
 from lib.provider import fetch_option_chain, fetch_stock_history, debug_meta
+from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
@@ -243,6 +244,10 @@ table_download_placeholder.download_button(
     'Скачать таблицу', data=table_csv,
     file_name=f"{ticker}_{selected_exp}_table.csv", mime='text/csv'
 )
+
+# --- Key Levels under main table ---
+render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
+
 
 # === Plot ===
 st.subheader("GammaStrat v4.5")
