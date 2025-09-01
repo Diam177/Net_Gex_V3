@@ -183,7 +183,7 @@ def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12
 g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
 
 # === Plot ===
-st.subheader("GammaStrat v4.5")
+st.subheader("GammaStrat v6.5")
 cols = st.columns(9)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
