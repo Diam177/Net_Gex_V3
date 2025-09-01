@@ -38,7 +38,7 @@ with col_f:
         try:
             base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
             raw_data, raw_bytes = base_json, base_bytes
-            data_status_placeholder.success("Данные получены")
+            data_status_placeholder.success("Data received")
         except Exception as e:
             st.error(f"Ошибка запроса RapidAPI: {e}")
     else:
