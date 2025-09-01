@@ -4,6 +4,7 @@ import numpy as np
 import time, json, math, io, datetime
 
 from lib.provider import fetch_option_chain, debug_meta
+from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
@@ -231,9 +232,6 @@ df = pd.DataFrame({
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
 
-
-# --- Key Levels strictly under the main table (fallback) ---
-render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
 g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S_used)
 
 table_csv = df.to_csv(index=False).encode('utf-8')
