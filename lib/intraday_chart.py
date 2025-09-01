@@ -181,7 +181,12 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         )
         # ----- Annotations: ticker (top-left) & session date (bottom-left) -----
         # Place ticker at the top-left in the paper coordinates (doesn't affect axes).
-        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=1.10, text=str(ticker), showarrow=False, align="left")
+        fig.add_annotation(
+    xref="paper", yref="paper",
+    x=-0.06, y=1.08,
+    text=str(ticker),
+    showarrow=False, align="left"
+)
         # Build ET session date label like 'Sep 1, 2025' from first candle timestamp
         try:
             _ts0 = pd.to_datetime(df_plot["ts"].iloc[0]).tz_convert("America/New_York")
