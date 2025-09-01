@@ -76,13 +76,11 @@ def _build_rth_ticks_30m(df_plot: pd.DataFrame):
     ts0 = df_plot["ts"].iloc[0]
     if ts0.tzinfo is None:
         ts0 = pd.to_datetime(ts0, utc=True)
-    # convert first candle timestamp to ET to get that calendar date in New York
     ts0_et = ts0.tz_convert(tz_et)
     session_date_et = ts0_et.normalize()
     session_start_et = session_date_et + pd.Timedelta(hours=9, minutes=30)
     session_end_et   = session_date_et + pd.Timedelta(hours=16)
     ticks_et = pd.date_range(start=session_start_et, end=session_end_et, freq="30min")
-    # Plotly x values are UTC in our data; keep tickvals in UTC for alignment
     tickvals = list(ticks_et.tz_convert("UTC"))
     ticktext = [t.strftime("%H:%M") for t in ticks_et]
     return tickvals, ticktext
@@ -175,7 +173,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             return
 
         session_date_et = pd.Timestamp.now(tz="America/New_York").normalize()
-        # Determine data scope based on toggle
         last_session = st.session_state.get("kl_last_session", False)
         if last_session:
             df_plot = _take_last_session(dfc, gap_minutes=60)
@@ -184,11 +181,9 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                 st.warning("Could not detect last session.")
                 return
         else:
-            # Current session (today ET)
             df_plot = _filter_session_for_date(dfc, session_date_et)
             has_candles = not df_plot.empty
 
-        # Build fixed RTH ticks and x-range
         if has_candles:
             tickvals, ticktext = _build_rth_ticks_30m(df_plot)
             x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
@@ -198,7 +193,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             x0, x1 = tickvals[0], tickvals[-1]
             x_mid = tickvals[len(tickvals)//2]
 
-        # compute VWAP if candles exist
         if has_candles:
             vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
             tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
@@ -221,7 +215,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         if has_candles and vwap is not None:
             fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
 
-        # --- Key Levels: horizontal lines from first chart maxima ---
+        # --- Key Levels (горизонтальные линии) ---
         levels = {}
         try:
             levels = dict(st.session_state.get("first_chart_max_levels", {}))
@@ -234,7 +228,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             except Exception:
                 return str(x)
 
-        # colors consistent with first chart
         try:
             from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
             _cmap = {
@@ -272,7 +265,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         _add_line("pz_max",      "PZ")
         _add_line("gflip",       "G-Flip")
 
-        # --- Same-strike consolidated labels (exact strike match) ---
+        # --- Consolidated labels ---
         try:
             order_pairs = [
                 ("max_neg_gex", "Max Neg GEX"),
@@ -304,13 +297,17 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         except Exception:
             pass
 
-        # If market closed for current session (no candles), show centered label
+        # --- Market closed annotation ---
         if not has_candles and not st.session_state.get('kl_last_session', False):
             fig.add_annotation(
-                x=x_mid, y=(levels.get('max_pos_gex') or levels.get('max_neg_gex') or 0),
-                xref="x", yref="y", text="Market closed",
-                showarrow=False, xanchor="center", yanchor="middle",
-                font=dict(size=18), bgcolor="rgba(0,0,0,0.35)"
+                x=x_mid,
+                y=(levels.get('max_pos_gex') or levels.get('max_neg_gex') or 0),
+                xref="x", yref="y",
+                text="Market closed",
+                showarrow=False,
+                xanchor="center", yanchor="middle",
+                font=dict(size=36, color="rgba(255,255,255,0.7)"),
+                bgcolor="rgba(0,0,0,0)"
             )
 
         fig.update_layout(
@@ -327,12 +324,10 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             font=dict(color="white"),
             template=None
         )
-        # fix ranges, remove interactions and rangeslider
         fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
-        # show date below Time
         try:
             if has_candles:
                 _ts0 = df_plot["ts"].iloc[0]
