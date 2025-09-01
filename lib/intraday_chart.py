@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from .provider import fetch_stock_history, debug_meta
+from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
 
 @st.cache_data(show_spinner=False, ttl=60)
 def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
@@ -166,114 +167,120 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         ])
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
 
-        # ===== Horizontal lines from First Chart maxima/minima (robust discovery) =====
-        # We try to discover levels in st.session_state even if keys vary between versions.
+        
+        # ===== Horizontal lines from First Chart maxima/minima (legend only, no axis annotations) =====
         import math
+        import numpy as _np
 
-        def _to_float(x):
-            try:
-                return float(x)
-            except Exception:
-                try:
-                    return float(str(x).strip())
-                except Exception:
-                    return None
-
-        # normalize key name: lower, remove spaces/underscores/hyphens
-        def _norm(k: str) -> str:
+        # Helper: normalize string key
+        def _normk(k: str) -> str:
             return str(k).replace("_","").replace("-","").replace(" ","").lower()
 
-        # Deep scan any mapping/list structure for candidate values
-        def _deep_find_levels(obj, want_keys):
-            found = {}
+        # Deep-scan container for keys
+        def _deep_scan(obj, keysets):
+            out = {}
             stack = [obj]
             while stack:
                 cur = stack.pop()
                 if isinstance(cur, dict):
                     for k, v in cur.items():
-                        nk = _norm(k)
-                        for tag, keyset in want_keys.items():
-                            if nk in keyset and tag not in found:
+                        nk = _normk(k)
+                        for tag, keyset in keysets.items():
+                            if tag not in out and nk in keyset:
+                                # try direct float or nested dict with price/strike/value
                                 val = None
                                 if isinstance(v, dict):
-                                    # nested dict with typical leaf names
-                                    for leaf in ("price","strike","level","value","y","v","val"):
+                                    for leaf in ("strike","price","level","value","y"):
                                         if leaf in v:
-                                            val = _to_float(v[leaf]); 
-                                            if val is not None: break
+                                            try:
+                                                val = float(v[leaf]); break
+                                            except Exception:
+                                                pass
                                 if val is None:
-                                    val = _to_float(v)
+                                    try:
+                                        val = float(v)
+                                    except Exception:
+                                        val = None
                                 if val is not None:
-                                    found[tag] = val
-                        # continue scanning deeper
+                                    out[tag] = val
                         if isinstance(v, (dict, list, tuple)):
                             stack.append(v)
                 elif isinstance(cur, (list, tuple)):
                     for it in cur:
                         if isinstance(it, (dict, list, tuple)):
                             stack.append(it)
-            return found
+            return out
 
-        # define many aliases for each required level
         WANT = {
-            "call_vol_max": set(_norm(x) for x in [
-                "call_volume_max", "max_call_volume", "callVolMax", "call_volume_max_strike",
-                "call_volume_peak", "call_volumemax", "call_volume_max_price"
-            ]),
-            "put_vol_max": set(_norm(x) for x in [
-                "put_volume_max", "max_put_volume", "putVolMax", "put_volume_max_strike",
-                "put_volume_peak", "put_volumemax", "put_volume_max_price"
-            ]),
-            "ag_max": set(_norm(x) for x in [
-                "ag_max", "AG_max", "absolute_gamma_max", "abs_gamma_max", "gamma_abs_max", "AGMax"
-            ]),
-            "pz_max": set(_norm(x) for x in [
-                "pz_max", "PZ_max", "power_zone_max", "powerzone_max", "pzPeak", "PZMax"
-            ]),
-            "gflip": set(_norm(x) for x in [
-                "g_flip", "gflip", "gamma_flip", "gammaFlip", "gFlipLevel", "gflip_strike"
-            ]),
-            "call_oi_max": set(_norm(x) for x in [
-                "call_oi_max", "max_call_oi", "callOiMax", "call_oi_max_strike", "call_oi_peak"
-            ]),
-            "put_oi_min": set(_norm(x) for x in [
-                "put_oi_min", "min_put_oi", "putOiMin", "put_oi_min_strike", "put_oi_trough"
-            ]),
+            "max_pos_gex": set(_normk(x) for x in ["max_pos_gex","net_gex_pos_max","gex_pos_max"]),
+            "max_neg_gex": set(_normk(x) for x in ["max_neg_gex","net_gex_neg_min","gex_neg_min","min_net_gex"]),
+            "ng":          set(_normk(x) for x in ["ng","net_gex_abs_max","abs_ng"]),
+            "call_oi_max": set(_normk(x) for x in ["call_oi_max","max_call_oi"]),
+            "put_oi_min":  set(_normk(x) for x in ["put_oi_min","min_put_oi"]),
+            "call_vol_max":set(_normk(x) for x in ["call_volume_max","max_call_volume"]),
+            "put_vol_max": set(_normk(x) for x in ["put_volume_max","max_put_volume"]),
+            "ag_max":      set(_normk(x) for x in ["ag_max","absolute_gamma_max"]),
+            "pz_max":      set(_normk(x) for x in ["pz_max","power_zone_max"]),
+            "gflip":       set(_normk(x) for x in ["gflip","gamma_flip","g_flip"]),
         }
 
-        # Gather candidate containers to look into
         containers = [st.session_state]
-        for k in ("first_chart_max_levels", "opt_max_levels", "key_levels", "levels", "max_levels", "first_chart"):
-            if isinstance(st.session_state.get(k), (dict, list)):
-                containers.append(st.session_state[k])
+        for k in ("first_chart_max_levels","opt_max_levels","levels","max_levels","first_chart"):
+            v = st.session_state.get(k)
+            if isinstance(v, (dict, list)):
+                containers.append(v)
 
         levels = {}
         for box in containers:
-            got = _deep_find_levels(box, WANT)
-            levels.update({k:v for k,v in got.items() if v is not None})
+            levels.update(_deep_scan(box, WANT))
 
-        # Draw helper
-        def _hline(y, name):
+        # Color map (same as first chart)
+        _cmap = {
+            "max_pos_gex": POS_COLOR,
+            "max_neg_gex": NEG_COLOR,
+            "ng":          POS_COLOR,  # Net GEX: используем цвет positive Net GEX
+            "call_oi_max": LINE_STYLE["Call OI"]["line"],
+            "put_oi_min":  LINE_STYLE["Put OI"]["line"],
+            "call_vol_max":LINE_STYLE["Call Volume"]["line"],
+            "put_vol_max": LINE_STYLE["Put Volume"]["line"],
+            "ag_max":      LINE_STYLE["AG"]["line"],
+            "pz_max":      LINE_STYLE["PZ"]["line"],
+            "gflip":       "#AAAAAA",
+        }
+
+        def _fmt_int(x):
+            try:
+                xi = int(round(float(x)))
+                return f"{xi}"
+            except Exception:
+                return f"{x}"
+
+        # Draw as legend traces (no axis annotations)
+        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
+        def _add_line(tag, legend_name):
+            y = levels.get(tag)
             if y is None or (isinstance(y, float) and (math.isnan(y) or math.isinf(y))):
                 return
-            try:
-                fig.add_hline(y=float(y), line_dash="dot", line_width=1, annotation_text=name, annotation_position="right")
-            except Exception:
-                x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
-                fig.add_trace(go.Scatter(x=[x0,x1], y=[y,y], mode="lines", name=name, line=dict(dash="dot", width=1)))
+            color = _cmap.get(tag, "#BBBBBB")
+            name = f"{legend_name} ({_fmt_int(y)})"
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[y, y], mode="lines",
+                name=name, line=dict(dash="dot", width=1, color=color),
+                hoverinfo="skip", showlegend=True
+            ))
 
-        # Required by the task
-        _hline(levels.get("call_vol_max"), "Call Vol max")
-        _hline(levels.get("put_vol_max"), "Put Vol max")
-        _hline(levels.get("ag_max"),      "AG max")
-        _hline(levels.get("pz_max"),      "PZ max")
-        _hline(levels.get("gflip"),       "G-Flip")
-
-        # Additionally: Call OI max and Put OI min
-        _hline(levels.get("call_oi_max"), "Call OI max")
-        _hline(levels.get("put_oi_min"),  "Put OI min")
-
-        # Optional debug
+        # Required legend items and order
+        _add_line("max_neg_gex", "Max Neg GEX")
+        _add_line("max_pos_gex", "Max Pos GEX")
+        _add_line("ng",          "NG")
+        _add_line("put_oi_min",  "Max Put OI")   # по задаче: "Max Put OI" — берём минимум Put OI по страйку
+        _add_line("call_oi_max", "Max Call OI")
+        _add_line("put_vol_max", "Max Put Volume")
+        _add_line("call_vol_max","Max Call Volume")
+        _add_line("ag_max",      "AG")
+        _add_line("pz_max",      "PZ")
+        _add_line("gflip",       "G-Flip")
+# Optional debug
         if st.session_state.get("kl_debug"):
             st.write("Detected levels on intraday chart:", levels)
 
