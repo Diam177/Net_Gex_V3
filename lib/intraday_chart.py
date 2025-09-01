@@ -1,4 +1,3 @@
-# lib/intraday_chart.py
 import os
 import json
 from typing import Optional, Dict, Any
@@ -28,7 +27,6 @@ def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
             except Exception:
                 return pd.to_datetime(str(rec["t"]), utc=True, errors="coerce")
         return pd.NaT
-
     records = []
     if isinstance(raw_json, dict):
         if isinstance(raw_json.get("body"), list):
@@ -45,7 +43,6 @@ def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
             records = raw_json["candles"]
     elif isinstance(raw_json, list):
         records = raw_json
-
     rows = []
     for r in (records or []):
         rows.append({
@@ -60,8 +57,7 @@ def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
     return dfc
 
 def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame:
-    if dfc.empty:
-        return dfc
+    if dfc.empty: return dfc
     d = dfc.sort_values("ts").copy()
     gaps = d["ts"].diff().dt.total_seconds().div(60).fillna(0)
     sess_id = (gaps > gap_minutes).cumsum()
@@ -71,8 +67,7 @@ def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame
 def _build_rth_ticks_30m(df_plot: pd.DataFrame):
     tz_et = "America/New_York"
     ts0 = df_plot["ts"].iloc[0]
-    if ts0.tzinfo is None:
-        ts0 = pd.to_datetime(ts0, utc=True)
+    if ts0.tzinfo is None: ts0 = pd.to_datetime(ts0, utc=True)
     ts0_et = ts0.tz_convert(tz_et)
     session_date_et = ts0_et.normalize()
     session_start_et = session_date_et + pd.Timedelta(hours=9, minutes=30)
@@ -93,8 +88,7 @@ def _build_rth_ticks_for_date(session_date_et: pd.Timestamp):
     return tickvals, ticktext
 
 def _filter_session_for_date(dfc: pd.DataFrame, session_date_et: pd.Timestamp) -> pd.DataFrame:
-    if dfc.empty:
-        return dfc
+    if dfc.empty: return dfc
     if session_date_et.tz is None:
         session_date_et = session_date_et.tz_localize("America/New_York")
     start_et = session_date_et + pd.Timedelta(hours=9, minutes=30)
@@ -108,236 +102,211 @@ def _filter_session_for_date(dfc: pd.DataFrame, session_date_et: pd.Timestamp) -
 
 def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
     st.subheader("Key Levels")
-    with st.container():
-        c1, c2, c3, c4 = st.columns([1,1,1,1])
-        with c1:
-            interval = st.selectbox("Interval", ["1m","2m","5m","15m","30m","1h","1d"], index=0, key="kl_interval")
-        with c2:
-            limit = st.number_input("Limit", min_value=100, max_value=1000, value=640, step=10, key="kl_limit")
-        with c3:
-            last_session = st.toggle("Last session", value=False, key="kl_last_session")
-            dbg = st.toggle("Debug", value=False, key="kl_debug")
-        with c4:
-            uploader = st.file_uploader("JSON (optional)", type=["json","txt"], accept_multiple_files=False, label_visibility="collapsed", key="kl_uploader")
 
-        candles_json, candles_bytes = None, None
-        if uploader is not None:
-            try:
-                up_bytes = uploader.read()
-                candles_json = json.loads(up_bytes.decode("utf-8"))
-                candles_bytes = up_bytes
-            except Exception as e:
-                st.error(f"JSON read error: {e}")
+    # === Переключатель над чартом ===
+    st.toggle("Last session", value=st.session_state.get("kl_last_session", False), key="kl_last_session")
 
-        if candles_json is None and rapid_host and rapid_key:
-            try:
-                candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))
-                st.success("Candles fetched from provider")
-            except Exception as e:
-                st.error(f"Request error: {e}")
+    # Значения Interval/Limit берём из session_state (они в сайдбаре)
+    interval = st.session_state.get("kl_interval", "1m")
+    try:
+        limit = int(st.session_state.get("kl_limit", 640))
+    except Exception:
+        limit = 640
+    last_session = bool(st.session_state.get("kl_last_session", False))
 
-        if candles_json is None:
-            st.warning("No data for Key Levels (upload JSON or set RAPIDAPI_HOST/RAPIDAPI_KEY).")
-            return
+    # --- Получение данных (без загрузчика файлов и debug) ---
+    candles_json, candles_bytes = None, None
 
-        dfc = _normalize_candles_json(candles_json)
-        if dfc.empty:
-            st.warning("Candles are empty or not recognized.")
-            return
-
-        session_date_et = pd.Timestamp.now(tz="America/New_York").normalize()
-        last_session = st.session_state.get("kl_last_session", False)
-        if last_session:
-            df_plot = _take_last_session(dfc, gap_minutes=60)
-            has_candles = not df_plot.empty
-            if not has_candles:
-                st.warning("Could not detect last session.")
-                return
-        else:
-            df_plot = _filter_session_for_date(dfc, session_date_et)
-            has_candles = not df_plot.empty
-
-        if has_candles:
-            tickvals, ticktext = _build_rth_ticks_30m(df_plot)
-            x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
-            x_mid = df_plot["ts"].iloc[len(df_plot)//2]
-        else:
-            tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
-            x0, x1 = tickvals[0], tickvals[-1]
-            x_mid = tickvals[len(tickvals)//2]
-
-        # VWAP
-        if has_candles:
-            vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
-            tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
-            cum_vol = vol.cumsum()
-            vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
-            vwap = vwap.fillna(method="ffill")
-        else:
-            vwap = None
-
-        fig = go.Figure()
-        if has_candles:
-            fig.add_trace(go.Candlestick(
-                x=df_plot["ts"],
-                open=df_plot["open"],
-                high=df_plot["high"],
-                low=df_plot["low"],
-                close=df_plot["close"],
-                name="Price"
-            ))
-        if has_candles and vwap is not None:
-            fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
-
-        # --- Key Levels: горизонтальные линии по данным из первого графика ---
-        levels = {}
+    test_path = "/mnt/data/TEST ENDPOINT.TXT"
+    if os.path.exists(test_path):
         try:
-            levels = dict(st.session_state.get("first_chart_max_levels", {}))
+            with open(test_path, "rb") as f:
+                tb = f.read()
+            candles_json = json.loads(tb.decode("utf-8"))
+            candles_bytes = tb
+            st.info("Using local test file: TEST ENDPOINT.TXT")
         except Exception:
-            levels = {}
+            candles_json = None
+            candles_bytes = None
 
-        def _fmt_int(x):
-            try:
-                return f"{int(round(float(x)))}"
-            except Exception:
-                return str(x)
-
-        # цвета из GammaStrat v4.5 (берём из plotting.LINE_STYLE, fallback безопасный)
+    if candles_json is None and rapid_host and rapid_key:
         try:
-            from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
-            _cmap = {
-                "max_pos_gex": POS_COLOR,
-                "max_neg_gex": NEG_COLOR,
-                "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
-                "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
-                "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2D83FF"),
-                "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#8C5A0A"),
-                "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
-                "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
-                "gflip":       "#AAAAAA",
-            }
-        except Exception:
-            _cmap = {}
+            candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))
+        except Exception as e:
+            st.error(f"Request error: {e}")
 
-        def _add_line(tag, label):
+    if candles_json is None:
+        st.warning("No data for Key Levels (нужны RAPIDAPI_HOST/RAPIDAPI_KEY).")
+        return
+
+    dfc = _normalize_candles_json(candles_json)
+    if dfc.empty:
+        st.warning("Candles are empty or not recognized.")
+        return
+
+    session_date_et = pd.Timestamp.now(tz="America/New_York").normalize()
+
+    if last_session:
+        df_plot = _take_last_session(dfc, gap_minutes=60)
+        has_candles = not df_plot.empty
+        if not has_candles:
+            st.warning("Could not detect last session.")
+            return
+    else:
+        df_plot = _filter_session_for_date(dfc, session_date_et)
+        has_candles = not df_plot.empty
+
+    if has_candles:
+        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
+        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
+        x_mid = df_plot["ts"].iloc[len(df_plot)//2]
+    else:
+        tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
+        x0, x1 = tickvals[0], tickvals[-1]
+        x_mid = tickvals[len(tickvals)//2]
+
+    # VWAP
+    if has_candles:
+        vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
+        tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
+        cum_vol = vol.cumsum()
+        vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
+        vwap = vwap.fillna(method="ffill")
+    else:
+        vwap = None
+
+    fig = go.Figure()
+    if has_candles:
+        fig.add_trace(go.Candlestick(
+            x=df_plot["ts"], open=df_plot["open"], high=df_plot["high"],
+            low=df_plot["low"], close=df_plot["close"], name="Price"
+        ))
+    if has_candles and vwap is not None:
+        fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
+
+    # Key Levels
+    levels = dict(st.session_state.get("first_chart_max_levels", {})) if isinstance(st.session_state.get("first_chart_max_levels", {}), dict) else {}
+
+    def _fmt_int(x):
+        try: return f"{int(round(float(x)))}"
+        except Exception: return str(x)
+
+    try:
+        from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
+        _cmap = {
+            "max_pos_gex": POS_COLOR,
+            "max_neg_gex": NEG_COLOR,
+            "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
+            "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
+            "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2D83FF"),
+            "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#8C5A0A"),
+            "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
+            "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
+            "gflip":       "#AAAAAA",
+        }
+    except Exception:
+        _cmap = {}
+
+    def _add_line(tag, label):
+        y = levels.get(tag)
+        if y is None: return
+        fig.add_trace(go.Scatter(
+            x=[x0, x1], y=[y, y], mode="lines",
+            name=f"{label} ({_fmt_int(y)})",
+            line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
+            hoverinfo="skip", showlegend=True
+        ))
+
+    _add_line("max_neg_gex", "Max Neg GEX")
+    _add_line("max_pos_gex", "Max Pos GEX")
+    _add_line("put_oi_max",  "Max Put OI")
+    _add_line("call_oi_max", "Max Call OI")
+    _add_line("put_vol_max", "Max Put Volume")
+    _add_line("call_vol_max","Max Call Volume")
+    _add_line("ag_max",      "AG")
+    _add_line("pz_max",      "PZ")
+    _add_line("gflip",       "G-Flip")
+
+    # Сводные подписи при совпадении уровней
+    try:
+        order_pairs = [
+            ("max_neg_gex", "Max Neg GEX"),
+            ("max_pos_gex", "Max Pos GEX"),
+            ("put_oi_max",  "Max Put OI"),
+            ("call_oi_max", "Max Call OI"),
+            ("put_vol_max", "Max Put Volume"),
+            ("call_vol_max","Max Call Volume"),
+            ("ag_max",      "AG"),
+            ("pz_max",      "PZ"),
+            ("gflip",       "G-Flip"),
+        ]
+        groups = {}
+        for tag, label in order_pairs:
             y = levels.get(tag)
-            if y is None:
-                return
-            fig.add_trace(go.Scatter(
-                x=[x0, x1], y=[y, y], mode="lines",
-                name=f"{label} ({_fmt_int(y)})",
-                line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
-                hoverinfo="skip", showlegend=True
-            ))
+            if y is None: continue
+            key = float(y)
+            groups.setdefault(key, []).append(label)
+        for y, labels in groups.items():
+            if len(labels) >= 2:
+                fig.add_annotation(
+                    x=x_mid, y=y, xref="x", yref="y",
+                    text=" + ".join(labels), showarrow=False,
+                    xanchor="center", yshift=12, align="center",
+                    bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
+                    borderwidth=1, font=dict(size=11)
+                )
+    except Exception:
+        pass
 
-        _add_line("max_neg_gex", "Max Neg GEX")
-        _add_line("max_pos_gex", "Max Pos GEX")
-        _add_line("put_oi_max",  "Max Put OI")
-        _add_line("call_oi_max", "Max Call OI")
-        # ↓↓↓ новее: уровни объёма
-        _add_line("put_vol_max", "Max Put Volume")
-        _add_line("call_vol_max","Max Call Volume")
-        # ↑↑↑
-        _add_line("ag_max",      "AG")
-        _add_line("pz_max",      "PZ")
-        _add_line("gflip",       "G-Flip")
-
-        # объединённые подписи, если уровни совпадают по страйку
-        try:
-            order_pairs = [
-                ("max_neg_gex", "Max Neg GEX"),
-                ("max_pos_gex", "Max Pos GEX"),
-                ("put_oi_max",  "Max Put OI"),
-                ("call_oi_max", "Max Call OI"),
-                ("put_vol_max", "Max Put Volume"),
-                ("call_vol_max","Max Call Volume"),
-                ("ag_max",      "AG"),
-                ("pz_max",      "PZ"),
-                ("gflip",       "G-Flip"),
-            ]
-            groups = {}
-            for tag, label in order_pairs:
-                y = levels.get(tag)
-                if y is None:
-                    continue
-                key = float(y)
-                groups.setdefault(key, []).append(label)
-            for y, labels in groups.items():
-                if len(labels) >= 2:
-                    text = " + ".join(labels)
-                    fig.add_annotation(
-                        x=x_mid, y=y, xref="x", yref="y",
-                        text=text, showarrow=False, xanchor="center", yshift=12, align="center",
-                        bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
-                        borderwidth=1, font=dict(size=11)
-                    )
-        except Exception:
-            pass
-
-        # Market closed — центр + 20% прозрачность (без изменений)
-        if not has_candles and not st.session_state.get('kl_last_session', False):
-            try:
-                x_center = x0 + (x1 - x0) / 2
-            except Exception:
-                x_center = x_mid
-            y_vals = []
-            for tag in ("max_neg_gex","max_pos_gex","put_oi_max","call_oi_max",
-                        "put_vol_max","call_vol_max","ag_max","pz_max","gflip"):
-                v = levels.get(tag)
-                if isinstance(v, (int, float)):
-                    y_vals.append(float(v))
-            y_center = (min(y_vals)+max(y_vals))/2.0 if y_vals else 0.0
-
-            fig.add_annotation(
-                x=x_center, y=y_center, xref="x", yref="y",
-                text="Market closed", showarrow=False,
-                xanchor="center", yanchor="middle", align="center",
-                font=dict(size=36, color="rgba(255,255,255,0.2)"),
-                bgcolor="rgba(0,0,0,0)"
-            )
-
-        fig.update_layout(
-            height=560,
-            margin=dict(l=90, r=20, t=50, b=50),
-            xaxis_title="Time",
-            yaxis_title="Price",
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            dragmode=False,
-            hovermode=False,
-            plot_bgcolor="#161B22",
-            paper_bgcolor="#161B22",
-            font=dict(color="white"),
-            template=None
-        )
-        fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
-        fig.update_yaxes(fixedrange=True)
-        fig.update_layout(xaxis_rangeslider_visible=False)
-
-        # подпись даты под осью
-        try:
-            if has_candles:
-                _ts0 = df_plot["ts"].iloc[0]
-                _ts0 = pd.to_datetime(_ts0, utc=True) if getattr(_ts0, "tzinfo", None) is None else _ts0
-                _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
-            else:
-                _date_text = session_date_et.strftime("%b %d, %Y")
-            fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
-        except Exception:
-            pass
-
-        fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
-
-        st.download_button(
-            "Скачать JSON (Key Levels)",
-            data=candles_bytes if isinstance(candles_bytes, (bytes,bytearray)) else json.dumps(candles_json, ensure_ascii=False, indent=2).encode("utf-8"),
-            file_name=f"{ticker}_{interval}_candles.json",
-            mime="application/json",
-            key="kl_download"
+    # Надпись "Market closed"
+    if not has_candles and not last_session:
+        try: x_center = x0 + (x1 - x0) / 2
+        except Exception: x_center = x_mid
+        y_vals = []
+        for tag in ("max_neg_gex","max_pos_gex","put_oi_max","call_oi_max","put_vol_max","call_vol_max","ag_max","pz_max","gflip"):
+            v = levels.get(tag)
+            if isinstance(v, (int,float)): y_vals.append(float(v))
+        y_center = (min(y_vals)+max(y_vals))/2.0 if y_vals else 0.0
+        fig.add_annotation(
+            x=x_center, y=y_center, xref="x", yref="y",
+            text="Market closed", showarrow=False,
+            xanchor="center", yanchor="middle", align="center",
+            font=dict(size=36, color="rgba(255,255,255,0.2)"),
+            bgcolor="rgba(0,0,0,0)"
         )
 
-        if dbg:
-            with st.expander("Debug: provider meta & head"):
-                st.json(debug_meta())
-                st.write(df_plot.head(10))
+    fig.update_layout(
+        height=560, margin=dict(l=90, r=20, t=50, b=50),
+        xaxis_title="Time", yaxis_title="Price",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        dragmode=False, hovermode=False,
+        plot_bgcolor="#161B22", paper_bgcolor="#161B22",
+        font=dict(color="white"), template=None
+    )
+    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
+    fig.update_yaxes(fixedrange=True)
+    fig.update_layout(xaxis_rangeslider_visible=False)
+
+    # Дата под осью
+    try:
+        if has_candles:
+            _ts0 = df_plot["ts"].iloc[0]
+            _ts0 = pd.to_datetime(_ts0, utc=True) if getattr(_ts0, "tzinfo", None) is None else _ts0
+            _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
+        else:
+            _date_text = session_date_et.strftime("%b %d, %Y")
+        fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
+    except Exception:
+        pass
+
+    fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
+
+    st.download_button(
+        "Скачать JSON (Key Levels)",
+        data=candles_bytes if isinstance(candles_bytes, (bytes,bytearray)) else json.dumps(candles_json, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=f"{ticker}_{interval}_candles.json",
+        mime="application/json",
+        key="kl_download"
+    )
