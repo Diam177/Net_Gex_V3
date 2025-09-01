@@ -194,6 +194,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         except Exception:
             _cmap = {}
         x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
+        x_mid = df_plot["ts"].iloc[len(df_plot)//2]
         def _add_line(tag, label):
             y = levels.get(tag)
             if y is None:
@@ -213,6 +214,37 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         _add_line("ag_max",      "AG")
         _add_line("pz_max",      "PZ")
         _add_line("gflip",       "G-Flip")
+        # --- Same-strike consolidated labels (exact strike match) ---
+        try:
+            order_pairs = [
+                ("max_neg_gex", "Max Neg GEX"),
+                ("max_pos_gex", "Max Pos GEX"),
+                ("put_oi_max",  "Max Put OI"),
+                ("call_oi_max", "Max Call OI"),
+                ("put_vol_max", "Max Put Volume"),
+                ("call_vol_max","Max Call Volume"),
+                ("ag_max",      "AG"),
+                ("pz_max",      "PZ"),
+                ("gflip",       "G-Flip"),
+            ]
+            groups = {}
+            for tag, label in order_pairs:
+                y = levels.get(tag)
+                if y is None:
+                    continue
+                key = float(y)
+                groups.setdefault(key, []).append(label)
+            for y, labels in groups.items():
+                if len(labels) >= 2:
+                    text = " + ".join(labels)
+                    fig.add_annotation(
+                        x=x_mid, y=y, xref="x", yref="y",
+                        text=text, showarrow=False, xanchor="center", yshift=12, align="center",
+                        bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
+                        borderwidth=1, font=dict(size=11)
+                    )
+        except Exception:
+            pass
         fig.update_layout(
             height=560,
             margin=dict(l=90, r=20, t=50, b=50),
