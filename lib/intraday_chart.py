@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from .provider import fetch_stock_history, debug_meta
+from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
 
 @st.cache_data(show_spinner=False, ttl=60)
 def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
@@ -165,6 +166,50 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             )
         ])
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
+
+        # --- Key Levels: horizontal lines from first chart maxima ---
+        levels = {}
+        try:
+            levels = dict(st.session_state.get("first_chart_max_levels", {}))
+        except Exception:
+            levels = {}
+        def _fmt_int(x):
+            try:
+                return f"{int(round(float(x)))}"
+            except Exception:
+                return str(x)
+        # color mapping from first chart
+        _cmap = {
+            "max_pos_gex": POS_COLOR,
+            "max_neg_gex": NEG_COLOR,
+            "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
+            "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
+            "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2E86C1"),
+            "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#AF601A"),
+            "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
+            "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
+            "gflip":       "#AAAAAA",
+        }
+        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
+        def _add_line(tag, label):
+            y = levels.get(tag)
+            if y is None:
+                return
+            fig.add_trace(go.Scatter(
+                x=[x0, x1], y=[y, y], mode="lines",
+                name=f"{label} ({_fmt_int(y)})",
+                line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
+                hoverinfo="skip", showlegend=True
+            ))
+        _add_line("max_neg_gex", "Max Neg GEX")
+        _add_line("max_pos_gex", "Max Pos GEX")
+        _add_line("put_oi_max",  "Max Put OI")
+        _add_line("call_oi_max", "Max Call OI")
+        _add_line("put_vol_max", "Max Put Volume")
+        _add_line("call_vol_max","Max Call Volume")
+        _add_line("ag_max",      "AG")
+        _add_line("pz_max",      "PZ")
+        _add_line("gflip",       "G-Flip")
         fig.update_layout(
             height=560,
             margin=dict(l=90, r=20, t=50, b=50),
@@ -184,6 +229,16 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
+        # set x-axis title with date below ('Time' and 'Mon DD, YYYY')
+        try:
+            _ts0 = df_plot["ts"].iloc[0]
+            if getattr(_ts0, "tzinfo", None) is None:
+                _ts0 = pd.to_datetime(_ts0, utc=True)
+            _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
+            fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
+        except Exception:
+            fig.update_xaxes(title_text="Time", title_standoff=5)
+
         fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
 
@@ -199,4 +254,5 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             with st.expander("Debug: provider meta & head"):
                 st.json(debug_meta())
                 st.write(df_plot.head(10))
+
 
