@@ -195,7 +195,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         _date_text = f"{_ts0.strftime('%b')} {_ts0.day}, {_ts0.year}"
         fig.add_annotation(xref="paper", yref="paper", x=0.0, y=-0.20, text=_date_text, showarrow=False, align="left")
         # Move 'Time' axis title slightly up (closer to the axis)
-        fig.update_xaxes(title_standoff=5)
+        fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
     
         # fix ranges, remove interactions and rangeslider
         fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
