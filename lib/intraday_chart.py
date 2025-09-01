@@ -102,7 +102,7 @@ def _slice_current_session_or_skeleton(dfc: pd.DataFrame):
     """Return (df, (start,end), has_price) for *today's* ET session.
     If no candles yet, return a 2-row skeleton with only timestamps and has_price=False.
     """
-    now_utc = pd.Timestamp.utcnow().tz_localize("UTC")
+    now_utc = pd.Timestamp.now(tz="UTC")
     start_utc, end_utc = _et_session_bounds_for_ts(now_utc)
     mask = (dfc["ts"] >= start_utc) & (dfc["ts"] <= end_utc)
     df_today = dfc.loc[mask].sort_values("ts").reset_index(drop=True)
@@ -281,4 +281,3 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             with st.expander("Debug: provider meta & head"):
                 st.json(debug_meta())
                 st.write(df_plot.head(10))
-
