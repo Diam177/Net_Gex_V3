@@ -186,6 +186,20 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
 
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
 
+# Add ET session date under x-axis (bottom-left)
+try:
+    import pandas as pd
+    tz_et = 'America/New_York'
+    ts0 = df_plot['ts'].iloc[0]
+    if getattr(ts0, 'tzinfo', None) is None:
+        ts0 = pd.to_datetime(ts0, utc=True)
+    session_date_et = ts0.tz_convert(tz_et).normalize().date()
+    session_str = session_date_et.strftime('%b %d, %Y')
+    fig.add_annotation(x=0, y=-0.18, xref='paper', yref='paper', text=session_str,
+                       showarrow=False, xanchor='left', yanchor='top', font=dict(size=12, color='#666666'))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True}, key='kl_fig_with_date')
+except Exception:
+    pass
         st.download_button(
             "Скачать JSON (Key Levels)",
             data=candles_bytes if isinstance(candles_bytes, (bytes, bytearray)) else json.dumps(candles_json, ensure_ascii=False, indent=2).encode("utf-8"),
