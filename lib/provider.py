@@ -5,8 +5,12 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+import datetime
 
 DEFAULT_TIMEOUT = 20
+
+# Debug state container
+DEBUG_STATE: Dict[str, Any] = {'last': {}}
 
 def _normalize_candles_payload(raw_json: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -91,23 +95,19 @@ def fetch_stock_history(ticker: str,
         payload = _normalize_candles_payload(data)
         meta["records"] = len(payload.get("records", []))
         meta["root_path"] = payload.get("root", "?")
-        global _LAST_DEBUG_META
-        _LAST_DEBUG_META = meta
+        DEBUG_STATE['last'] = meta
 
         return data, raw_bytes
     except Exception as e:
         meta["error"] = str(e)
-        global _LAST_DEBUG_META
-        _LAST_DEBUG_META = meta
+        DEBUG_STATE['last'] = meta
         raise
 
-# Глобальная «память» для отладочной панели в UI
-_LAST_DEBUG_META: Dict[str, Any] = {}
-
+# Глобальная «память» для отладочной панели в UI (через контейнер)
 
 def debug_meta() -> Dict[str, Any]:
     """Вернуть отладочную мета-информацию о последнем запросе к провайдеру."""
-    return _LAST_DEBUG_META.copy()
+    return dict(DEBUG_STATE.get('last', {}))
 
 
 # ---------- утилиты http/json ----------
