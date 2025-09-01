@@ -184,6 +184,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
+        fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
 
         st.download_button(
@@ -199,4 +200,3 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                 st.json(debug_meta())
                 st.write(df_plot.head(10))
 
-fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
