@@ -14,7 +14,6 @@ def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", 
     return data, content
 
 def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
-    """Return DataFrame with columns: ts, open, high, low, close, volume."""
     def to_dt(rec: Dict[str, Any]):
         if "timestamp_unix" in rec:
             return pd.to_datetime(rec["timestamp_unix"], unit="s", utc=True)
@@ -61,7 +60,6 @@ def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
     return dfc
 
 def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame:
-    """Keep only the last continuous session by time gaps > gap_minutes."""
     if dfc.empty:
         return dfc
     d = dfc.sort_values("ts").copy()
@@ -71,7 +69,6 @@ def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame
     return d.loc[sess_id == last_id].reset_index(drop=True)
 
 def _build_rth_ticks_30m(df_plot: pd.DataFrame):
-    """Build ET 09:30–16:00 ticks (30m). Return (tickvals_utc, ticktext)."""
     tz_et = "America/New_York"
     ts0 = df_plot["ts"].iloc[0]
     if ts0.tzinfo is None:
@@ -85,17 +82,7 @@ def _build_rth_ticks_30m(df_plot: pd.DataFrame):
     ticktext = [t.strftime("%H:%M") for t in ticks_et]
     return tickvals, ticktext
 
-def _et_today_bounds():
-    """Return (start_et, end_et) for today's regular session in America/New_York."""
-    tz_et = "America/New_York"
-    now_et = pd.Timestamp.now(tz=tz_et)
-    session_date_et = now_et.normalize()
-    start_et = session_date_et + pd.Timedelta(hours=9, minutes=30)
-    end_et = session_date_et + pd.Timedelta(hours=16)
-    return start_et, end_et
-
 def _build_rth_ticks_for_date(session_date_et: pd.Timestamp):
-    """Build 30m ticks for given ET date. Return (tickvals_utc, ticktext)."""
     if session_date_et.tz is None:
         session_date_et = session_date_et.tz_localize("America/New_York")
     start_et = session_date_et + pd.Timedelta(hours=9, minutes=30)
@@ -106,7 +93,6 @@ def _build_rth_ticks_for_date(session_date_et: pd.Timestamp):
     return tickvals, ticktext
 
 def _filter_session_for_date(dfc: pd.DataFrame, session_date_et: pd.Timestamp) -> pd.DataFrame:
-    """Filter candles to ET 09:30–16:00 for the given ET date."""
     if dfc.empty:
         return dfc
     if session_date_et.tz is None:
@@ -121,7 +107,6 @@ def _filter_session_for_date(dfc: pd.DataFrame, session_date_et: pd.Timestamp) -
     return d.loc[mask].reset_index(drop=True)
 
 def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
-    """UI section 'Key Levels' (candles + VWAP, no interactions)."""
     st.subheader("Key Levels")
     with st.container():
         c1, c2, c3, c4 = st.columns([1,1,1,1])
@@ -143,18 +128,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                 candles_bytes = up_bytes
             except Exception as e:
                 st.error(f"JSON read error: {e}")
-
-        if candles_json is None:
-            test_path = "/mnt/data/TEST ENDPOINT.TXT"
-            if os.path.exists(test_path):
-                try:
-                    with open(test_path, "rb") as f:
-                        tb = f.read()
-                    candles_json = json.loads(tb.decode("utf-8"))
-                    candles_bytes = tb
-                    st.info("Using local test file: TEST ENDPOINT.TXT")
-                except Exception:
-                    pass
 
         if candles_json is None and rapid_host and rapid_key:
             try:
@@ -193,7 +166,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             x0, x1 = tickvals[0], tickvals[-1]
             x_mid = tickvals[len(tickvals)//2]
 
-        # --- VWAP ---
+        # VWAP
         if has_candles:
             vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
             tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
@@ -216,7 +189,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         if has_candles and vwap is not None:
             fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
 
-        # --- Key Levels (горизонтальные линии) ---
+        # --- Key Levels: горизонтальные линии по данным из первого графика ---
         levels = {}
         try:
             levels = dict(st.session_state.get("first_chart_max_levels", {}))
@@ -229,6 +202,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             except Exception:
                 return str(x)
 
+        # цвета из GammaStrat v4.5 (берём из plotting.LINE_STYLE, fallback безопасный)
         try:
             from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
             _cmap = {
@@ -236,8 +210,8 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                 "max_neg_gex": NEG_COLOR,
                 "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
                 "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
-                "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2E86C1"),
-                "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#AF601A"),
+                "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2D83FF"),
+                "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#8C5A0A"),
                 "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
                 "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
                 "gflip":       "#AAAAAA",
@@ -260,13 +234,15 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         _add_line("max_pos_gex", "Max Pos GEX")
         _add_line("put_oi_max",  "Max Put OI")
         _add_line("call_oi_max", "Max Call OI")
+        # ↓↓↓ новее: уровни объёма
         _add_line("put_vol_max", "Max Put Volume")
         _add_line("call_vol_max","Max Call Volume")
+        # ↑↑↑
         _add_line("ag_max",      "AG")
         _add_line("pz_max",      "PZ")
         _add_line("gflip",       "G-Flip")
 
-        # --- Consolidated labels ---
+        # объединённые подписи, если уровни совпадают по страйку
         try:
             order_pairs = [
                 ("max_neg_gex", "Max Neg GEX"),
@@ -298,32 +274,24 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         except Exception:
             pass
 
-        # --- Market closed annotation (centered, 20% opacity) ---
+        # Market closed — центр + 20% прозрачность (без изменений)
         if not has_candles and not st.session_state.get('kl_last_session', False):
-            # точный центр по X
             try:
                 x_center = x0 + (x1 - x0) / 2
             except Exception:
                 x_center = x_mid
-            # центр по Y из диапазона имеющихся горизонтальных уровней
             y_vals = []
             for tag in ("max_neg_gex","max_pos_gex","put_oi_max","call_oi_max",
                         "put_vol_max","call_vol_max","ag_max","pz_max","gflip"):
                 v = levels.get(tag)
                 if isinstance(v, (int, float)):
                     y_vals.append(float(v))
-            if y_vals:
-                y_center = (min(y_vals) + max(y_vals)) / 2.0
-            else:
-                y_center = 0.0
+            y_center = (min(y_vals)+max(y_vals))/2.0 if y_vals else 0.0
 
             fig.add_annotation(
-                x=x_center, y=y_center,
-                xref="x", yref="y",
-                text="Market closed",
-                showarrow=False,
-                xanchor="center", yanchor="middle",
-                align="center",
+                x=x_center, y=y_center, xref="x", yref="y",
+                text="Market closed", showarrow=False,
+                xanchor="center", yanchor="middle", align="center",
                 font=dict(size=36, color="rgba(255,255,255,0.2)"),
                 bgcolor="rgba(0,0,0,0)"
             )
@@ -346,7 +314,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
-        # дата под осью Time
+        # подпись даты под осью
         try:
             if has_candles:
                 _ts0 = df_plot["ts"].iloc[0]
