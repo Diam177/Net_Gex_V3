@@ -317,7 +317,7 @@ try:
             _max_levels["ng"] = float(_strike[i_ng_abs])
     except Exception:
         pass
-st.session_state['first_chart_max_levels'] = _max_levels
+    st.session_state['first_chart_max_levels'] = _max_levels
 except Exception as _e:
     # Silent: don't break UI if something's missing
     pass
