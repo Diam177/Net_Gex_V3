@@ -4,6 +4,7 @@ import numpy as np
 import time, json, math, io, datetime
 
 from lib.provider import fetch_option_chain, debug_meta
+from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
@@ -241,9 +242,6 @@ table_download_placeholder.download_button(
 
 # === Plot ===
 st.subheader("GammaStrat v4.5")
-# --- Key Levels strictly under GammaStrat section ---
-render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
-
 cols = st.columns(9)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
@@ -265,3 +263,6 @@ series_dict = {
 
 fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dict, price=S_used, ticker=ticker, g_flip=g_flip_val)
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+# --- Key Levels under GammaStrat block ---
+render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
