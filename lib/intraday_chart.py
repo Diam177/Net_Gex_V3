@@ -98,6 +98,16 @@ def _et_session_bounds_for_ts(ts_utc: pd.Timestamp):
     end_et   = d_et + pd.Timedelta(hours=16)
     return start_et.tz_convert("UTC"), end_et.tz_convert("UTC")
 
+
+def _format_session_date_et(ts_like) -> str:
+    """Format ET calendar date as 'Sep 1, 2025' from a timestamp-like value."""
+    tz_et = "America/New_York"
+    ts = pd.to_datetime(ts_like, utc=True)
+    ts_et = ts.tz_convert(tz_et)
+    y = ts_et.year
+    m = ts_et.strftime("%b")
+    d = ts_et.day
+    return f"{m} {d}, {y}"
 def _slice_current_session_or_skeleton(dfc: pd.DataFrame):
     """Return (df, (start,end), has_price) for *today's* ET session.
     If no candles yet, return a 2-row skeleton with only timestamps and has_price=False.
@@ -251,9 +261,20 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             _add_line(tag, label)
 
         # Layout
-        fig.update_layout(
+        
+        # --- Date label (ET) at bottom-left ---
+        try:
+            if not df_plot.empty:
+                date_ts = df_plot["ts"].iloc[0]
+            else:
+                # fallback to tickvals (first value)
+                date_ts = tickvals[0] if tickvals else pd.Timestamp.now(tz="UTC")
+            _date_label = _format_session_date_et(date_ts)
+        except Exception:
+            _date_label = None
+fig.update_layout(
             height=560,
-            margin=dict(l=90, r=20, t=50, b=50),
+            margin=dict(l=90, r=20, t=50, b=70),
             xaxis_title="Time",
             yaxis_title="Price",
             showlegend=True,
@@ -264,8 +285,13 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             paper_bgcolor="#161B22",
             font=dict(color="white"),
         )
+        # place ET date label at bottom-left (outside plot)
+        if _date_label:
+            fig.add_annotation(text=_date_label, xref="paper", yref="paper", x=0, y=-0.12,
+                               xanchor="left", yanchor="top", showarrow=False,
+                               font=dict(size=12, color="white"))
         fig.update_xaxes(tickmode="array", tickvals=tickvals, ticktext=ticktext,
-                         range=[tickvals[0], tickvals[-1]] if tickvals else None)
+                         range=[tickvals[0], tickvals[-1]] if tickvals else None, rangeslider_visible=False)
 
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
 
