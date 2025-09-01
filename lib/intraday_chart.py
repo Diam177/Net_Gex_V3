@@ -214,9 +214,8 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         WANT = {
             "max_pos_gex": set(_normk(x) for x in ["max_pos_gex","net_gex_pos_max","gex_pos_max"]),
             "max_neg_gex": set(_normk(x) for x in ["max_neg_gex","net_gex_neg_min","gex_neg_min","min_net_gex"]),
-                        "call_oi_max": set(_normk(x) for x in ["call_oi_max","max_call_oi"]),
-            "put_oi_min": set(_normk(x) for x in ["put_oi_min","min_put_oi"]),
-            "put_oi_max": set(_normk(x) for x in ["put_oi_max","max_put_oi"]) for x in ["put_oi_min","min_put_oi"]),
+            "call_oi_max": set(_normk(x) for x in ["call_oi_max","max_call_oi"]),
+            "put_oi_max":  set(_normk(x) for x in ["put_oi_max","max_put_oi"]),
             "call_vol_max":set(_normk(x) for x in ["call_volume_max","max_call_volume"]),
             "put_vol_max": set(_normk(x) for x in ["put_volume_max","max_put_volume"]),
             "ag_max":      set(_normk(x) for x in ["ag_max","absolute_gamma_max"]),
@@ -271,7 +270,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         # Required legend items and order
         _add_line("max_neg_gex", "Max Neg GEX")
         _add_line("max_pos_gex", "Max Pos GEX")
-                _add_line("put_oi_max",  "Max Put OI")   # по задаче: "Max Put OI" — берём минимум Put OI по страйку
+        _add_line("put_oi_max",  "Max Put OI")   # по задаче: "Max Put OI" — берём минимум Put OI по страйку
         _add_line("call_oi_max", "Max Call OI")
         _add_line("put_vol_max", "Max Put Volume")
         _add_line("call_vol_max","Max Call Volume")
