@@ -152,6 +152,8 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             xaxis_title="Time",
             yaxis_title="Price",
             showlegend=True,
+            dragmode=False,
+            hovermode=False,
             template="plotly_dark" if st.get_option("theme.base") == "dark" else None
         )
         # Compute VWAP for the session
@@ -164,9 +166,10 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
         
         # stretch x-axis to session range
-        fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]])
+        fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]], fixedrange=True)
+        fig.update_yaxes(fixedrange=True)
 
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
 
         st.download_button(
             "Скачать JSON (Key Levels)",
