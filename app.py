@@ -15,17 +15,13 @@ RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 
 with st.sidebar:
-    # Controls in sidebar
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
     expiry_placeholder = st.empty()
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
     table_download_placeholder = st.empty()
 
-# === Inputs ===
-# Перенесено в левый сайдбар
 col_f = st.container()
-
 raw_data = None
 raw_bytes = None
 
@@ -34,7 +30,6 @@ def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
     data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
     return data, content
 
-# === Fetch from RapidAPI ===
 with col_f:
     if RAPIDAPI_HOST and RAPIDAPI_KEY:
         try:
@@ -66,7 +61,32 @@ def fmt_ts(e):
     except Exception:
         return str(e)
 
-default_exp = choose_default_expiration(expirations)
+# --- УСИЛЕННАЯ ЗАЩИТА ВЫБОРА ЭКСПИРАЦИИ ---
+# Приводим к списку
+try:
+    if expirations is None:
+        expirations = []
+    elif not isinstance(expirations, (list, tuple)):
+        expirations = list(expirations)
+    else:
+        expirations = list(expirations)
+except Exception:
+    expirations = []
+
+# Пусто — аккуратно выходим
+if len(expirations) == 0:
+    st.error("Не удалось извлечь список экспираций из JSON. Проверь входные данные.")
+    st.stop()
+
+# Дефолтная экспирация с безопасным fallback
+try:
+    default_exp = choose_default_expiration(expirations)
+    if default_exp not in expirations:
+        # на случай, если util вернул несуществующее значение
+        default_exp = expirations[0]
+except Exception:
+    default_exp = expirations[0]
+
 exp_labels = [fmt_ts(e) for e in expirations]
 try:
     default_index = expirations.index(default_exp)
@@ -82,7 +102,7 @@ if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
         by_date_json, by_date_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, selected_exp)
         quote2, t02, S2, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
         blocks_by_date.update(blocks_by_date2)
-        raw_bytes = by_date_bytes  # для кнопки "скачать"
+        raw_bytes = by_date_bytes
     except Exception as e:
         st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
@@ -94,7 +114,7 @@ download_placeholder.download_button(
     mime="application/json"
 )
 
-# Подготовка всех серий (для PZ/PZ_FP нужен контекст всех экспираций)
+# Подготовка всех серий
 all_series = []
 for e, block in blocks_by_date.items():
     try:
@@ -131,14 +151,12 @@ def compute_gflip(strikes, gex, min_amp_ratio=0.12, min_run=2, spot=None):
         return None
     amp_thresh = max_abs * float(min_amp_ratio)
 
-    # Найти строгие пересечения нуля (между соседними точками)
     crossings = []
     for i in range(len(gex)-1):
         gi, gj = gex[i], gex[i+1]
         if np.isfinite(gi) and np.isfinite(gj) and (gi * gj < 0):
             ki, kj = strikes[i], strikes[i+1]
             kflip = ki + (0.0 - gi) * (kj - ki) / (gj - gi)
-            # оценка устойчивости после пересечения — берём «после» сторону знака gj
             post_sign = np.sign(gj)
             j = i+1
             run_idx = []
@@ -154,12 +172,10 @@ def compute_gflip(strikes, gex, min_amp_ratio=0.12, min_run=2, spot=None):
                 "stable": (run_len >= int(min_run)) and (mean_abs >= amp_thresh)
             })
 
-    # Точные нули тоже считаем кандидатами
     zero_idx = [int(t) for t in np.where(np.isclose(gex, 0.0, atol=max_abs*1e-6))[0].tolist()]
     for zi in zero_idx:
         crossings.append({"k": strikes[zi], "i": zi, "run_len": 0, "mean_abs": 0.0, "stable": False})
 
-    # Выбор лучшего кандидата: приоритет stable, затем минимальная дистанция до spot
     if not crossings:
         return None
     if spot is None:
@@ -196,7 +212,6 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-# Выбор окна вокруг ATM для вспомогательных серий (визуально)
 idx_keep = _select_atm_window(df["Strike"].values, df["Call OI"].values, df["Put OI"].values, price=S, widen=1.5)
 
 fig = make_figure(
@@ -223,7 +238,7 @@ try:
         return int(np.nanargmax(a))
 
     _max_levels = {}
-    # Call/Put Volume — ИСПРАВЛЕНО: ключи соответствуют intraday_chart
+    # Call/Put Volume
     i_cv = _nan_argmax(_np.asarray(df["Call Volume"].values, dtype=float)[_idx_keep])
     if i_cv is not None:
         _max_levels["call_vol_max"] = float(_strike[_idx_keep[i_cv]])
@@ -239,20 +254,13 @@ try:
     if i_pz is not None:
         _max_levels["pz_max"] = float(_strike[_idx_keep[i_pz]])
 
-    # Call OI / Put OI
+    # Call/Put OI
     i_coi = _nan_argmax(_np.asarray(df["Call OI"].values, dtype=float)[_idx_keep])
     if i_coi is not None:
         _max_levels["call_oi_max"] = float(_strike[_idx_keep[i_coi]])
     i_poi_max = _nan_argmax(_np.asarray(df["Put OI"].values, dtype=float)[_idx_keep])
     if i_poi_max is not None:
         _max_levels["put_oi_max"] = float(_strike[_idx_keep[i_poi_max]])
-
-    # G-Flip
-    if g_flip_val is not None:
-        try:
-            _max_levels["gflip"] = float(g_flip_val)
-        except Exception:
-            pass
 
     # Net GEX extrema
     try:
@@ -266,9 +274,15 @@ try:
     except Exception:
         pass
 
+    # G-Flip
+    if g_flip_val is not None:
+        try:
+            _max_levels["gflip"] = float(g_flip_val)
+        except Exception:
+            pass
+
     st.session_state['first_chart_max_levels'] = _max_levels
-except Exception as _e:
-    # Не ломаем UI, если чего-то не хватает
+except Exception:
     pass
 
 # === Key Levels chart ===
