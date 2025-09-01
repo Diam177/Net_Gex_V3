@@ -265,4 +265,45 @@ fig = make_figure(df["Strike"].values, df["Net Gex"].values, toggles, series_dic
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 # --- Key Levels under GammaStrat block ---
+
+# ---- Export maxima/minima from first chart to session_state for intraday chart ----
+try:
+    import numpy as _np
+    _strike = _np.asarray(df["Strike"].values, dtype=float)
+    def _nan_argmax(a):
+        a = _np.asarray(a, dtype=float)
+        if not _np.any(_np.isfinite(a)): 
+            return None
+        return int(_np.nanargmax(a))
+    def _nan_argmin(a):
+        a = _np.asarray(a, dtype=float)
+        if not _np.any(_np.isfinite(a)): 
+            return None
+        return int(_np.nanargmin(a))
+
+    _max_levels = {}
+    i_cv = _nan_argmax(df["Call Volume"].values)
+    if i_cv is not None: _max_levels["call_volume_max"] = float(_strike[i_cv])
+    i_pv = _nan_argmax(df["Put Volume"].values)
+    if i_pv is not None: _max_levels["put_volume_max"] = float(_strike[i_pv])
+    i_ag = _nan_argmax(df["AG"].values)
+    if i_ag is not None: _max_levels["ag_max"] = float(_strike[i_ag])
+    i_pz = _nan_argmax(df["PZ"].values)
+    if i_pz is not None: _max_levels["pz_max"] = float(_strike[i_pz])
+    # Call OI max / Put OI min
+    i_coi = _nan_argmax(df["Call OI"].values)
+    if i_coi is not None: _max_levels["call_oi_max"] = float(_strike[i_coi])
+    i_poi_min = _nan_argmin(df["Put OI"].values)
+    if i_poi_min is not None: _max_levels["put_oi_min"] = float(_strike[i_poi_min])
+    # G-Flip level (already computed as g_flip_val if available)
+    if 'g_flip_val' in locals() and g_flip_val is not None:
+        try:
+            _max_levels["gflip"] = float(g_flip_val)
+        except Exception:
+            pass
+    st.session_state['first_chart_max_levels'] = _max_levels
+except Exception as _e:
+    # Silent: don't break UI if something's missing
+    pass
 render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
+
