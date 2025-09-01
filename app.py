@@ -240,6 +240,9 @@ table_download_placeholder.download_button(
     file_name=f"{ticker}_{selected_exp}_table.csv", mime='text/csv'
 )
 
+# --- Key Levels (strictly under main table) ---
+render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
+
 # === Plot ===
 st.subheader("GammaStrat v4.5")
 cols = st.columns(9)
