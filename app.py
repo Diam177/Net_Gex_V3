@@ -121,7 +121,7 @@ for e, block in blocks_by_date.items():
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
-# === Метрики для выбранной экспирации (правильная сигнатура) ===
+# === Метрики для выбранной экспирации (сигнатура из compute.py) ===
 metrics = compute_series_metrics_for_expiry(
     S=S, t0=t0, expiry_unix=selected_exp,
     block=blocks_by_date[selected_exp],
@@ -142,7 +142,7 @@ df = pd.DataFrame({
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
 
-# === G-Flip (эвристика по пересечению нуля) ===
+# === G-Flip (эвристика) ===
 def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12):
     strikes = np.asarray(strikes_arr, dtype=float)
     gex = np.asarray(gex_arr, dtype=float)
@@ -197,8 +197,14 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-# окно вокруг ATM для вспомогательных серий
-idx_keep = _select_atm_window(df["Strike"].values, df["Call OI"].values, df["Put OI"].values, price=S, widen=1.5)
+# <<< Единственная правка: позиционный вызов >>>
+idx_keep = _select_atm_window(
+    df["Strike"].values,
+    df["Call OI"].values,
+    df["Put OI"].values,
+    S,
+    1.5
+)
 
 fig = make_figure(
     strikes=df["Strike"].values,
