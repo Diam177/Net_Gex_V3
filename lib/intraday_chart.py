@@ -181,21 +181,17 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         )
         # ----- Annotations: ticker (top-left) & session date (bottom-left) -----
         # Place ticker at the top-left in the paper coordinates (doesn't affect axes).
-        fig.add_annotation(
-    xref="paper", yref="paper",
-    x=-0.06, y=1.08,
-    text=str(ticker),
-    showarrow=False, align="left"
-)
-        # Build ET session date label like 'Sep 1, 2025' from first candle timestamp
-        try:
-            _ts0 = pd.to_datetime(df_plot["ts"].iloc[0]).tz_convert("America/New_York")
-        except Exception:
-            _ts0 = pd.to_datetime(df_plot["ts"].iloc[0], utc=True).tz_convert("America/New_York")
-        _date_text = f"{_ts0.strftime('%b')} {_ts0.day}, {_ts0.year}"
-        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=-0.20, text=_date_text, showarrow=False, align="left")
-        # Move 'Time' axis title slightly up (closer to the axis)
+                # Move 'Time' axis title slightly up (closer to the axis)
         fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
+
+# --- Cleanup: remove any leftover date annotation in lower-left (keep only axis title date)
+try:
+    anns = list(fig.layout.annotations) if fig.layout.annotations is not None else []
+    if anns:
+        fig.update_layout(annotations=[a for a in anns if getattr(a, "text", None) != _date_text])
+except Exception:
+    pass
+
     
         # fix ranges, remove interactions and rangeslider
         fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
