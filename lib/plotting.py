@@ -2,8 +2,8 @@
 import numpy as np
 import plotly.graph_objects as go
 
-POS_COLOR = "#48B4FF"   # positive Net Gex bars (blue)
-NEG_COLOR = "#FF3B30"   # negative Net Gex bars (red)
+POS_COLOR = "#48B4FF"   # positive Net GEX bars (blue)
+NEG_COLOR = "#FF3B30"   # negative Net GEX bars (red)
 
 # Line colors & fills for each optional series
 LINE_STYLE = {
@@ -98,9 +98,9 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     call_v_f  = np.asarray(series_dict.get("Call Volume", np.zeros_like(net_gex)), dtype=float)[idx_keep]
     put_v_f   = np.asarray(series_dict.get("Put Volume", np.zeros_like(net_gex)), dtype=float)[idx_keep]
 
-    # Net Gex bars
-    if series_enabled.get("Net Gex", True):
-        y_all = np.asarray(series_dict.get("Net Gex", net_gex), dtype=float)[idx_keep]
+    # Net GEX bars
+    if series_enabled.get("Net GEX", True):
+        y_all = np.asarray(series_dict.get("Net GEX", net_gex), dtype=float)[idx_keep]
         mask_pos = y_all >= 0
         mask_neg = ~mask_pos
 
@@ -129,7 +129,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 "Put OI: %{customdata[2]:,.0f}<br>"
                 "Call Volume: %{customdata[3]:,.0f}<br>"
                 "Put Volume: %{customdata[4]:,.0f}<br>"
-                "Net Gex: %{customdata[5]:,.1f}"
+                "Net GEX: %{customdata[5]:,.1f}"
                 "<extra></extra>"
             ),
             hoverlabel=dict(bgcolor=POS_COLOR, bordercolor=POS_COLOR, font=dict(color="#000000"))
@@ -144,7 +144,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 "Put OI: %{customdata[2]:,.0f}<br>"
                 "Call Volume: %{customdata[3]:,.0f}<br>"
                 "Put Volume: %{customdata[4]:,.0f}<br>"
-                "Net Gex: %{customdata[5]:,.1f}"
+                "Net GEX: %{customdata[5]:,.1f}"
                 "<extra></extra>"
             ),
             hoverlabel=dict(bgcolor=NEG_COLOR)
@@ -219,7 +219,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                                    font=dict(size=14, color="#AAAAAA"))
                 # add legend entry (non-clickable via layout at end)
                 try:
-                    yvals = np.asarray(series_dict.get("Net Gex", net_gex), dtype=float)[idx_keep]
+                    yvals = np.asarray(series_dict.get("Net GEX", net_gex), dtype=float)[idx_keep]
                     y_min = float(np.nanmin(yvals)) if np.any(np.isfinite(yvals)) else 0.0
                     y_max = float(np.nanmax(yvals)) if np.any(np.isfinite(yvals)) else 1.0
                     fig.add_trace(go.Scatter(
@@ -230,7 +230,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                     pass
         except Exception:
             pass
-        # Build dynamic right-axis title (exclude Net Gex; show only specific series)
+        # Build dynamic right-axis title (exclude Net GEX; show only specific series)
         whitelist = ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
         picked = [k for k in whitelist if series_enabled.get(k, False)]
         right_title = "Other parameters" + ((" (" + ", ".join(picked) + ")") if picked else "")
@@ -238,12 +238,12 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
     fig.update_layout(
         barmode="overlay", bargap=bargap, bargroupgap=0.0,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=40, r=40, t=40, b=40),
+        margin=dict(l=64, r=40, t=40, b=40),
         xaxis=dict(title="Strike", type="category", categoryorder="array",
                    categoryarray=x_labels, tickmode="array", tickvals=x_labels,
                    ticktext=x_labels, range=[-0.5, len(x_labels)-0.5],
                    showgrid=False, fixedrange=True),
-        yaxis=dict(title="Net GEX", showgrid=False, fixedrange=True),
+        yaxis=dict(title="Net GEX", showgrid=False, fixedrange=True, automargin=True, tickformat=",.0f"),
         yaxis2=dict(title=right_title, overlaying="y", side="right",
                     showgrid=False, fixedrange=True),
         hovermode="closest", height=560,
