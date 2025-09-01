@@ -43,7 +43,7 @@ if RAPIDAPI_HOST and RAPIDAPI_KEY:
     try:
         base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
         raw_data, raw_bytes = base_json, base_bytes
-        data_status_placeholder.success("Данные получены")
+        data_status_placeholder.success("Data received")
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса: {e}")
 else:
@@ -99,7 +99,7 @@ if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
 
 # Кнопка "Скачать сырой JSON"
 download_placeholder.download_button(
-    "Скачать JSON",
+    "Download JSON",
     data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
     file_name=f"{ticker}_{selected_exp}_raw.json",
     mime="application/json"
