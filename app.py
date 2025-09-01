@@ -4,7 +4,6 @@ import numpy as np
 import time, json, math, io, datetime
 
 from lib.provider import fetch_option_chain, debug_meta
-from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure
@@ -240,11 +239,11 @@ table_download_placeholder.download_button(
     file_name=f"{ticker}_{selected_exp}_table.csv", mime='text/csv'
 )
 
-# --- Key Levels (strictly under main table) ---
-render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
-
 # === Plot ===
 st.subheader("GammaStrat v4.5")
+# --- Key Levels strictly under GammaStrat section ---
+render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
+
 cols = st.columns(9)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
