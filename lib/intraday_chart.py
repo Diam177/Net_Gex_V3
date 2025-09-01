@@ -193,6 +193,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             x0, x1 = tickvals[0], tickvals[-1]
             x_mid = tickvals[len(tickvals)//2]
 
+        # --- VWAP ---
         if has_candles:
             vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
             tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
@@ -297,16 +298,33 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         except Exception:
             pass
 
-        # --- Market closed annotation ---
+        # --- Market closed annotation (centered, 20% opacity) ---
         if not has_candles and not st.session_state.get('kl_last_session', False):
+            # точный центр по X
+            try:
+                x_center = x0 + (x1 - x0) / 2
+            except Exception:
+                x_center = x_mid
+            # центр по Y из диапазона имеющихся горизонтальных уровней
+            y_vals = []
+            for tag in ("max_neg_gex","max_pos_gex","put_oi_max","call_oi_max",
+                        "put_vol_max","call_vol_max","ag_max","pz_max","gflip"):
+                v = levels.get(tag)
+                if isinstance(v, (int, float)):
+                    y_vals.append(float(v))
+            if y_vals:
+                y_center = (min(y_vals) + max(y_vals)) / 2.0
+            else:
+                y_center = 0.0
+
             fig.add_annotation(
-                x=x_mid,
-                y=(levels.get('max_pos_gex') or levels.get('max_neg_gex') or 0),
+                x=x_center, y=y_center,
                 xref="x", yref="y",
                 text="Market closed",
                 showarrow=False,
                 xanchor="center", yanchor="middle",
-                font=dict(size=36, color="rgba(255,255,255,0.7)"),
+                align="center",
+                font=dict(size=36, color="rgba(255,255,255,0.2)"),
                 bgcolor="rgba(0,0,0,0)"
             )
 
@@ -328,6 +346,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
+        # дата под осью Time
         try:
             if has_candles:
                 _ts0 = df_plot["ts"].iloc[0]
