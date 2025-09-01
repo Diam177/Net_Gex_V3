@@ -7,7 +7,6 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from .provider import fetch_stock_history, debug_meta
-from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
 
 @st.cache_data(show_spinner=False, ttl=60)
 def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
@@ -166,201 +165,9 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             )
         ])
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
-
-        
-        # ===== Horizontal lines from First Chart maxima/minima (legend only, no axis annotations) =====
-        import math
-        import numpy as _np
-
-        # Helper: normalize string key
-        def _normk(k: str) -> str:
-            return str(k).replace("_","").replace("-","").replace(" ","").lower()
-
-        # Deep-scan container for keys
-        def _deep_scan(obj, keysets):
-            out = {}
-            stack = [obj]
-            while stack:
-                cur = stack.pop()
-                if isinstance(cur, dict):
-                    for k, v in cur.items():
-                        nk = _normk(k)
-                        for tag, keyset in keysets.items():
-                            if tag not in out and nk in keyset:
-                                # try direct float or nested dict with price/strike/value
-                                val = None
-                                if isinstance(v, dict):
-                                    for leaf in ("strike","price","level","value","y"):
-                                        if leaf in v:
-                                            try:
-                                                val = float(v[leaf]); break
-                                            except Exception:
-                                                pass
-                                if val is None:
-                                    try:
-                                        val = float(v)
-                                    except Exception:
-                                        val = None
-                                if val is not None:
-                                    out[tag] = val
-                        if isinstance(v, (dict, list, tuple)):
-                            stack.append(v)
-                elif isinstance(cur, (list, tuple)):
-                    for it in cur:
-                        if isinstance(it, (dict, list, tuple)):
-                            stack.append(it)
-            return out
-
-        WANT = {
-            "max_pos_gex": set(_normk(x) for x in ["max_pos_gex","net_gex_pos_max","gex_pos_max"]),
-            "max_neg_gex": set(_normk(x) for x in ["max_neg_gex","net_gex_neg_min","gex_neg_min","min_net_gex"]),
-            "call_oi_max": set(_normk(x) for x in ["call_oi_max","max_call_oi"]),
-            "put_oi_max":  set(_normk(x) for x in ["put_oi_max","max_put_oi"]),
-            "call_vol_max":set(_normk(x) for x in ["call_volume_max","max_call_volume"]),
-            "put_vol_max": set(_normk(x) for x in ["put_volume_max","max_put_volume"]),
-            "ag_max":      set(_normk(x) for x in ["ag_max","absolute_gamma_max"]),
-            "pz_max":      set(_normk(x) for x in ["pz_max","power_zone_max"]),
-            "gflip":       set(_normk(x) for x in ["gflip","gamma_flip","g_flip"]),
-        }
-
-        containers = [st.session_state]
-        for k in ("first_chart_max_levels","opt_max_levels","levels","max_levels","first_chart"):
-            v = st.session_state.get(k)
-            if isinstance(v, (dict, list)):
-                containers.append(v)
-
-        levels = {}
-        for box in containers:
-            levels.update(_deep_scan(box, WANT))
-
-        # Color map (same as first chart)
-        _cmap = {
-            "max_pos_gex": POS_COLOR,
-            "max_neg_gex": NEG_COLOR,
-                        "call_oi_max": LINE_STYLE["Call OI"]["line"],
-            "put_oi_max":  LINE_STYLE["Put OI"]["line"],
-            "call_vol_max":LINE_STYLE["Call Volume"]["line"],
-            "put_vol_max": LINE_STYLE["Put Volume"]["line"],
-            "ag_max":      LINE_STYLE["AG"]["line"],
-            "pz_max":      LINE_STYLE["PZ"]["line"],
-            "gflip":       "#AAAAAA",
-        }
-
-        def _fmt_int(x):
-            try:
-                xi = int(round(float(x)))
-                return f"{xi}"
-            except Exception:
-                return f"{x}"
-
-        # Draw as legend traces (no axis annotations)
-        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
-        def _add_line(tag, legend_name):
-            y = levels.get(tag)
-            if y is None or (isinstance(y, float) and (math.isnan(y) or math.isinf(y))):
-                return
-            color = _cmap.get(tag, "#BBBBBB")
-            name = f"{legend_name} ({_fmt_int(y)})"
-            fig.add_trace(go.Scatter(
-                x=[x0, x1], y=[y, y], mode="lines",
-                name=name, line=dict(dash="dot", width=1, color=color),
-                hoverinfo="skip", showlegend=True
-            ))
-
-        # Required legend items and order
-        _add_line("max_neg_gex", "Max Neg GEX")
-        _add_line("max_pos_gex", "Max Pos GEX")
-        _add_line("put_oi_max",  "Max Put OI")   # по задаче: "Max Put OI" — берём минимум Put OI по страйку
-        _add_line("call_oi_max", "Max Call OI")
-        _add_line("put_vol_max", "Max Put Volume")
-        _add_line("call_vol_max","Max Call Volume")
-        _add_line("ag_max",      "AG")
-        _add_line("pz_max",      "PZ")
-        _add_line("gflip",       "G-Flip")
-# Optional debug
-        if st.session_state.get("kl_debug"):
-            st.write("Detected levels on intraday chart:", levels)
-
-        # ----- Horizontal lines from the first chart (max levels) -----
-        # We read precomputed price levels (strikes) from Streamlit session_state.
-        # Expected keys (any of these dicts can be present): first_chart_max_levels, opt_max_levels,
-        # key_levels, levels, max_levels. Within the dict we look for common field names.
-        def _pick_level(dct, name_variants):
-            # Return first numeric value found under any key in name_variants;
-            # also support nested dicts containing fields like price/strike/value.
-            for k, v in dct.items():
-                kl = k.replace("_", "").replace("-", "").lower()
-                for cand in name_variants:
-                    if kl == cand:
-                        try:
-                            return float(v)
-                        except Exception:
-                            pass
-                    # handle nested dicts where the outer key matches and inner has 'price/strike/value'
-                    if kl == cand and isinstance(v, dict):
-                        for leaf in ("price", "strike", "level", "value"):
-                            if leaf in v:
-                                try:
-                                    return float(v[leaf])
-                                except Exception:
-                                    pass
-            # try nested dicts one level down (without relying on exact outer key match)
-            for v in dct.values():
-                if isinstance(v, dict):
-                    got = _pick_level(v, name_variants)
-                    if got is not None:
-                        return got
-            return None
-
-        # Candidate containers
-        _containers = [st.session_state]
-        for _k in ("first_chart_max_levels", "opt_max_levels", "key_levels", "levels", "max_levels"):
-            if isinstance(st.session_state.get(_k), dict):
-                _containers.append(st.session_state[_k])
-
-        # Variants for each level name (normalized: lowercase, no underscores/hyphens)
-        _variants = {
-            "call": ["callvolumemaxstrike", "callvolumemax", "maxcallvolume", "callmax", "callmaxstrike", "callmaxlevel"],
-            "put":  ["putvolumemaxstrike", "putvolumemax", "maxputvolume", "putmax", "putmaxstrike", "putmaxlevel"],
-            "ag":   ["agmax", "aggammamax", "aggregategammamax", "aggmax"],
-            "pz":   ["pzmax", "pressurezonemax", "maxpz"],
-            "gflip":["gflip", "gflipstrike", "gammaflip", "gammagflip", "gfliplevel"]
-        }
-
-        _levels_found = {}
-        for _name, _keys in _variants.items():
-            val = None
-            for _d in _containers:
-                val = _pick_level(_d, _keys)
-                if val is not None:
-                    break
-            if val is not None:
-                _levels_found[_name] = val
-
-        # Draw horizontal lines if levels are present.
-        # We use shapes (add_hline) so we don't impact traces/legend or interactions.
-        try:
-            import math
-            for _nm, _y in _levels_found.items():
-                if _y is None or (isinstance(_y, float) and (math.isnan(_y) or math.isinf(_y))):
-                    continue
-                fig.add_hline(y=float(_y), line_dash="dot", line_width=1)
-        except Exception:
-            # Fallback via Scatter if add_hline is unavailable in the runtime
-            try:
-                _x0, _x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
-                for _nm, _y in _levels_found.items():
-                    fig.add_trace(go.Scatter(x=[_x0, _x1], y=[_y, _y], mode="lines", name=f"{_nm}_lvl",
-                                             line=dict(dash="dot", width=1)))
-            except Exception:
-                pass
-
-        # Optional debug block
-        if 'kl_debug' in st.session_state and st.session_state['kl_debug']:
-            st.write("Max levels from first chart (detected):", _levels_found)
         fig.update_layout(
             height=560,
-            margin=dict(l=90, r=20, t=60, b=80),
+            margin=dict(l=90, r=20, t=50, b=50),
             xaxis_title="Time",
             yaxis_title="Price",
             showlegend=True,
@@ -372,24 +179,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             font=dict(color="white"),
             template=None
         )
-        # ----- Annotations: ticker (top-left) & session date (bottom-left) -----
-        # Place ticker at the top-left in the paper coordinates (doesn't affect axes).
-        fig.add_annotation(
-    xref="paper", yref="paper",
-    x=-0.06, y=1.08,
-    text=str(ticker),
-    showarrow=False, align="left"
-)
-        # Build ET session date label like 'Sep 1, 2025' from first candle timestamp
-        try:
-            _ts0 = pd.to_datetime(df_plot["ts"].iloc[0]).tz_convert("America/New_York")
-        except Exception:
-            _ts0 = pd.to_datetime(df_plot["ts"].iloc[0], utc=True).tz_convert("America/New_York")
-        _date_text = f"{_ts0.strftime('%b')} {_ts0.day}, {_ts0.year}"
-        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=-0.11, text=_date_text, showarrow=False, align="left")
-        # Move 'Time' axis title slightly up (closer to the axis)
-        fig.update_xaxes(title_standoff=5)
-    
         # fix ranges, remove interactions and rangeslider
         fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
         fig.update_yaxes(fixedrange=True)
@@ -409,3 +198,5 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             with st.expander("Debug: provider meta & head"):
                 st.json(debug_meta())
                 st.write(df_plot.head(10))
+
+fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
