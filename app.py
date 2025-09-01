@@ -16,11 +16,19 @@ RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 
 with st.sidebar:
+    # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
     expiry_placeholder = st.empty()
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
     table_download_placeholder = st.empty()
+
+    # ---- Перенесённые на боковую панель контролы Key Levels ----
+    st.markdown("### Key Levels — Controls")
+    st.selectbox("Interval", ["1m","2m","5m","15m","30m","1h","1d"], index=0, key="kl_interval")
+    st.number_input("Limit", min_value=100, max_value=1000, value=640, step=10, key="kl_limit")
+    st.toggle("Last session", value=False, key="kl_last_session")
+    # -------------------------------------------------------------
 
 raw_data = None
 raw_bytes = None
@@ -30,7 +38,7 @@ def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
     data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
     return data, content
 
-# === Load data ===
+# === Загрузка данных только из API (блок загрузки JSON удалён) ===
 if RAPIDAPI_HOST and RAPIDAPI_KEY:
     try:
         base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
@@ -38,16 +46,8 @@ if RAPIDAPI_HOST and RAPIDAPI_KEY:
         data_status_placeholder.success("Данные получены")
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса: {e}")
-
-uploader = st.file_uploader("JSON (опционная цепочка)", type=["json","txt"], accept_multiple_files=False)
-if uploader is not None:
-    try:
-        file_bytes = uploader.read()
-        raw_data = json.loads(file_bytes.decode("utf-8"))
-        raw_bytes = file_bytes
-        data_status_placeholder.info("Загружен локальный JSON")
-    except Exception as e:
-        data_status_placeholder.error(f"Ошибка чтения JSON: {e}")
+else:
+    data_status_placeholder.warning("Укажите RAPIDAPI_HOST и RAPIDAPI_KEY в секретах/ENV.")
 
 if raw_data is None:
     st.stop()
@@ -64,7 +64,13 @@ if not expirations:
     st.error("Список дат экспирации пуст. Проверьте источник.")
     st.stop()
 
-default_exp = choose_default_expiration(expirations, now_unix)
+# Безопасный выбор дефолтной экспирации
+try:
+    default_exp = choose_default_expiration(expirations, now_unix)
+    if default_exp not in expirations:
+        default_exp = expirations[0]
+except Exception:
+    default_exp = expirations[0]
 
 def fmt_ts(ts):
     try:
@@ -121,7 +127,7 @@ for e, block in blocks_by_date.items():
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
-# === Метрики для выбранной экспирации (сигнатура из compute.py) ===
+# === Метрики для выбранной экспирации ===
 metrics = compute_series_metrics_for_expiry(
     S=S, t0=t0, expiry_unix=selected_exp,
     block=blocks_by_date[selected_exp],
@@ -197,7 +203,7 @@ series_dict = {
     "PZ_FP": df["PZ_FP"].values,
 }
 
-# <<< Единственная правка: позиционный вызов >>>
+# позиционный вызов — совместим с текущей сигнатурой
 idx_keep = _select_atm_window(
     df["Strike"].values,
     df["Call OI"].values,
@@ -228,7 +234,7 @@ try:
         return int(np.nanargmax(a))
 
     _max_levels = {}
-    # Call/Put Volume — новые уровни
+    # Call/Put Volume
     i_cv = _nan_argmax(df["Call Volume"].values[idx_keep])
     if i_cv is not None:
         _max_levels["call_vol_max"] = float(_strike[idx_keep[i_cv]])
