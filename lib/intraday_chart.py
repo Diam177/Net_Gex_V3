@@ -114,19 +114,29 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Данные свечей не распознаны.")
             return
 
+    # Берём последнюю торговую сессию
+    df_plot = _take_last_session(dfc, gap_minutes=60)
+    if df_plot.empty:
+        st.warning("Не удалось выделить последнюю сессию.")
+        return
+
+
         fig = go.Figure(data=[
             go.Candlestick(
-                x=dfc["ts"],
-                open=dfc["open"],
-                high=dfc["high"],
-                low=dfc["low"],
-                close=dfc["close"],
+                x=df_plot["ts"],
+                open=df_plot["open"],
+                high=df_plot["high"],
+                low=df_plot["low"],
+                close=df_plot["close"],
                 name="Price"
             )
         ])
         fig.update_layout(
             height=420,
-            margin=dict(l=10, r=10, t=30, b=30),
+            margin=dict(l=10, r=10, t=30, b=30)
+        # Растягиваем последнюю сессию на всю ширину
+        fig.update_xaxes(range=[df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]])
+,
             xaxis_title="Time",
             yaxis_title="Price",
             showlegend=True,
@@ -146,3 +156,19 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             with st.expander("Debug: provider meta & head"):
                 st.json(debug_meta())
                 st.write(dfc.head(10))
+
+
+
+def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame:
+    """
+    Выделить последнюю непрерывную сессию по разрывам времени.
+    Новая сессия начинается, если разрыв между соседними свечами > gap_minutes.
+    """
+    if dfc.empty:
+        return dfc
+    d = dfc.sort_values("ts").copy()
+    gaps = d["ts"].diff().dt.total_seconds().div(60).fillna(0)
+    sess_id = (gaps > gap_minutes).cumsum()
+    last_id = int(sess_id.iloc[-1])
+    return d.loc[sess_id == last_id].reset_index(drop=True)
+
