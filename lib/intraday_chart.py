@@ -70,6 +70,47 @@ def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame
     last_id = int(sess_id.iloc[-1])
     return d.loc[sess_id == last_id].reset_index(drop=True)
 
+
+def _split_sessions(dfc: pd.DataFrame, gap_minutes: int = 60):
+    """Split into sessions by time gaps and return list of (date_et, df_session) chronologically."""
+    if dfc.empty:
+        return []
+    d = dfc.sort_values("ts").copy()
+    gaps = d["ts"].diff().dt.total_seconds().div(60).fillna(0)
+    sess_id = (gaps > gap_minutes).cumsum()
+    sessions = []
+    for sid in sorted(sess_id.unique()):
+        part = d.loc[sess_id == sid]
+        if part.empty:
+            continue
+        ts0 = part["ts"].iloc[0]
+        if getattr(ts0, "tzinfo", None) is None:
+            ts0 = pd.to_datetime(ts0, utc=True)
+        date_et = ts0.tz_convert("America/New_York").date()
+        sessions.append((date_et, part))
+    return sessions
+
+
+def _pick_session(dfc: pd.DataFrame, mode: str, gap_minutes: int = 60) -> pd.DataFrame:
+    """Pick current (today ET) or last finished (yesterday ET) session."""
+    sessions = _split_sessions(dfc, gap_minutes=gap_minutes)
+    if not sessions:
+        return dfc.iloc[0:0]
+    today_et = pd.Timestamp.now(tz="America/New_York").date()
+    if mode == "current":
+        # session with date == today
+        for date_et, part in reversed(sessions):
+            if date_et == today_et:
+                return part.copy()
+        # no today's session
+        return dfc.iloc[0:0]
+    else:  # 'past'
+        # last session strictly before today
+        for date_et, part in reversed(sessions):
+            if date_et < today_et:
+                return part.copy()
+        return dfc.iloc[0:0]
+
 def _build_rth_ticks_30m(df_plot: pd.DataFrame):
     """Build ET 09:30–16:00 ticks (30m). Return (tickvals_utc, ticktext)."""
     tz_et = "America/New_York"
@@ -90,6 +131,14 @@ def _build_rth_ticks_30m(df_plot: pd.DataFrame):
 def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
     """UI section 'Key Levels' (candles + VWAP, no interactions)."""
     st.subheader("Key Levels")
+    # Session toggle
+    if "kl_session_mode" not in st.session_state:
+        st.session_state["kl_session_mode"] = "current"
+    top1, top2 = st.columns([1,6])
+    with top1:
+        if st.button("Current/Past", key="kl_toggle"):
+            st.session_state["kl_session_mode"] = "past" if st.session_state["kl_session_mode"] == "current" else "current"
+        st.caption(f"Session: **{st.session_state['kl_session_mode'].capitalize()}**")
     with st.container():
         c1, c2, c3, c4 = st.columns([1,1,1,1])
         with c1:
@@ -139,9 +188,10 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Candles are empty or not recognized.")
             return
 
-        df_plot = _take_last_session(dfc, gap_minutes=60)
+        mode = st.session_state.get('kl_session_mode', 'current')
+        df_plot = _pick_session(dfc, mode=mode, gap_minutes=60)
         if df_plot.empty:
-            st.warning("Could not detect last session.")
+            st.warning("No data for selected session (Current/Past).")
             return
 
         # compute VWAP
