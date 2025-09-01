@@ -70,47 +70,6 @@ def _take_last_session(dfc: pd.DataFrame, gap_minutes: int = 60) -> pd.DataFrame
     last_id = int(sess_id.iloc[-1])
     return d.loc[sess_id == last_id].reset_index(drop=True)
 
-
-def _split_sessions(dfc: pd.DataFrame, gap_minutes: int = 60):
-    """Split into sessions by time gaps and return list of (date_et, df_session) chronologically."""
-    if dfc.empty:
-        return []
-    d = dfc.sort_values("ts").copy()
-    gaps = d["ts"].diff().dt.total_seconds().div(60).fillna(0)
-    sess_id = (gaps > gap_minutes).cumsum()
-    sessions = []
-    for sid in sorted(sess_id.unique()):
-        part = d.loc[sess_id == sid]
-        if part.empty:
-            continue
-        ts0 = part["ts"].iloc[0]
-        if getattr(ts0, "tzinfo", None) is None:
-            ts0 = pd.to_datetime(ts0, utc=True)
-        date_et = ts0.tz_convert("America/New_York").date()
-        sessions.append((date_et, part))
-    return sessions
-
-
-def _pick_session(dfc: pd.DataFrame, mode: str, gap_minutes: int = 60) -> pd.DataFrame:
-    """Pick current (today ET) or last finished (yesterday ET) session."""
-    sessions = _split_sessions(dfc, gap_minutes=gap_minutes)
-    if not sessions:
-        return dfc.iloc[0:0]
-    today_et = pd.Timestamp.now(tz="America/New_York").date()
-    if mode == "current":
-        # session with date == today
-        for date_et, part in reversed(sessions):
-            if date_et == today_et:
-                return part.copy()
-        # no today's session
-        return dfc.iloc[0:0]
-    else:  # 'past'
-        # last session strictly before today
-        for date_et, part in reversed(sessions):
-            if date_et < today_et:
-                return part.copy()
-        return dfc.iloc[0:0]
-
 def _build_rth_ticks_30m(df_plot: pd.DataFrame):
     """Build ET 09:30–16:00 ticks (30m). Return (tickvals_utc, ticktext)."""
     tz_et = "America/New_York"
@@ -131,14 +90,6 @@ def _build_rth_ticks_30m(df_plot: pd.DataFrame):
 def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
     """UI section 'Key Levels' (candles + VWAP, no interactions)."""
     st.subheader("Key Levels")
-    # Session toggle
-    if "kl_session_mode" not in st.session_state:
-        st.session_state["kl_session_mode"] = "current"
-    top1, top2 = st.columns([1,6])
-    with top1:
-        if st.button("Current/Past", key="kl_toggle"):
-            st.session_state["kl_session_mode"] = "past" if st.session_state["kl_session_mode"] == "current" else "current"
-        st.caption(f"Session: **{st.session_state['kl_session_mode'].capitalize()}**")
     with st.container():
         c1, c2, c3, c4 = st.columns([1,1,1,1])
         with c1:
@@ -188,10 +139,9 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             st.warning("Candles are empty or not recognized.")
             return
 
-        mode = st.session_state.get('kl_session_mode', 'current')
-        df_plot = _pick_session(dfc, mode=mode, gap_minutes=60)
+        df_plot = _take_last_session(dfc, gap_minutes=60)
         if df_plot.empty:
-            st.warning("No data for selected session (Current/Past).")
+            st.warning("Could not detect last session.")
             return
 
         # compute VWAP
@@ -215,86 +165,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             )
         ])
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
-
-        # --- Key Levels: horizontal lines from first chart maxima ---
-        levels = {}
-        try:
-            levels = dict(st.session_state.get("first_chart_max_levels", {}))
-        except Exception:
-            levels = {}
-        def _fmt_int(x):
-            try:
-                return f"{int(round(float(x)))}"
-            except Exception:
-                return str(x)
-        # colors consistent with first chart
-        try:
-            from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
-            _cmap = {
-                "max_pos_gex": POS_COLOR,
-                "max_neg_gex": NEG_COLOR,
-                "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
-                "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
-                "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2E86C1"),
-                "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#AF601A"),
-                "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
-                "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
-                "gflip":       "#AAAAAA",
-            }
-        except Exception:
-            _cmap = {}
-        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
-        x_mid = df_plot["ts"].iloc[len(df_plot)//2]
-        def _add_line(tag, label):
-            y = levels.get(tag)
-            if y is None:
-                return
-            fig.add_trace(go.Scatter(
-                x=[x0, x1], y=[y, y], mode="lines",
-                name=f"{label} ({_fmt_int(y)})",
-                line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
-                hoverinfo="skip", showlegend=True
-            ))
-        _add_line("max_neg_gex", "Max Neg GEX")
-        _add_line("max_pos_gex", "Max Pos GEX")
-        _add_line("put_oi_max",  "Max Put OI")
-        _add_line("call_oi_max", "Max Call OI")
-        _add_line("put_vol_max", "Max Put Volume")
-        _add_line("call_vol_max","Max Call Volume")
-        _add_line("ag_max",      "AG")
-        _add_line("pz_max",      "PZ")
-        _add_line("gflip",       "G-Flip")
-        # --- Same-strike consolidated labels (exact strike match) ---
-        try:
-            order_pairs = [
-                ("max_neg_gex", "Max Neg GEX"),
-                ("max_pos_gex", "Max Pos GEX"),
-                ("put_oi_max",  "Max Put OI"),
-                ("call_oi_max", "Max Call OI"),
-                ("put_vol_max", "Max Put Volume"),
-                ("call_vol_max","Max Call Volume"),
-                ("ag_max",      "AG"),
-                ("pz_max",      "PZ"),
-                ("gflip",       "G-Flip"),
-            ]
-            groups = {}
-            for tag, label in order_pairs:
-                y = levels.get(tag)
-                if y is None:
-                    continue
-                key = float(y)
-                groups.setdefault(key, []).append(label)
-            for y, labels in groups.items():
-                if len(labels) >= 2:
-                    text = " + ".join(labels)
-                    fig.add_annotation(
-                        x=x_mid, y=y, xref="x", yref="y",
-                        text=text, showarrow=False, xanchor="center", yshift=12, align="center",
-                        bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
-                        borderwidth=1, font=dict(size=11)
-                    )
-        except Exception:
-            pass
         fig.update_layout(
             height=560,
             margin=dict(l=90, r=20, t=50, b=50),
@@ -314,17 +184,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.update_yaxes(fixedrange=True)
         fig.update_layout(xaxis_rangeslider_visible=False)
 
-        # show date below Time
-        try:
-            _ts0 = df_plot["ts"].iloc[0]
-            _ts0 = pd.to_datetime(_ts0, utc=True) if getattr(_ts0, "tzinfo", None) is None else _ts0
-            _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
-            fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
-        except Exception:
-            pass
-
-        fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": True})
 
         st.download_button(
             "Скачать JSON (Key Levels)",
