@@ -166,6 +166,117 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         ])
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
 
+        # ===== Horizontal lines from First Chart maxima/minima (robust discovery) =====
+        # We try to discover levels in st.session_state even if keys vary between versions.
+        import math
+
+        def _to_float(x):
+            try:
+                return float(x)
+            except Exception:
+                try:
+                    return float(str(x).strip())
+                except Exception:
+                    return None
+
+        # normalize key name: lower, remove spaces/underscores/hyphens
+        def _norm(k: str) -> str:
+            return str(k).replace("_","").replace("-","").replace(" ","").lower()
+
+        # Deep scan any mapping/list structure for candidate values
+        def _deep_find_levels(obj, want_keys):
+            found = {}
+            stack = [obj]
+            while stack:
+                cur = stack.pop()
+                if isinstance(cur, dict):
+                    for k, v in cur.items():
+                        nk = _norm(k)
+                        for tag, keyset in want_keys.items():
+                            if nk in keyset and tag not in found:
+                                val = None
+                                if isinstance(v, dict):
+                                    # nested dict with typical leaf names
+                                    for leaf in ("price","strike","level","value","y","v","val"):
+                                        if leaf in v:
+                                            val = _to_float(v[leaf]); 
+                                            if val is not None: break
+                                if val is None:
+                                    val = _to_float(v)
+                                if val is not None:
+                                    found[tag] = val
+                        # continue scanning deeper
+                        if isinstance(v, (dict, list, tuple)):
+                            stack.append(v)
+                elif isinstance(cur, (list, tuple)):
+                    for it in cur:
+                        if isinstance(it, (dict, list, tuple)):
+                            stack.append(it)
+            return found
+
+        # define many aliases for each required level
+        WANT = {
+            "call_vol_max": set(_norm(x) for x in [
+                "call_volume_max", "max_call_volume", "callVolMax", "call_volume_max_strike",
+                "call_volume_peak", "call_volumemax", "call_volume_max_price"
+            ]),
+            "put_vol_max": set(_norm(x) for x in [
+                "put_volume_max", "max_put_volume", "putVolMax", "put_volume_max_strike",
+                "put_volume_peak", "put_volumemax", "put_volume_max_price"
+            ]),
+            "ag_max": set(_norm(x) for x in [
+                "ag_max", "AG_max", "absolute_gamma_max", "abs_gamma_max", "gamma_abs_max", "AGMax"
+            ]),
+            "pz_max": set(_norm(x) for x in [
+                "pz_max", "PZ_max", "power_zone_max", "powerzone_max", "pzPeak", "PZMax"
+            ]),
+            "gflip": set(_norm(x) for x in [
+                "g_flip", "gflip", "gamma_flip", "gammaFlip", "gFlipLevel", "gflip_strike"
+            ]),
+            "call_oi_max": set(_norm(x) for x in [
+                "call_oi_max", "max_call_oi", "callOiMax", "call_oi_max_strike", "call_oi_peak"
+            ]),
+            "put_oi_min": set(_norm(x) for x in [
+                "put_oi_min", "min_put_oi", "putOiMin", "put_oi_min_strike", "put_oi_trough"
+            ]),
+        }
+
+        # Gather candidate containers to look into
+        containers = [st.session_state]
+        for k in ("first_chart_max_levels", "opt_max_levels", "key_levels", "levels", "max_levels", "first_chart"):
+            if isinstance(st.session_state.get(k), (dict, list)):
+                containers.append(st.session_state[k])
+
+        levels = {}
+        for box in containers:
+            got = _deep_find_levels(box, WANT)
+            levels.update({k:v for k,v in got.items() if v is not None})
+
+        # Draw helper
+        def _hline(y, name):
+            if y is None or (isinstance(y, float) and (math.isnan(y) or math.isinf(y))):
+                return
+            try:
+                fig.add_hline(y=float(y), line_dash="dot", line_width=1, annotation_text=name, annotation_position="right")
+            except Exception:
+                x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
+                fig.add_trace(go.Scatter(x=[x0,x1], y=[y,y], mode="lines", name=name, line=dict(dash="dot", width=1)))
+
+        # Required by the task
+        _hline(levels.get("call_vol_max"), "Call Vol max")
+        _hline(levels.get("put_vol_max"), "Put Vol max")
+        _hline(levels.get("ag_max"),      "AG max")
+        _hline(levels.get("pz_max"),      "PZ max")
+        _hline(levels.get("gflip"),       "G-Flip")
+
+        # Additionally: Call OI max and Put OI min
+        _hline(levels.get("call_oi_max"), "Call OI max")
+        _hline(levels.get("put_oi_min"),  "Put OI min")
+
+        # Optional debug
+        if st.session_state.get("kl_debug"):
+            st.write("Detected levels on intraday chart:", levels)
+
         # ----- Horizontal lines from the first chart (max levels) -----
         # We read precomputed price levels (strikes) from Streamlit session_state.
         # Expected keys (any of these dicts can be present): first_chart_max_levels, opt_max_levels,
