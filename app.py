@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time, json, datetime
+import time, json, datetime, sys
 
 import importlib
 
@@ -22,6 +22,7 @@ POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 with st.sidebar:
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
+    st.caption(f"Data provider: **{_PROVIDER}**")
     expiry_placeholder = st.empty()
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
@@ -38,15 +39,21 @@ raw_data = None
 raw_bytes = None
 
 
+
 # === Provider selection ===
 if POLYGON_API_KEY:
     # Use Polygon provider (no host needed)
     provider_module = importlib.import_module("lib.provider_polygon")
+    # Reload to pick up latest edits during dev
+    if "lib.provider_polygon" in sys.modules:
+        importlib.reload(sys.modules["lib.provider_polygon"])
     fetch_option_chain = provider_module.fetch_option_chain
     _PROVIDER = "polygon"
 else:
     # Fallback to legacy RapidAPI Yahoo provider
     provider_module = importlib.import_module("lib.provider")
+    if "lib.provider" in sys.modules:
+        importlib.reload(sys.modules["lib.provider"])
     fetch_option_chain = provider_module.fetch_option_chain
     _PROVIDER = "rapid"
 
@@ -64,7 +71,7 @@ if (_PROVIDER == "polygon" and POLYGON_API_KEY) or (_PROVIDER == "rapid" and RAP
         raw_data, raw_bytes = base_json, base_bytes
         data_status_placeholder.success("Data received")
     except Exception as e:
-        data_status_placeholder.error(f"Ошибка запроса: {e}")
+        data_status_placeholder.error(f"Ошибка запроса ({_PROVIDER}): {e}")
 else:
     data_status_placeholder.warning("Укажите POLYGON_API_KEY (или RAPIDAPI_HOST+RAPIDAPI_KEY) в секретах/ENV.")
 
