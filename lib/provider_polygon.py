@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Provider adapter for Polygon.io to match the internal "Yahoo-style" option chain format.
-We DO NOT change numeric values; we only repackage fields to the schema that the rest of the
-pipeline already understands.
+Polygon provider adapter -> "Yahoo-style" option chain format for this app.
+We DO NOT change numeric values; only re-map fields into the schema
+expected by compute.extract_core_from_chain().
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _safe_get(d: dict, path: List[str], default=None):
             return default
     return cur
 
-def _contract_dict_from_polygon(item: dict) -> Dict[str, Any]:
+def _contract_from_item(item: dict) -> Dict[str, Any]:
     strike = (_safe_get(item, ["details", "strike_price"])
               or _safe_get(item, ["strike_price"])
               or _safe_get(item, ["details", "strike"])
@@ -57,12 +57,11 @@ def _contract_dict_from_polygon(item: dict) -> Dict[str, Any]:
         "impliedVolatility": iv,
     }
 
-def _paginate_get(url: str, headers: dict, params: Optional[dict] = None, page_cap: int = 40) -> List[dict]:
-    """Generic v3 pagination helper (respects next_url)."""
+def _paginate(url: str, headers: dict, params: Optional[dict] = None, cap: int = 60) -> List[dict]:
     out: List[dict] = []
     next_url = url
     next_params = dict(params or {})
-    for _ in range(page_cap):
+    for _ in range(cap):
         r = requests.get(next_url, params=next_params, headers=headers, timeout=30)
         import requests as _requests
         try:
@@ -77,11 +76,10 @@ def _paginate_get(url: str, headers: dict, params: Optional[dict] = None, page_c
         nxt = j.get("next_url") or j.get("next")
         if not nxt:
             break
-        next_url, next_params = nxt, None  # next_url already contains query string
+        next_url, next_params = nxt, None  # next_url already includes query
     return out
 
 def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, expiry_unix: Optional[int] = None) -> Tuple[Dict[str, Any], bytes]:
-    """Main entry: returns (chain_like_json, raw_bytes) in Yahoo-style schema."""
     if not api_key:
         raise ValueError("POLYGON_API_KEY is empty")
 
@@ -95,22 +93,21 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
     params = {"limit": 250, "order": "asc", "sort": "ticker"}
 
-    all_items = _paginate_get(url, headers=headers, params=params, page_cap=60)
+    items = _paginate(url, headers=headers, params=params, cap=80)
 
-    # Underlying price (if provided in any item)
+    # Underlying price (if present)
     S = None
-    for it in all_items[:20]:
+    for it in items[:20]:
         maybe = _safe_get(it, ["underlying_asset", "price"])
         if maybe is not None:
             S = maybe
             break
     ts_unix = int(_time.time())
 
-    # Group contracts by expiration
+    # Group by expiration
     by_exp: Dict[int, Dict[str, Any]] = {}
     expirations = set()
-
-    for it in all_items:
+    for it in items:
         exp_str = (_safe_get(it, ["details", "expiration_date"])
                    or _safe_get(it, ["expiration_date"])
                    or _safe_get(it, ["exp_date"]))
@@ -119,7 +116,6 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
         exp_unix = _to_unix(str(exp_str)[:10])
         if not exp_unix:
             continue
-
         if expiry_unix and int(expiry_unix) != exp_unix:
             continue
 
@@ -131,12 +127,11 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
 
         bucket = by_exp.setdefault(exp_unix, {"expirationDate": exp_unix, "calls": [], "puts": []})
         c_l = str(ctype).lower()
-        contract = _contract_dict_from_polygon(it)
+        contract = _contract_from_item(it)
         if c_l in ("call", "c"):
             bucket["calls"].append(contract)
         elif c_l in ("put", "p"):
             bucket["puts"].append(contract)
-
         expirations.add(exp_unix)
 
     expirationDates = sorted(expirations)
@@ -151,31 +146,5 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
         "options": [by_exp[e] for e in expirationDates],
     }
     out = {"optionChain": {"result": [chain_obj], "error": None}}
-    # raw bytes not strictly needed; include minimal
-    raw_bytes = ("pages=" + str(len(all_items))).encode("utf-8")
+    raw_bytes = (f"items={len(items)}").encode("utf-8")
     return out, raw_bytes
-
-def _debug_endpoint(ticker: str, api_key: str) -> dict:
-    underlying = ticker.strip().upper()
-    if underlying in ("SPX", "^SPX"):
-        underlying_symbol = "I:SPX"
-    else:
-        underlying_symbol = underlying
-
-    url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    params = {"limit": 5}
-    r = requests.get(url, params=params, headers=headers, timeout=20)
-    out = {
-        "url": r.request.url,
-        "status_code": r.status_code,
-        "reason": r.reason,
-        "used_headers": {"Authorization": headers["Authorization"][:12] + "...(masked)"},
-    }
-    try:
-        j = r.json()
-        out["json_keys"] = list(j.keys())
-        out["sample"] = {"status": j.get("status"), "results_len": len(j.get("results", []))}
-    except Exception:
-        out["body_snippet"] = r.text[:800]
-    return out
