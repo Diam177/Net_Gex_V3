@@ -18,6 +18,8 @@ st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
+# Predefine provider flag for early UI references
+_PROVIDER = "polygon" if POLYGON_API_KEY else "rapid"
 
 with st.sidebar:
     # Основные поля
