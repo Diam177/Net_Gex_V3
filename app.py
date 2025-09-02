@@ -27,8 +27,6 @@ with st.sidebar:
     st.markdown("### Key Levels — Controls")
     st.selectbox("Interval", ["1m","2m","5m","15m","30m","1h","1d"], index=0, key="kl_interval")
     st.number_input("Limit", min_value=100, max_value=1000, value=640, step=10, key="kl_limit")
-    # Last session убран из сайдбара — теперь он над чартом
-    # -------------------------------------------------------------
 
 raw_data = None
 raw_bytes = None
@@ -43,7 +41,7 @@ if RAPIDAPI_HOST and RAPIDAPI_KEY:
     try:
         base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
         raw_data, raw_bytes = base_json, base_bytes
-        data_status_placeholder.success("Data received")
+        data_status_placeholder.success("Данные получены")
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса: {e}")
 else:
@@ -84,28 +82,38 @@ try:
 except ValueError:
     default_index = 0
 
-sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index=default_index)
-selected_exp = expirations[exp_labels.index(sel_label)]
+# === МНОЖЕСТВЕННЫЙ ВЫБОР ЭКСПИРАЦИЙ ===
+sel_labels = expiry_placeholder.multiselect(
+    "Expiration",
+    options=exp_labels,
+    default=[exp_labels[default_index]]
+)
+selected_exps = [expirations[exp_labels.index(lbl)] for lbl in (sel_labels or [])]
+if not selected_exps:
+    selected_exps = [default_exp]  # безопасный fallback
 
-# Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
-    try:
-        by_date_json, by_date_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, selected_exp)
-        _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
-        blocks_by_date.update(blocks_by_date2)
-        raw_bytes = by_date_bytes
-    except Exception as e:
-        st.warning(f"Не удалось получить блок для выбранной даты: {e}")
+# Дотягиваем недостающие блоки по выбранным датам
+if RAPIDAPI_HOST and RAPIDAPI_KEY:
+    for e in selected_exps:
+        if e not in blocks_by_date:
+            try:
+                by_date_json, by_date_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, e)
+                _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
+                blocks_by_date.update(blocks_by_date2)
+                raw_bytes = by_date_bytes  # просто обновим, не критично что последним
+            except Exception as ex:
+                st.warning(f"Не удалось получить блок для {fmt_ts(e)}: {ex}")
 
 # Кнопка "Скачать сырой JSON"
+dl_name = f"{ticker}_{fmt_ts(selected_exps[0]) if len(selected_exps)==1 else 'multi'}_raw.json"
 download_placeholder.download_button(
-    "Download JSON",
+    "Скачать JSON",
     data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
-    file_name=f"{ticker}_{selected_exp}_raw.json",
+    file_name=dl_name,
     mime="application/json"
 )
 
-# === Контекст для PZ/PZ_FP (all_series_ctx) ===
+# === Контекст для PZ/PZ_FP (all_series_ctx) по всем имеющимся блокам ===
 all_series_ctx = []
 for e, block in blocks_by_date.items():
     try:
@@ -127,15 +135,46 @@ for e, block in blocks_by_date.items():
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
-# === Метрики для выбранной экспирации ===
-metrics = compute_series_metrics_for_expiry(
-    S=S, t0=t0, expiry_unix=selected_exp,
-    block=blocks_by_date[selected_exp],
-    day_high=day_high, day_low=day_low,
-    all_series=all_series_ctx
-)
+# === Метрики для каждой выбранной экспирации ===
+metrics_list = []
+for e in selected_exps:
+    try:
+        m = compute_series_metrics_for_expiry(
+            S=S, t0=t0, expiry_unix=e,
+            block=blocks_by_date[e],
+            day_high=day_high, day_low=day_low,
+            all_series=all_series_ctx
+        )
+        metrics_list.append(m)
+    except Exception as ex:
+        st.warning(f"Не удалось посчитать метрики для {fmt_ts(e)}: {ex}")
 
-# === Таблица по страйкам ===
+if not metrics_list:
+    st.error("Нет данных для выбранных экспираций.")
+    st.stop()
+
+# === СЛИЯНИЕ РЯДОВ ПО СТРАЙКАМ (UNION) С СУММИРОВАНИЕМ ===
+def merge_metrics(list_of_m):
+    # Общий список страйков
+    all_strikes = np.unique(np.concatenate([np.asarray(m["strikes"], dtype=float) for m in list_of_m]))
+    all_strikes.sort()
+
+    keys_sum = ["put_oi", "call_oi", "put_vol", "call_vol", "net_gex", "ag", "pz", "pz_fp"]
+    merged = {k: np.zeros_like(all_strikes, dtype=float) for k in keys_sum}
+
+    for m in list_of_m:
+        idx = np.asarray(m["strikes"], dtype=float)
+        for k in keys_sum:
+            vals = np.asarray(m[k], dtype=float)
+            s = pd.Series(vals, index=idx)
+            merged[k] += s.reindex(all_strikes, fill_value=0.0).values
+
+    merged["strikes"] = all_strikes
+    return merged
+
+metrics = merge_metrics(metrics_list)
+
+# === Таблица по страйкам (уже объединённая) ===
 df = pd.DataFrame({
     "Strike": metrics["strikes"],
     "Put OI": metrics["put_oi"],
@@ -148,7 +187,7 @@ df = pd.DataFrame({
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
 
-# === G-Flip (эвристика) ===
+# === G-Flip по суммарному Net GEX ===
 def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12):
     strikes = np.asarray(strikes_arr, dtype=float)
     gex = np.asarray(gex_arr, dtype=float)
@@ -183,7 +222,7 @@ def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12
 g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
 
 # === Plot ===
-st.subheader("GammaStrat v6.5")
+st.subheader("GammaStrat v4.5")
 cols = st.columns(9)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
@@ -224,7 +263,7 @@ fig = make_figure(
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-# === Уровни для Key Levels ===
+# === Уровни для Key Levels (по суммарным данным) ===
 try:
     _strike = np.asarray(df["Strike"].values, dtype=float)
 
@@ -234,7 +273,7 @@ try:
         return int(np.nanargmax(a))
 
     _max_levels = {}
-    # Call/Put Volume
+    # Call/Put Volume — новые уровни ранее
     i_cv = _nan_argmax(df["Call Volume"].values[idx_keep])
     if i_cv is not None:
         _max_levels["call_vol_max"] = float(_strike[idx_keep[i_cv]])
