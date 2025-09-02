@@ -94,14 +94,64 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     params = {"limit": 250, "order": "asc", "sort": "ticker"}
 
     items = _paginate(url, headers=headers, params=params, cap=80)
-
-    # Underlying price (if present)
+    # --- Determine underlying price S robustly ---
     S = None
-    for it in items[:20]:
-        maybe = _safe_get(it, ["underlying_asset", "price"])
-        if maybe is not None:
-            S = maybe
-            break
+    for it in items:
+        ua = it.get('underlying_asset') or {}
+        val = ua.get('price') if isinstance(ua, dict) else None
+        if isinstance(val, (int, float)):
+            S = float(val); break
+    ts_unix = int(_time.time())
+    if S is None:
+        # Fallback: query underlying snapshot (stock or index)
+        try:
+            if underlying_symbol.startswith("I:"):
+                uurl = f"{POLYGON_BASE_URL}/v3/snapshot/indices"
+                r = requests.get(uurl, params={"ticker": underlying_symbol}, headers=headers, timeout=20)
+            else:
+                # Try v3 stocks snapshot; if fails, try v2 as a backup
+                uurl = f"{POLYGON_BASE_URL}/v3/snapshot/stocks"
+                r = requests.get(uurl, params={"ticker": underlying_symbol}, headers=headers, timeout=20)
+                if r.status_code == 404 or r.status_code == 400:
+                    uurl = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{underlying_symbol}"
+                    r = requests.get(uurl, headers=headers, timeout=20)
+            # Parse a numeric price from whatever structure we got
+            try:
+                j = r.json()
+            except Exception:
+                j = {}
+            # common places
+            cand = []
+            if isinstance(j.get("results"), dict):
+                cand.append(j["results"].get("last").get("price") if isinstance(j["results"].get("last"), dict) else j["results"].get("price"))
+                cand.append(j["results"].get("value"))
+                cand.append(j["results"].get("p"))
+                cand.append(j["results"].get("close"))
+            if isinstance(j.get("results"), list) and j["results"]:
+                # take first dict and look for common keys
+                rr = j["results"][0]
+                if isinstance(rr, dict):
+                    cand += [rr.get(k) for k in ("price","value","p","close","last","c")]
+
+            # some v2 structures
+            if "ticker" in j and isinstance(j.get("lastTrade"), dict):
+                cand.append(j["lastTrade"].get("p"))
+            if isinstance(j.get("last"), dict):
+                cand.append(j["last"].get("price"))
+
+            for v in cand:
+                try:
+                    if v is None: 
+                        continue
+                    S = float(v)
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            S = None
+
+
+        # (price S determined above)
     ts_unix = int(_time.time())
 
     # Group by expiration
