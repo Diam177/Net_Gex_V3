@@ -97,9 +97,13 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     try:
         resp.raise_for_status()
     except _requests.HTTPError as e:
+        txt = resp.text[:800]
         if resp.status_code == 403:
-            raise RuntimeError("Polygon 403 Forbidden: ключ не имеет доступа к этому endpoint. Проверьте, что у ключа включен доступ к PRODUCT=Options (Dashboard → Keys → API Access) и что план поддерживает snapshots (для Starter возможны ограничения).") from e
-        raise
+            raise RuntimeError("Polygon 403 Forbidden: ключ не имеет доступа к этому endpoint. Проверьте продукт Options в API Access.\nОтвет: " + txt) from e
+        elif resp.status_code == 400:
+            raise RuntimeError("Polygon 400 Bad Request: проверьте план/endpoint/параметры.\nОтвет: " + txt) from e
+        else:
+            raise RuntimeError(f"Polygon error {resp.status_code}: " + txt) from e
     payload = resp.json()
 
     results = payload.get("results") or payload.get("data") or []
@@ -172,3 +176,32 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     out = {"optionChain": {"result": [chain_obj], "error": None}}
     raw_bytes = resp.content
     return out, raw_bytes
+
+def _debug_endpoint(ticker: str, api_key: str) -> dict:
+    """
+    Minimal probe to check access to snapshots endpoint. Returns a dict with
+    url, status, headers_used(masked), and either json or text.
+    """
+    underlying = ticker.strip().upper()
+    if underlying == "SPX" or underlying == "^SPX":
+        underlying_symbol = "I:SPX"
+    else:
+        underlying_symbol = underlying
+
+    url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    params = {"limit": 5}
+    r = requests.get(url, params=params, headers=headers, timeout=20)
+    out = {
+        "url": r.request.url,
+        "status_code": r.status_code,
+        "reason": r.reason,
+        "used_headers": {"Authorization": headers["Authorization"][:12] + "...(masked)"},
+    }
+    try:
+        j = r.json()
+        out["json_keys"] = list(j.keys())
+        out["sample"] = {"status": j.get("status"), "results_len": len(j.get("results", []))}
+    except Exception:
+        out["body_snippet"] = r.text[:800]
+    return out
