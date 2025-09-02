@@ -34,6 +34,16 @@ with st.sidebar:
     st.markdown("### Key Levels — Controls")
     st.selectbox("Interval", ["1m","2m","5m","15m","30m","1h","1d"], index=0, key="kl_interval")
     st.number_input("Limit", min_value=100, max_value=1000, value=640, step=10, key="kl_limit")
+    # --- Debug (Polygon) ---
+    if _PROVIDER == "polygon":
+        with st.expander("Debug Polygon endpoint", expanded=False):
+            st.write("Проверка доступа к snapshot/options (limit=5)")
+            try:
+                dbg = provider_module._debug_endpoint(ticker, POLYGON_API_KEY)
+                st.code(json.dumps(dbg, ensure_ascii=False, indent=2))
+            except Exception as de:
+                st.error(f"Debug error: {de}")
+
     # Last session убран из сайдбара — теперь он над чартом
     # -------------------------------------------------------------
 
