@@ -88,11 +88,18 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     else:
         underlying_symbol = underlying
 
-    params = {"limit": 1000, "apiKey": api_key}
+    params = {"limit": 1000}
+    headers = {"Authorization": f"Bearer {api_key}"}
     url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
 
-    resp = requests.get(url, params=params, timeout=20)
-    resp.raise_for_status()
+    resp = requests.get(url, params=params, headers=headers, timeout=20)
+    import requests as _requests
+    try:
+        resp.raise_for_status()
+    except _requests.HTTPError as e:
+        if resp.status_code == 403:
+            raise RuntimeError("Polygon 403 Forbidden: ключ не имеет доступа к этому endpoint. Проверьте, что у ключа включен доступ к PRODUCT=Options (Dashboard → Keys → API Access) и что план поддерживает snapshots (для Starter возможны ограничения).") from e
+        raise
     payload = resp.json()
 
     results = payload.get("results") or payload.get("data") or []
