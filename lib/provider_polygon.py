@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Provider adapter for Polygon.io to match the internal "Yahoo-style" option chain format
-expected by compute.extract_core_from_chain.
-
-We intentionally DO NOT change any numeric values received from Polygon.
-We only *repackage* fields into the schema your project already parses.
+Provider adapter for Polygon.io to match the internal "Yahoo-style" option chain format.
+We DO NOT change numeric values; we only repackage fields to the schema that the rest of the
+pipeline already understands.
 """
 from __future__ import annotations
 
@@ -16,14 +14,10 @@ import requests
 POLYGON_BASE_URL = "https://api.polygon.io"
 
 def _to_unix(d: str) -> int:
-    # d like "2025-09-17"
     try:
         return int(_dt.datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc).timestamp())
     except Exception:
         return 0
-
-def _from_unix(ts: int) -> str:
-    return _dt.datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d")
 
 def _safe_get(d: dict, path: List[str], default=None):
     cur = d
@@ -35,15 +29,10 @@ def _safe_get(d: dict, path: List[str], default=None):
     return cur
 
 def _contract_dict_from_polygon(item: dict) -> Dict[str, Any]:
-    """
-    Convert one Polygon snapshot item into a minimal contract dict with
-    keys used by your pipeline: strike, openInterest, volume, impliedVolatility.
-    """
     strike = (_safe_get(item, ["details", "strike_price"])
               or _safe_get(item, ["strike_price"])
               or _safe_get(item, ["details", "strike"])
               or _safe_get(item, ["strike"]))
-    # Normalize to float if possible
     try:
         strike = float(strike)
     except Exception:
@@ -61,129 +50,114 @@ def _contract_dict_from_polygon(item: dict) -> Dict[str, Any]:
           or _safe_get(item, ["implied_volatility"])
           or _safe_get(item, ["iv"]))
 
-    # We DO NOT modify values; just pass them through if present
-    out = {
+    return {
         "strike": strike,
         "openInterest": open_interest,
         "volume": volume,
         "impliedVolatility": iv,
     }
+
+def _paginate_get(url: str, headers: dict, params: Optional[dict] = None, page_cap: int = 40) -> List[dict]:
+    """Generic v3 pagination helper (respects next_url)."""
+    out: List[dict] = []
+    next_url = url
+    next_params = dict(params or {})
+    for _ in range(page_cap):
+        r = requests.get(next_url, params=next_params, headers=headers, timeout=30)
+        import requests as _requests
+        try:
+            r.raise_for_status()
+        except _requests.HTTPError as e:
+            txt = r.text[:1200]
+            raise RuntimeError(f"Polygon HTTP {r.status_code}: {txt}") from e
+        j = r.json()
+        batch = j.get("results") or j.get("data") or []
+        if isinstance(batch, list):
+            out.extend(batch)
+        nxt = j.get("next_url") or j.get("next")
+        if not nxt:
+            break
+        next_url, next_params = nxt, None  # next_url already contains query string
     return out
 
 def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, expiry_unix: Optional[int] = None) -> Tuple[Dict[str, Any], bytes]:
-    """
-    Fetch Polygon index/stock option snapshots for the given underlying.
-    Signature mirrors the legacy provider: (ticker, host, key, expiry_unix).
-    - host is unused (kept for compatibility).
-    - api_key is the Polygon API key.
-    Returns: (data_as_python, raw_bytes) where data_as_python matches the internal "Yahoo-style" schema.
-    """
+    """Main entry: returns (chain_like_json, raw_bytes) in Yahoo-style schema."""
     if not api_key:
         raise ValueError("POLYGON_API_KEY is empty")
 
-    # Map underlying for indices: "SPX" -> "I:SPX"; for others leave as-is
     underlying = ticker.strip().upper()
-    if underlying == "SPX" or underlying == "^SPX":
+    if underlying in ("SPX", "^SPX"):
         underlying_symbol = "I:SPX"
     else:
         underlying_symbol = underlying
 
-    params = {"limit": 1000}
     headers = {"Authorization": f"Bearer {api_key}"}
     url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
+    params = {"limit": 250, "order": "asc", "sort": "ticker"}
 
-    resp = requests.get(url, params=params, headers=headers, timeout=20)
-    import requests as _requests
-    try:
-        resp.raise_for_status()
-    except _requests.HTTPError as e:
-        txt = resp.text[:800]
-        if resp.status_code == 403:
-            raise RuntimeError("Polygon 403 Forbidden: ключ не имеет доступа к этому endpoint. Проверьте продукт Options в API Access.\nОтвет: " + txt) from e
-        elif resp.status_code == 400:
-            raise RuntimeError("Polygon 400 Bad Request: проверьте план/endpoint/параметры.\nОтвет: " + txt) from e
-        else:
-            raise RuntimeError(f"Polygon error {resp.status_code}: " + txt) from e
-    payload = resp.json()
+    all_items = _paginate_get(url, headers=headers, params=params, page_cap=60)
 
-    results = payload.get("results") or payload.get("data") or []
-    if not isinstance(results, list):
-        results = []
-
-    # Underlying price/time if present
-    # Try to detect from any item; fall back to None
+    # Underlying price (if provided in any item)
     S = None
-    ts_unix = int(_time.time())
-    day_high = None
-    day_low = None
-
-    for it in results[:10]:  # quick scan
+    for it in all_items[:20]:
         maybe = _safe_get(it, ["underlying_asset", "price"])
         if maybe is not None:
             S = maybe
             break
-    # If still None, leave as None. Downstream code uses .get() and is robust.
+    ts_unix = int(_time.time())
 
-    # Group contracts by expiration date
-    by_exp: Dict[int, Dict[str, List[Dict[str, Any]]]] = {}
-    expirations_set = set()
+    # Group contracts by expiration
+    by_exp: Dict[int, Dict[str, Any]] = {}
+    expirations = set()
 
-    for it in results:
+    for it in all_items:
         exp_str = (_safe_get(it, ["details", "expiration_date"])
                    or _safe_get(it, ["expiration_date"])
                    or _safe_get(it, ["exp_date"]))
         if not exp_str:
             continue
-        exp_unix = _to_unix(exp_str)
+        exp_unix = _to_unix(str(exp_str)[:10])
         if not exp_unix:
             continue
 
-        # Filter by expiry_unix if provided
-        if expiry_unix and exp_unix != int(expiry_unix):
+        if expiry_unix and int(expiry_unix) != exp_unix:
             continue
 
         ctype = (_safe_get(it, ["details", "contract_type"])
                  or _safe_get(it, ["contract_type"])
-                 or _safe_get(it, ["right"]))  # "call"/"put" or "C"/"P"
-
+                 or _safe_get(it, ["right"]))
         if not ctype:
             continue
 
-        dst = by_exp.setdefault(exp_unix, {"expirationDate": exp_unix, "calls": [], "puts": []})
+        bucket = by_exp.setdefault(exp_unix, {"expirationDate": exp_unix, "calls": [], "puts": []})
+        c_l = str(ctype).lower()
         contract = _contract_dict_from_polygon(it)
-        # Route by type
-        ctype_l = str(ctype).lower()
-        if ctype_l in ("call", "c"):
-            dst["calls"].append(contract)
-        elif ctype_l in ("put", "p"):
-            dst["puts"].append(contract)
+        if c_l in ("call", "c"):
+            bucket["calls"].append(contract)
+        elif c_l in ("put", "p"):
+            bucket["puts"].append(contract)
 
-        expirations_set.add(exp_unix)
+        expirations.add(exp_unix)
 
-    expirationDates = sorted(expirations_set)
-    # Build final "Yahoo-style" structure
+    expirationDates = sorted(expirations)
     chain_obj = {
         "quote": {
             "regularMarketPrice": S,
-            "regularMarketDayHigh": day_high,
-            "regularMarketDayLow": day_low,
+            "regularMarketDayHigh": None,
+            "regularMarketDayLow": None,
             "regularMarketTime": ts_unix,
         },
         "expirationDates": expirationDates,
         "options": [by_exp[e] for e in expirationDates],
     }
-
     out = {"optionChain": {"result": [chain_obj], "error": None}}
-    raw_bytes = resp.content
+    # raw bytes not strictly needed; include minimal
+    raw_bytes = ("pages=" + str(len(all_items))).encode("utf-8")
     return out, raw_bytes
 
 def _debug_endpoint(ticker: str, api_key: str) -> dict:
-    """
-    Minimal probe to check access to snapshots endpoint. Returns a dict with
-    url, status, headers_used(masked), and either json or text.
-    """
     underlying = ticker.strip().upper()
-    if underlying == "SPX" or underlying == "^SPX":
+    if underlying in ("SPX", "^SPX"):
         underlying_symbol = "I:SPX"
     else:
         underlying_symbol = underlying
