@@ -13,6 +13,102 @@ import requests
 
 POLYGON_BASE_URL = "https://api.polygon.io"
 
+def _parse_numeric(*vals):
+    for v in vals:
+        try:
+            if v is None:
+                continue
+            return float(v)
+        except Exception:
+            continue
+    return None
+
+def _get_underlying_price(underlying_symbol: str, headers: dict) -> tuple[float|None, str]:
+    """
+    Try several official Polygon endpoints (read-only) to obtain a factual price for the underlying.
+    Returns: (price_or_None, source_string)
+    We *never* fabricate values.
+    """
+    import requests
+    # 1) Index snapshot for I:* (e.g., I:SPX)
+    if underlying_symbol.startswith("I:"):
+        try:
+            r = requests.get(f"{POLYGON_BASE_URL}/v3/snapshot/indices",
+                             params={"ticker": underlying_symbol},
+                             headers=headers, timeout=20)
+            if r.ok:
+                j = r.json()
+                # v3 indices snapshot may return object or list
+                res = j.get("results")
+                if isinstance(res, list) and res:
+                    res = res[0]
+                if isinstance(res, dict):
+                    price = _parse_numeric(
+                        res.get("price"),
+                        res.get("value"),
+                        (res.get("last") or {}).get("price"),
+                        (res.get("last") or {}).get("value"),
+                    )
+                    if price is not None:
+                        return price, "v3.indices.snapshot"
+        except Exception:
+            pass
+
+    # 2) Stocks snapshot v2 (very stable)
+    try:
+        r = requests.get(f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{underlying_symbol}",
+                         headers=headers, timeout=20)
+        if r.ok:
+            j = r.json()
+            price = _parse_numeric(
+                (j.get("lastTrade") or {}).get("p"),
+                (j.get("lastQuote") or {}).get("p"),
+                ((j.get("day") or {}).get("c")),
+            )
+            if price is not None:
+                return price, "v2.stocks.snapshot"
+    except Exception:
+        pass
+
+    # 3) Stocks snapshot v3 (some plans return it)
+    try:
+        r = requests.get(f"{POLYGON_BASE_URL}/v3/snapshot/stocks",
+                         params={"ticker": underlying_symbol},
+                         headers=headers, timeout=20)
+        if r.ok:
+            j = r.json()
+            res = j.get("results")
+            if isinstance(res, list) and res:
+                res = res[0]
+            if isinstance(res, dict):
+                price = _parse_numeric(
+                    (res.get("last_trade") or {}).get("price"),
+                    (res.get("last_quote") or {}).get("midpoint"),
+                    (res.get("day") or {}).get("close"),
+                    res.get("price"),
+                    res.get("value"),
+                )
+                if price is not None:
+                    return price, "v3.stocks.snapshot"
+    except Exception:
+        pass
+
+    # 4) Previous close as a final factual fallback
+    try:
+        r = requests.get(f"{POLYGON_BASE_URL}/v2/aggs/ticker/{underlying_symbol}/prev",
+                         params={"adjusted": "true"}, headers=headers, timeout=20)
+        if r.ok:
+            j = r.json()
+            results = j.get("results") or []
+            if results and isinstance(results, list):
+                price = _parse_numeric(results[0].get("c"))  # previous close
+                if price is not None:
+                    return price, "v2.prev.close"
+    except Exception:
+        pass
+
+    return None, "unavailable"
+
 def _to_unix(d: str) -> int:
     try:
         return int(_dt.datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc).timestamp())
@@ -94,6 +190,18 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     params = {"limit": 250, "order": "asc", "sort": "ticker"}
 
     items = _paginate(url, headers=headers, params=params, cap=80)
+
+    # --- Determine underlying price S robustly ---
+    S, price_source = None, 'scan'
+    for it in items:
+        ua = it.get('underlying_asset') or {}
+        val = ua.get('price') if isinstance(ua, dict) else None
+        if isinstance(val, (int, float)):
+            S = float(val); break
+    ts_unix = int(_time.time())
+    if S is None:
+        S, price_source = _get_underlying_price(underlying_symbol, headers)
+
     # --- Determine underlying price S robustly ---
     S = None
     for it in items:
@@ -196,5 +304,5 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
         "options": [by_exp[e] for e in expirationDates],
     }
     out = {"optionChain": {"result": [chain_obj], "error": None}}
-    raw_bytes = (f"items={len(items)}").encode("utf-8")
+    raw_bytes = (f"items={len(items)},price_source={price_source}").encode("utf-8")
     return out, raw_bytes
