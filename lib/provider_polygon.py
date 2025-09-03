@@ -13,6 +13,9 @@ import requests
 
 POLYGON_BASE_URL = "https://api.polygon.io"
 
+def _append_api_key(url: str, api_key: str) -> str:
+    return url + (("&" if "?" in url else "?") + f"apiKey={api_key}")
+
 def _parse_numeric(*vals):
     for v in vals:
         try:
@@ -35,7 +38,7 @@ def _get_underlying_price(underlying_symbol: str, headers: dict) -> tuple[float|
         try:
             r = requests.get(f"{POLYGON_BASE_URL}/v3/snapshot/indices",
                              params={"ticker": underlying_symbol},
-                             headers=headers, timeout=20)
+                             timeout=20)
             if r.ok:
                 j = r.json()
                 # v3 indices snapshot may return object or list
@@ -57,7 +60,7 @@ def _get_underlying_price(underlying_symbol: str, headers: dict) -> tuple[float|
     # 2) Stocks snapshot v2 (very stable)
     try:
         r = requests.get(f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{underlying_symbol}",
-                         headers=headers, timeout=20)
+                         timeout=20)
         if r.ok:
             j = r.json()
             price = _parse_numeric(
@@ -74,7 +77,7 @@ def _get_underlying_price(underlying_symbol: str, headers: dict) -> tuple[float|
     try:
         r = requests.get(f"{POLYGON_BASE_URL}/v3/snapshot/stocks",
                          params={"ticker": underlying_symbol},
-                         headers=headers, timeout=20)
+                         timeout=20)
         if r.ok:
             j = r.json()
             res = j.get("results")
@@ -96,7 +99,7 @@ def _get_underlying_price(underlying_symbol: str, headers: dict) -> tuple[float|
     # 4) Previous close as a final factual fallback
     try:
         r = requests.get(f"{POLYGON_BASE_URL}/v2/aggs/ticker/{underlying_symbol}/prev",
-                         params={"adjusted": "true"}, headers=headers, timeout=20)
+                         params={"adjusted": "true"}, timeout=20)
         if r.ok:
             j = r.json()
             results = j.get("results") or []
@@ -159,12 +162,12 @@ def _contract_from_item(item: dict) -> Dict[str, Any]:
         "impliedVolatility": iv,
     }
 
-def _paginate(url: str, headers: dict, params: Optional[dict] = None, cap: int = 60) -> List[dict]:
+def _paginate(url: str, api_key: str, params: Optional[dict] = None, cap: int = 60) -> List[dict]:
     out: List[dict] = []
-    next_url = url
+    next_url = _append_api_key(url, api_key)
     next_params = dict(params or {})
     for _ in range(cap):
-        r = requests.get(next_url, params=next_params, headers=headers, timeout=30)
+        r = requests.get(_append_api_key(next_url, api_key), params=next_params, timeout=30)
         import requests as _requests
         try:
             r.raise_for_status()
@@ -191,13 +194,12 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     else:
         underlying_symbol = underlying
 
-    headers = {"Authorization": f"Bearer {api_key}"}
     url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
-    params = {"limit": 250, "order": "asc", "sort": "ticker"}
+    params = {"limit": 250, "order": "asc", "sort": "ticker", "apiKey": api_key}
     if expiry_unix:
         params["expiration_date"] = _to_iso(int(expiry_unix))
 
-    items = _paginate(url, headers=headers, params=params, cap=80)
+    items = _paginate(url, api_key=api_key, params=params, cap=80)
 
     # --- Determine underlying price S robustly ---
     S, price_source = None, 'scan'
@@ -223,14 +225,14 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
         try:
             if underlying_symbol.startswith("I:"):
                 uurl = f"{POLYGON_BASE_URL}/v3/snapshot/indices"
-                r = requests.get(uurl, params={"ticker": underlying_symbol}, headers=headers, timeout=20)
+                r = requests.get(uurl, params={"ticker": underlying_symbol, "apiKey": api_key}, timeout=20)
             else:
                 # Try v3 stocks snapshot; if fails, try v2 as a backup
                 uurl = f"{POLYGON_BASE_URL}/v3/snapshot/stocks"
-                r = requests.get(uurl, params={"ticker": underlying_symbol}, headers=headers, timeout=20)
+                r = requests.get(uurl, params={"ticker": underlying_symbol, "apiKey": api_key}, timeout=20)
                 if r.status_code == 404 or r.status_code == 400:
                     uurl = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{underlying_symbol}"
-                    r = requests.get(uurl, headers=headers, timeout=20)
+                    r = requests.get(_append_api_key(uurl, api_key), timeout=20)
             # Parse a numeric price from whatever structure we got
             try:
                 j = r.json()
