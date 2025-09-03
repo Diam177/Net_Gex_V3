@@ -4,8 +4,6 @@ import numpy as np
 import time, json, datetime
 
 import importlib, sys
-from lib.provider import debug_meta as provider_debug_meta
-import io, zipfile
 from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
@@ -14,13 +12,11 @@ from lib.plotting import make_figure, _select_atm_window
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
 # === Secrets / env ===
+RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
+RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
-
-# === Provider (early init for sidebar caption) ===
-from lib import provider_polygon as _provider_module_early
-fetch_option_chain = _provider_module_early.fetch_option_chain
-_PROVIDER = "polygon"
-
+# Provider flag for early UI
+_PROVIDER = "polygon" if POLYGON_API_KEY else "rapid"
 
 with st.sidebar:
     # Основные поля
@@ -30,16 +26,6 @@ with st.sidebar:
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
     table_download_placeholder = st.empty()
-
-    # ---- Debug & Download raw data ----
-    with st.expander("Debug / Raw data"):
-        if "last_chain_json" in st.session_state:
-            raw_json = st.session_state["last_chain_json"]
-            st.download_button("Download raw option chain JSON", data=json.dumps(raw_json, indent=2), file_name=f"{ticker}_option_chain.json", mime="application/json")
-        if "last_debug_meta" in st.session_state:
-            meta = st.session_state["last_debug_meta"]
-            st.download_button("Download debug meta", data=json.dumps(meta, indent=2), file_name=f"{ticker}_debug_meta.json", mime="application/json")
-
 
     # ---- Контролы Key Levels (оставили только Interval/Limit) ----
     st.markdown("### Key Levels — Controls")
@@ -53,29 +39,39 @@ raw_bytes = None
 
 
 # === Provider selection ===
-provider_module = importlib.import_module("lib.provider_polygon")
-if "lib.provider_polygon" in sys.modules:
-    importlib.reload(sys.modules["lib.provider_polygon"])
-fetch_option_chain = provider_module.fetch_option_chain
-_PROVIDER = "polygon"
+if POLYGON_API_KEY:
+    provider_module = importlib.import_module("lib.provider_polygon")
+    if "lib.provider_polygon" in sys.modules:
+        importlib.reload(sys.modules["lib.provider_polygon"])
+    fetch_option_chain = provider_module.fetch_option_chain
+    _PROVIDER = "polygon"
+else:
+    provider_module = importlib.import_module("lib.provider")
+    if "lib.provider" in sys.modules:
+        importlib.reload(sys.modules["lib.provider"])
+    fetch_option_chain = provider_module.fetch_option_chain
+    _PROVIDER = "rapid"
 
 @st.cache_data(show_spinner=False, ttl=60)
-def _fetch_chain_cached(ticker, api_key, expiry_unix=None):
-    data, content = fetch_option_chain(ticker, None, api_key, expiry_unix=expiry_unix)
+def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
+    data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
     return data, content
 
 # === Загрузка данных только из API ===
-if (_PROVIDER=="polygon") or (_PROVIDER=="polygon"):
+if (_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and RAPIDAPI_HOST and RAPIDAPI_KEY):
     try:
-        base_json, base_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY, None)
+        base_json, base_bytes = _fetch_chain_cached(
+            ticker,
+            None if _PROVIDER=="polygon" else RAPIDAPI_HOST,
+            POLYGON_API_KEY if _PROVIDER=="polygon" else RAPIDAPI_KEY,
+            None
+        )
         raw_data, raw_bytes = base_json, base_bytes
-        st.session_state['last_chain_json'] = base_json
-        st.session_state['last_chain_bytes'] = base_bytes
         data_status_placeholder.success("Data received")
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса ({_PROVIDER}): {e}")
 else:
-    data_status_placeholder.warning("Укажите POLYGON_API_KEY (или POLYGON_API_KEY+POLYGON_API_KEY) в секретах/ENV.")
+    data_status_placeholder.warning("Укажите POLYGON_API_KEY (или RAPIDAPI_HOST+RAPIDAPI_KEY) в секретах/ENV.")
 
 if raw_data is None:
     st.stop()
@@ -116,15 +112,27 @@ sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index
 selected_exp = expirations[exp_labels.index(sel_label)]
 
 # Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon") or (_PROVIDER=="polygon")):
+if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and RAPIDAPI_HOST and RAPIDAPI_KEY)):
     try:
-        by_date_json, by_date_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY, selected_exp)
+        by_date_json, by_date_bytes = _fetch_chain_cached(
+            ticker,
+            None if _PROVIDER=="polygon" else RAPIDAPI_HOST,
+            POLYGON_API_KEY if _PROVIDER=="polygon" else RAPIDAPI_KEY,
+            selected_exp
+        )
         _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
         blocks_by_date.update(blocks_by_date2)
         raw_bytes = by_date_bytes
     except Exception as e:
         st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
+# Кнопка "Скачать сырой JSON"
+download_placeholder.download_button(
+    "Download JSON",
+    data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
+    file_name=f"{ticker}_{selected_exp}_raw.json",
+    mime="application/json"
+)
 
 # === Контекст для PZ/PZ_FP (all_series_ctx) ===
 all_series_ctx = []
@@ -294,4 +302,4 @@ except Exception:
     pass
 
 # === Key Levels chart ===
-render_key_levels_section(ticker, POLYGON_API_KEY)
+render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
