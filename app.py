@@ -69,6 +69,8 @@ if (_PROVIDER=="polygon") or (_PROVIDER=="polygon"):
     try:
         base_json, base_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY, None)
         raw_data, raw_bytes = base_json, base_bytes
+        st.session_state['last_chain_json'] = base_json
+        st.session_state['last_chain_bytes'] = base_bytes
         data_status_placeholder.success("Data received")
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса ({_PROVIDER}): {e}")
