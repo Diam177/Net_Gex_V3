@@ -14,11 +14,24 @@ st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
 # === Secrets / env ===
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
+from lib import provider as _provider_module_early
+fetch_option_chain = _provider_module_early.fetch_option_chain
+_PROVIDER = "polygon"
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
+from lib import provider as _provider_module_early
+fetch_option_chain = _provider_module_early.fetch_option_chain
+_PROVIDER = "polygon"
+POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
+from lib import provider as _provider_module_early
+fetch_option_chain = _provider_module_early.fetch_option_chain
+_PROVIDER = "polygon"
 POLYGON_API_KEY  = env_or_secret(st, "POLYGON_API_KEY",  None)
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
+from lib import provider as _provider_module_early
+fetch_option_chain = _provider_module_early.fetch_option_chain
+_PROVIDER = "polygon"
 # Provider flag for early UI
-_PROVIDER = "polygon" if POLYGON_API_KEY else "rapid"
+_PROVIDER = "polygon" if POLYGON_API_KEY else "polygon"
 
 with st.sidebar:
     # Основные поля
@@ -47,7 +60,7 @@ def _fetch_chain_cached(ticker, POLYGON_API_KEY):
     return data, content
 
 # === Загрузка данных только из API ===
-if (_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and POLYGON_API_KEY):
+if (_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="polygon" and POLYGON_API_KEY):
     try:
         base_json, base_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY)
         raw_data, raw_bytes = base_json, base_bytes
@@ -96,7 +109,7 @@ sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index
 selected_exp = expirations[exp_labels.index(sel_label)]
 
 # Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and POLYGON_API_KEY)):
+if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="polygon" and POLYGON_API_KEY)):
     try:
         by_date_json, by_date_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY)
         _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
