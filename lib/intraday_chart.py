@@ -87,6 +87,41 @@ def _build_rth_ticks_for_date(session_date_et: pd.Timestamp):
     ticktext = [t.strftime("%H:%M") for t in ticks_et]
     return tickvals, ticktext
 
+
+
+def _fetch_polygon_candles(ticker: str, api_key: str, interval: str="1m", limit: int=640):
+    import requests, time, datetime as _dt
+    # Map SPX for Polygon
+    poly_symbol = "I:SPX" if ticker.upper() in ("SPX", "^SPX") else ticker.upper()
+    # Determine multiplier and timespan
+    interval_map = {"1m": (1, "minute"), "5m": (5, "minute")}
+    mult, timespan = interval_map.get(interval, (1, "minute"))
+    # Build time range in ms
+    now = _dt.datetime.utcnow()
+    minutes = int(limit) * mult
+    start = now - _dt.timedelta(minutes=minutes+5)  # small buffer
+    to_ms = int(now.timestamp() * 1000)
+    from_ms = int(start.timestamp() * 1000)
+    url = f"https://api.polygon.io/v2/aggs/ticker/{poly_symbol}/range/{mult}/{timespan}/{from_ms}/{to_ms}"
+    r = requests.get(url, params={"adjusted": "true", "sort": "asc", "limit": int(limit), "apiKey": api_key}, timeout=20)
+    r.raise_for_status()
+    j = r.json()
+    results = j.get("results") or []
+    # Normalize to list of dicts compatible with _normalize_candles_json
+    out = []
+    for rec in results:
+        try:
+            out.append({
+                "t": int(rec.get("t", 0) // 1000),  # ms -> s
+                "o": rec.get("o"),
+                "h": rec.get("h"),
+                "l": rec.get("l"),
+                "c": rec.get("c"),
+                "v": rec.get("v"),
+            })
+        except Exception:
+            continue
+    return out
 def _filter_session_for_date(dfc: pd.DataFrame, session_date_et: pd.Timestamp) -> pd.DataFrame:
     if dfc.empty: return dfc
     if session_date_et.tz is None:
@@ -134,6 +169,15 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))
         except Exception as e:
             st.error(f"Request error: {e}")
+
+    if candles_json is None:
+        # Try Polygon aggregates if RapidAPI creds are absent
+        poly_key = st.secrets.get("POLYGON_API_KEY", os.environ.get("POLYGON_API_KEY"))
+        if poly_key:
+            try:
+                candles_json = _fetch_polygon_candles(ticker, poly_key, interval=interval, limit=int(limit))
+            except Exception as e:
+                pass
 
     if candles_json is None:
         st.warning("No data for Key Levels (нужны RAPIDAPI_HOST/RAPIDAPI_KEY).")
