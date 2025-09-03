@@ -14,6 +14,12 @@ st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 # === Secrets / env ===
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 
+# === Provider (early init for sidebar caption) ===
+from lib import provider_polygon as _provider_module_early
+fetch_option_chain = _provider_module_early.fetch_option_chain
+_PROVIDER = "polygon"
+
+
 with st.sidebar:
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
