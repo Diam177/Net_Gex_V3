@@ -8,8 +8,8 @@ import streamlit as st
 from .provider import fetch_stock_history, debug_meta
 
 @st.cache_data(show_spinner=False, ttl=60)
-def _fetch_candles_cached(ticker: str, api_key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
-    data, content = fetch_stock_history(ticker, None, api_key, interval=interval, limit=int(limit), dividend=dividend)
+def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
+    data, content = fetch_stock_history(ticker, host, key, interval=interval, limit=int(limit), dividend=dividend)
     return data, content
 
 def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
@@ -100,7 +100,7 @@ def _filter_session_for_date(dfc: pd.DataFrame, session_date_et: pd.Timestamp) -
     mask = (d["ts"] >= start_utc) & (d["ts"] <= end_utc)
     return d.loc[mask].reset_index(drop=True)
 
-def render_key_levels_section(ticker: str, api_key: Optional[str]) -> None:
+def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
     st.subheader("Key Levels")
 
     # === Переключатель над чартом ===
@@ -129,14 +129,14 @@ def render_key_levels_section(ticker: str, api_key: Optional[str]) -> None:
             candles_json = None
             candles_bytes = None
 
-    if candles_json is None and api_key:
+    if candles_json is None and rapid_host and rapid_key:
         try:
-            candles_json, candles_bytes = _fetch_candles_cached(ticker, api_key, interval=interval, limit=int(limit))
+            candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))
         except Exception as e:
             st.error(f"Request error: {e}")
 
     if candles_json is None:
-        st.warning("No data for Key Levels (нужен POLYGON_API_KEY).")
+        st.warning("No data for Key Levels (нужны RAPIDAPI_HOST/RAPIDAPI_KEY).")
         return
 
     dfc = _normalize_candles_json(candles_json)
