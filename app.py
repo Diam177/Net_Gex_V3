@@ -123,32 +123,6 @@ if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon") or (_PROVIDER=
     except Exception as e:
         st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
-# Кнопка "Скачать сырой JSON"
-download_placeholder.download_button(
-    "Download JSON",
-    data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
-    file_name=f"{ticker}_{selected_exp}_raw.json",
-    mime="application/json"
-)
-
-# Кнопка "Download provider debug (zip)" — meta + raw response
-try:
-    _meta = provider_debug_meta() or {}
-    _meta.update({"provider": _PROVIDER, "ticker": ticker, "selected_expiry_unix": int(selected_exp), "fetched_at": datetime.datetime.utcnow().isoformat()+ "Z"})
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("meta.json", json.dumps(_meta, ensure_ascii=False, indent=2))
-        resp_bytes = raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8")
-        z.writestr("response.json", resp_bytes)
-    dbg_zip = buf.getvalue()
-    table_download_placeholder.download_button(
-        "Download provider debug (zip)",
-        data=dbg_zip,
-        file_name=f"{ticker}_{selected_exp}_provider_debug.zip",
-        mime="application/zip"
-    )
-except Exception as _e:
-    pass
 
 # === Контекст для PZ/PZ_FP (all_series_ctx) ===
 all_series_ctx = []
