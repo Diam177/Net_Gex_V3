@@ -202,11 +202,11 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     if S is None:
         S, price_source = _get_underlying_price(underlying_symbol, headers)
 
-    # --- Determine underlying price S robustly ---
-    S = None
-    for it in items:
-        ua = it.get('underlying_asset') or {}
-        val = ua.get('price') if isinstance(ua, dict) else None
+    # --- Secondary attempt to determine S (only if still None) ---
+    if S is None:
+        for it in items:
+            ua = it.get('underlying_asset') or {}
+            val = ua.get('price') if isinstance(ua, dict) else None
         if isinstance(val, (int, float)):
             S = float(val); break
     ts_unix = int(_time.time())
@@ -260,6 +260,22 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
 
 
         # (price S determined above)
+
+    # Final fallback: if S is still None, try previous close via aggs
+    if S is None:
+        try:
+            r = requests.get(f"{POLYGON_BASE_URL}/v2/aggs/ticker/{underlying_symbol}/prev",
+                             headers=headers, timeout=20)
+            if r.ok:
+                j = r.json() or {}
+                res = j.get('results')
+                if isinstance(res, list) and res:
+                    v = res[0].get('c') or res[0].get('close')
+                    if v is not None:
+                        S = float(v)
+                        price_source = (price_source + '|aggs_prev') if 'price_source' in locals() else 'aggs_prev'
+        except Exception:
+            pass
     ts_unix = int(_time.time())
 
     # Group by expiration
