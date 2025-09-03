@@ -1,268 +1,317 @@
 # -*- coding: utf-8 -*-
 """
-Polygon provider adapter → "Yahoo-style" option chain format for this app.
-Мы не меняем числовые значения, а только приводим структуру к формату,
-который ожидает compute.extract_core_from_chain().
-
-Главная функция: fetch_option_chain(ticker, host, key, expiry_unix=None) -> (json_like, raw_bytes)
-- ticker: базовый актив, напр. "SPY"
-- host: не используется (для совместимости с существующим кодом)
-- key: POLYGON_API_KEY
-- expiry_unix: если задан, то фильтруем по expiration_date (UTC, YYYY-MM-DD)
+Polygon provider adapter -> "Yahoo-style" option chain format for this app.
+We DO NOT change numeric values; only re-map fields into the schema
+expected by compute.extract_core_from_chain().
 """
 from __future__ import annotations
 
-from typing import Dict, Any, List, Optional, Tuple
 import datetime as _dt
 import time as _time
+from typing import Dict, Any, List, Tuple, Optional
 import requests
 
 POLYGON_BASE_URL = "https://api.polygon.io"
-DEFAULT_TIMEOUT = 25
 
-def _to_iso_date_from_unix(ts_unix: int) -> str:
-    return _dt.datetime.utcfromtimestamp(int(ts_unix)).strftime("%Y-%m-%d")
-
-def _to_unix_from_iso(s: str) -> int:
-    # Polygon даёт expiration_date в формате YYYY-MM-DD (UTC)
-    dt = _dt.datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc)
-    return int(dt.timestamp())
-
-def _append_api_key(url: str, api_key: str) -> str:
-    return (url + ("&" if ("?" in url) else "?") + f"apiKey={api_key}")
-
-def _get_underlying_price(ticker: str, api_key: str) -> Tuple[Optional[float], Optional[int], str]:
-    """
-    Пытаемся аккуратно получить цену базового актива S и timestamp t0.
-    Делаем несколько попыток (с наименьшими правками кода):
-      1) /v2/last/trade/{ticker}
-      2) /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
-      3) /v2/aggs/ticker/{ticker}/prev (yesterday close)
-    Возвращаем: (S, ts_unix, source_tag)
-    """
-    # 1) last trade
-    try:
-        u = f"{POLYGON_BASE_URL}/v2/last/trade/{ticker}"
-        resp = requests.get(u, params={"apiKey": api_key}, timeout=DEFAULT_TIMEOUT)
-        if resp.ok:
-            j = resp.json()
-            # Новые ответы: {"results":{"p": 123.45, "t": 169...}, "status":"success"}
-            res = j.get("results") or {}
-            p = res.get("p") or res.get("price")
-            t = res.get("t") or res.get("timestamp")
-            if p is not None:
-                ts_unix = int(int(t)/1_000_000_000) if isinstance(t, int) and t>1e12 else (int(t) if t is not None else int(_time.time()))
-                return float(p), ts_unix, "last_trade"
-    except Exception:
-        pass
-
-    # 2) stocks snapshot
-    try:
-        u = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
-        resp = requests.get(u, params={"apiKey": api_key}, timeout=DEFAULT_TIMEOUT)
-        if resp.ok:
-            j = resp.json()
-            t = j.get("ticker") or j.get("results") or {}
-            # Пытаемся взять последнюю цену / время
-            last = (t.get("lastTrade") or t.get("last_quote") or t.get("last")) or {}
-            p = last.get("p") or last.get("price") or last.get("P")
-            ts = last.get("t") or last.get("timestamp")
-            if p is None:
-                # иногда дают close в day
-                day = t.get("day") or {}
-                p = day.get("c") or day.get("close")
-                ts = day.get("t") or day.get("timestamp") or ts
-            if p is not None:
-                ts_unix = int(int(ts)/1_000_000_000) if isinstance(ts, int) and ts>1e12 else (int(ts) if ts is not None else int(_time.time()))
-                return float(p), ts_unix, "stock_snapshot"
-    except Exception:
-        pass
-
-    # 3) previous close (agg)
-    try:
-        u = f"{POLYGON_BASE_URL}/v2/aggs/ticker/{ticker}/prev"
-        resp = requests.get(u, params={"apiKey": api_key, "adjusted": "true"}, timeout=DEFAULT_TIMEOUT)
-        if resp.ok:
-            j = resp.json()
-            results = j.get("results") or []
-            if results:
-                r0 = results[0]
-                p = r0.get("c") or r0.get("close")
-                ts = r0.get("t")
-                ts_unix = int(int(ts)/1_000) if isinstance(ts, int) and ts>1e12 else (int(ts) if ts is not None else int(_time.time()))
-                if p is not None:
-                    return float(p), ts_unix, "prev_close"
-    except Exception:
-        pass
-
-    return None, None, "none"
-
-def _list_snapshot_options_chain(ticker: str, api_key: str, expiration_date: Optional[str]) -> Tuple[List[dict], dict]:
-    """
-    Стягивает все страницы /v3/snapshot/options/{ticker} c пагинацией.
-    Возвращает: (items, debug_meta)
-    """
-    items: List[dict] = []
-    debug = {"attempt": "v3.snapshot.options", "pages": []}
-
-    params = {
-        "order": "asc",
-        "limit": 250,      # максимум у Polygon
-        "sort": "ticker",
-    }
-    if expiration_date:
-        params["expiration_date"] = expiration_date
-
-    url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{ticker}"
-    while True:
-        resp = requests.get(url, params={**params, "apiKey": api_key}, timeout=DEFAULT_TIMEOUT)
-        page_meta = {"url": resp.url, "ok": resp.ok, "status_code": resp.status_code}
-        debug["pages"].append(page_meta)
-
-        if not resp.ok:
-            raise RuntimeError(f"Polygon snapshot request failed: {resp.status_code} {resp.text[:200]}")
-
-        j = resp.json()
-        page_items = j.get("results") or []
-        if not isinstance(page_items, list):
-            break
-        items.extend(page_items)
-
-        next_url = j.get("next_url")
-        if not next_url:
-            break
-        # В next_url обычно нет apiKey
-        url = _append_api_key(next_url, api_key)
-        params = {}  # дальнейшие параметры уже "встроены" в next_url
-
-    return items, debug
-
-def _remap_to_yahoo_like(items: List[dict],
-                         S: Optional[float],
-                         ts_unix: Optional[int]) -> Dict[str, Any]:
-    """
-    Преобразуем список конрактов Polygon в структуру "как у Yahoo":
-    {
-      "optionChain": {
-        "result": [{
-            "quote": {...},
-            "expirationDates": [...],
-            "options": [{
-               "expirationDate": "YYYY-MM-DD",
-               "calls": [...],
-               "puts":  [...]
-            }, ...]
-        }],
-        "error": null
-      }
-    }
-    """
-    # Группируем по дате экспирации
-    by_exp: Dict[str, Dict[str, Any]] = {}
-    expirations_unix: List[int] = []
-
-    def _push(exp: str, kind: str, rec: Dict[str, Any]):
-        blk = by_exp.setdefault(exp, {"expirationDate": exp, "calls": [], "puts": []})
-        blk["calls" if kind == "call" else "puts"].append(rec)
-
-    for it in items:
-        details = it.get("details") or {}
-        day     = it.get("day") or {}
-        ctype   = (details.get("contract_type") or "").lower()
-        if ctype not in ("call", "put"):
-            continue
-        strike = details.get("strike_price")
-        exp    = details.get("expiration_date")  # "YYYY-MM-DD"
-        if strike is None or not exp:
-            continue
-
-        # Веса/объёмы/IV
-        oi  = it.get("open_interest")
-        vol = day.get("volume")
-        iv  = it.get("implied_volatility")
-
-        # price/last не обязателен для нашего расчёта, добавим если есть
-        last_trade = it.get("last_trade") or {}
-        last_price = last_trade.get("price") or last_trade.get("p")
-
-        rec = {
-            "contractSymbol": details.get("ticker"),
-            "strike": float(strike),
-            "openInterest": int(oi or 0),
-            "volume": int(vol or 0),
-            "impliedVolatility": float(iv) if (iv is not None) else None,
-            "lastPrice": float(last_price) if (last_price is not None) else None,
-            # Yahoo-подобное поле (строка ок)
-            "expiration": exp,
-        }
-        _push(exp, ctype, rec)
-
-    # Список экспираций: в юникс-секундах (так ожидает наш UI)
-    expirations_sorted = sorted(by_exp.keys())
-    for e in expirations_sorted:
+def _parse_numeric(*vals):
+    for v in vals:
         try:
-            expirations_unix.append(_to_unix_from_iso(e))
+            if v is None:
+                continue
+            return float(v)
         except Exception:
-            # если вдруг формат не как YYYY-MM-DD, пропустим
+            continue
+    return None
+
+def _get_underlying_price(underlying_symbol: str, headers: dict) -> tuple[float|None, str]:
+    """
+    Try several official Polygon endpoints (read-only) to obtain a factual price for the underlying.
+    Returns: (price_or_None, source_string)
+    We *never* fabricate values.
+    """
+    import requests
+    # 1) Index snapshot for I:* (e.g., I:SPX)
+    if underlying_symbol.startswith("I:"):
+        try:
+            r = requests.get(f"{POLYGON_BASE_URL}/v3/snapshot/indices",
+                             params={"ticker": underlying_symbol},
+                             headers=headers, timeout=20)
+            if r.ok:
+                j = r.json()
+                # v3 indices snapshot may return object or list
+                res = j.get("results")
+                if isinstance(res, list) and res:
+                    res = res[0]
+                if isinstance(res, dict):
+                    price = _parse_numeric(
+                        res.get("price"),
+                        res.get("value"),
+                        (res.get("last") or {}).get("price"),
+                        (res.get("last") or {}).get("value"),
+                    )
+                    if price is not None:
+                        return price, "v3.indices.snapshot"
+        except Exception:
             pass
 
-    # quote + время
-    now_unix = int(_time.time())
-    q_time = int(ts_unix or now_unix)
-    q_price = float(S) if (S is not None) else None
+    # 2) Stocks snapshot v2 (very stable)
+    try:
+        r = requests.get(f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{underlying_symbol}",
+                         headers=headers, timeout=20)
+        if r.ok:
+            j = r.json()
+            price = _parse_numeric(
+                (j.get("lastTrade") or {}).get("p"),
+                (j.get("lastQuote") or {}).get("p"),
+                ((j.get("day") or {}).get("c")),
+            )
+            if price is not None:
+                return price, "v2.stocks.snapshot"
+    except Exception:
+        pass
 
+    # 3) Stocks snapshot v3 (some plans return it)
+    try:
+        r = requests.get(f"{POLYGON_BASE_URL}/v3/snapshot/stocks",
+                         params={"ticker": underlying_symbol},
+                         headers=headers, timeout=20)
+        if r.ok:
+            j = r.json()
+            res = j.get("results")
+            if isinstance(res, list) and res:
+                res = res[0]
+            if isinstance(res, dict):
+                price = _parse_numeric(
+                    (res.get("last_trade") or {}).get("price"),
+                    (res.get("last_quote") or {}).get("midpoint"),
+                    (res.get("day") or {}).get("close"),
+                    res.get("price"),
+                    res.get("value"),
+                )
+                if price is not None:
+                    return price, "v3.stocks.snapshot"
+    except Exception:
+        pass
+
+    # 4) Previous close as a final factual fallback
+    try:
+        r = requests.get(f"{POLYGON_BASE_URL}/v2/aggs/ticker/{underlying_symbol}/prev",
+                         params={"adjusted": "true"}, headers=headers, timeout=20)
+        if r.ok:
+            j = r.json()
+            results = j.get("results") or []
+            if results and isinstance(results, list):
+                price = _parse_numeric(results[0].get("c"))  # previous close
+                if price is not None:
+                    return price, "v2.prev.close"
+    except Exception:
+        pass
+
+    return None, "unavailable"
+
+def _to_iso(ts: int) -> str:
+    try:
+        return _dt.datetime.utcfromtimestamp(int(ts)).strftime('%Y-%m-%d')
+    except Exception:
+        return ''
+
+def _to_unix(d: str) -> int:
+    try:
+        return int(_dt.datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc).timestamp())
+    except Exception:
+        return 0
+
+def _safe_get(d: dict, path: List[str], default=None):
+    cur = d
+    for p in path:
+        if isinstance(cur, dict) and p in cur:
+            cur = cur[p]
+        else:
+            return default
+    return cur
+
+def _contract_from_item(item: dict) -> Dict[str, Any]:
+    strike = (_safe_get(item, ["details", "strike_price"])
+              or _safe_get(item, ["strike_price"])
+              or _safe_get(item, ["details", "strike"])
+              or _safe_get(item, ["strike"]))
+    try:
+        strike = float(strike)
+    except Exception:
+        strike = None
+
+    open_interest = (_safe_get(item, ["open_interest"])
+                     or _safe_get(item, ["oi"])
+                     or _safe_get(item, ["openInterest"]))
+
+    volume = (_safe_get(item, ["day", "volume"])
+              or _safe_get(item, ["volume"])
+              or _safe_get(item, ["day", "v"]))
+
+    iv = (_safe_get(item, ["greeks", "iv"])
+          or _safe_get(item, ["implied_volatility"])
+          or _safe_get(item, ["iv"]))
+
+    return {
+        "strike": strike,
+        "openInterest": open_interest,
+        "volume": volume,
+        "impliedVolatility": iv,
+    }
+
+def _paginate(url: str, headers: dict, params: Optional[dict] = None, cap: int = 60) -> List[dict]:
+    out: List[dict] = []
+    next_url = url
+    next_params = dict(params or {})
+    for _ in range(cap):
+        r = requests.get(next_url, params=next_params, headers=headers, timeout=30)
+        import requests as _requests
+        try:
+            r.raise_for_status()
+        except _requests.HTTPError as e:
+            txt = r.text[:1200]
+            raise RuntimeError(f"Polygon HTTP {r.status_code}: {txt}") from e
+        j = r.json()
+        batch = j.get("results") or j.get("data") or []
+        if isinstance(batch, list):
+            out.extend(batch)
+        nxt = j.get("next_url") or j.get("next")
+        if not nxt:
+            break
+        next_url, next_params = nxt, None  # next_url already includes query
+    return out
+
+def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, expiry_unix: Optional[int] = None) -> Tuple[Dict[str, Any], bytes]:
+    if not api_key:
+        raise ValueError("POLYGON_API_KEY is empty")
+
+    underlying = ticker.strip().upper()
+    if underlying in ("SPX", "^SPX"):
+        underlying_symbol = "I:SPX"
+    else:
+        underlying_symbol = underlying
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
+    params = {"limit": 250, "order": "asc", "sort": "ticker"}
+    if expiry_unix:
+        params["expiration_date"] = _to_iso(int(expiry_unix))
+
+    items = _paginate(url, headers=headers, params=params, cap=80)
+
+    # --- Determine underlying price S robustly ---
+    S, price_source = None, 'scan'
+    for it in items:
+        ua = it.get('underlying_asset') or {}
+        val = ua.get('price') if isinstance(ua, dict) else None
+        if isinstance(val, (int, float)):
+            S = float(val); break
+    ts_unix = int(_time.time())
+    if S is None:
+        S, price_source = _get_underlying_price(underlying_symbol, headers)
+
+    # --- Determine underlying price S robustly ---
+    S = None
+    for it in items:
+        ua = it.get('underlying_asset') or {}
+        val = ua.get('price') if isinstance(ua, dict) else None
+        if isinstance(val, (int, float)):
+            S = float(val); break
+    ts_unix = int(_time.time())
+    if S is None:
+        # Fallback: query underlying snapshot (stock or index)
+        try:
+            if underlying_symbol.startswith("I:"):
+                uurl = f"{POLYGON_BASE_URL}/v3/snapshot/indices"
+                r = requests.get(uurl, params={"ticker": underlying_symbol}, headers=headers, timeout=20)
+            else:
+                # Try v3 stocks snapshot; if fails, try v2 as a backup
+                uurl = f"{POLYGON_BASE_URL}/v3/snapshot/stocks"
+                r = requests.get(uurl, params={"ticker": underlying_symbol}, headers=headers, timeout=20)
+                if r.status_code == 404 or r.status_code == 400:
+                    uurl = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{underlying_symbol}"
+                    r = requests.get(uurl, headers=headers, timeout=20)
+            # Parse a numeric price from whatever structure we got
+            try:
+                j = r.json()
+            except Exception:
+                j = {}
+            # common places
+            cand = []
+            if isinstance(j.get("results"), dict):
+                cand.append(j["results"].get("last").get("price") if isinstance(j["results"].get("last"), dict) else j["results"].get("price"))
+                cand.append(j["results"].get("value"))
+                cand.append(j["results"].get("p"))
+                cand.append(j["results"].get("close"))
+            if isinstance(j.get("results"), list) and j["results"]:
+                # take first dict and look for common keys
+                rr = j["results"][0]
+                if isinstance(rr, dict):
+                    cand += [rr.get(k) for k in ("price","value","p","close","last","c")]
+
+            # some v2 structures
+            if "ticker" in j and isinstance(j.get("lastTrade"), dict):
+                cand.append(j["lastTrade"].get("p"))
+            if isinstance(j.get("last"), dict):
+                cand.append(j["last"].get("price"))
+
+            for v in cand:
+                try:
+                    if v is None: 
+                        continue
+                    S = float(v)
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            S = None
+
+
+        # (price S determined above)
+    ts_unix = int(_time.time())
+
+    # Group by expiration
+    by_exp: Dict[int, Dict[str, Any]] = {}
+    expirations = set()
+    for it in items:
+        exp_str = (_safe_get(it, ["details", "expiration_date"])
+                   or _safe_get(it, ["expiration_date"])
+                   or _safe_get(it, ["exp_date"]))
+        if not exp_str:
+            continue
+        exp_unix = _to_unix(str(exp_str)[:10])
+        if not exp_unix:
+            continue
+        if expiry_unix and int(expiry_unix) != exp_unix:
+            continue
+
+        ctype = (_safe_get(it, ["details", "contract_type"])
+                 or _safe_get(it, ["contract_type"])
+                 or _safe_get(it, ["right"]))
+        if not ctype:
+            continue
+
+        bucket = by_exp.setdefault(exp_unix, {"expirationDate": exp_unix, "calls": [], "puts": []})
+        c_l = str(ctype).lower()
+        contract = _contract_from_item(it)
+        if c_l in ("call", "c"):
+            bucket["calls"].append(contract)
+        elif c_l in ("put", "p"):
+            bucket["puts"].append(contract)
+        expirations.add(exp_unix)
+
+    expirationDates = sorted(expirations)
     chain_obj = {
         "quote": {
-            "regularMarketPrice": q_price,
+            "regularMarketPrice": S,
             "regularMarketDayHigh": None,
             "regularMarketDayLow": None,
-            "regularMarketTime": q_time,
+            "regularMarketTime": ts_unix,
         },
-        "expirationDates": expirations_unix,
-        "options": [by_exp[e] for e in expirations_sorted],
+        "expirationDates": expirationDates,
+        "options": [by_exp[e] for e in expirationDates],
     }
-    return {"optionChain": {"result": [chain_obj], "error": None}}
-
-def fetch_option_chain(ticker: str,
-                       host: Optional[str],
-                       key: str,
-                       expiry_unix: Optional[int] = None) -> Tuple[Dict[str, Any], bytes]:
-    """
-    Главная точка входа для приложения.
-    1) тянем option chain snapshot (возможно с фильтром по expiration_date)
-    2) тянем цену базового актива S (несколько стратегий)
-    3) собираем Yahoo-подобный JSON
-    4) raw_bytes — это "сырые" данные провайдера Polygon: полный список items в исходном виде
-    """
-    if not key:
-        raise RuntimeError("POLYGON_API_KEY is missing")
-
-    expiration_date = None
-    if expiry_unix:
-        expiration_date = _to_iso_date_from_unix(int(expiry_unix))
-
-    # 1) вся цепочка (с пагинацией)
-    items, debug_meta = _list_snapshot_options_chain(ticker, key, expiration_date)
-
-    # 2) цена подложки
-    S, ts_unix, price_source = _get_underlying_price(ticker, key)
-
-    # 3) нормализуем в "Yahoo-формат"
-    out_json = _remap_to_yahoo_like(items, S, ts_unix)
-
-    # 4) сырые байты провайдера для кнопки скачивания
-    #    НЕ режем содержимое, чтобы пользователь получил оригинальные данные
-    try:
-        raw_dump = {
-            "endpoint": "v3/snapshot/options",
-            "ticker": ticker,
-            "expiration_date": expiration_date,
-            "price_source": price_source,
-            "items": items,
-            "debug": debug_meta,
-        }
-        raw_bytes = json.dumps(raw_dump, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
-    except Exception as e:
-        raw_bytes = f"[polygon_raw_build_error] {e}".encode("utf-8")
-
-    return out_json, raw_bytes
+    out = {"optionChain": {"result": [chain_obj], "error": None}}
+    import json
+    raw_bytes = json.dumps({"endpoint":"v3/snapshot/options","ticker": underlying_symbol, "items": items, "price_source": price_source}, ensure_ascii=False).encode("utf-8")
+    return out, raw_bytes
