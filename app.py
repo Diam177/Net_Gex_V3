@@ -4,6 +4,8 @@ import numpy as np
 import time, json, datetime
 
 import importlib, sys
+from lib.provider import debug_meta as provider_debug_meta
+import io, zipfile
 from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
@@ -28,6 +30,16 @@ with st.sidebar:
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
     table_download_placeholder = st.empty()
+
+    # ---- Debug & Download raw data ----
+    with st.expander("Debug / Raw data"):
+        if "last_chain_json" in st.session_state:
+            raw_json = st.session_state["last_chain_json"]
+            st.download_button("Download raw option chain JSON", data=json.dumps(raw_json, indent=2), file_name=f"{ticker}_option_chain.json", mime="application/json")
+        if "last_debug_meta" in st.session_state:
+            meta = st.session_state["last_debug_meta"]
+            st.download_button("Download debug meta", data=json.dumps(meta, indent=2), file_name=f"{ticker}_debug_meta.json", mime="application/json")
+
 
     # ---- Контролы Key Levels (оставили только Interval/Limit) ----
     st.markdown("### Key Levels — Controls")
@@ -118,6 +130,25 @@ download_placeholder.download_button(
     file_name=f"{ticker}_{selected_exp}_raw.json",
     mime="application/json"
 )
+
+# Кнопка "Download provider debug (zip)" — meta + raw response
+try:
+    _meta = provider_debug_meta() or {}
+    _meta.update({"provider": _PROVIDER, "ticker": ticker, "selected_expiry_unix": int(selected_exp), "fetched_at": datetime.datetime.utcnow().isoformat()+ "Z"})
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("meta.json", json.dumps(_meta, ensure_ascii=False, indent=2))
+        resp_bytes = raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8")
+        z.writestr("response.json", resp_bytes)
+    dbg_zip = buf.getvalue()
+    table_download_placeholder.download_button(
+        "Download provider debug (zip)",
+        data=dbg_zip,
+        file_name=f"{ticker}_{selected_exp}_provider_debug.zip",
+        mime="application/zip"
+    )
+except Exception as _e:
+    pass
 
 # === Контекст для PZ/PZ_FP (all_series_ctx) ===
 all_series_ctx = []
