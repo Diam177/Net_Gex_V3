@@ -180,6 +180,15 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                 pass
 
     if candles_json is None:
+        # Polygon fallback if RapidAPI creds are absent
+        poly_key = st.secrets.get("POLYGON_API_KEY", os.environ.get("POLYGON_API_KEY"))
+        if poly_key:
+            try:
+                candles_json = _fetch_polygon_candles(ticker, poly_key, interval=interval, limit=int(limit))
+            except Exception:
+                pass
+
+    if candles_json is None:
         st.warning("No data for Key Levels (нужны RAPIDAPI_HOST/RAPIDAPI_KEY).")
         return
 
