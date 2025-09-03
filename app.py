@@ -131,6 +131,15 @@ if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon" and POLYGON_API
 download_placeholder.download_button(
     "Download JSON",
     data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
+
+# Доп. кнопка: сырые данные от Polygon
+if _PROVIDER == "polygon":
+    download_polygon_placeholder.download_button(
+        "Download Polygon JSON",
+        data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=f"{ticker}_{selected_exp}_polygon_raw.json",
+        mime="application/json"
+    )
     file_name=f"{ticker}_{selected_exp}_raw.json",
     mime="application/json"
 )
@@ -158,6 +167,9 @@ day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
 # === Метрики для выбранной экспирации ===
+if selected_exp not in blocks_by_date:
+    st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
+    st.stop()
 metrics = compute_series_metrics_for_expiry(
     S=S, t0=t0, expiry_unix=selected_exp,
     block=blocks_by_date[selected_exp],
