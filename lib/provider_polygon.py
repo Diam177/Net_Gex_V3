@@ -87,9 +87,7 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
         r = requests.get(u, params={"ticker": symbol, "apiKey": api_key}, timeout=15)
         if r.ok:
             j = r.json()
-            res = j.get("results")
-            if isinstance(res, list):
-                res = res[0] if res else {}
+            res = j.get("results") or {}
             if isinstance(res, dict):
                 cand = []
                 if isinstance(res.get("last"), dict):
@@ -106,9 +104,7 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
         r = requests.get(u, params={"ticker": symbol, "apiKey": api_key}, timeout=15)
         if r.ok:
             j = r.json()
-            res = j.get("results")
-            if isinstance(res, list):
-                res = res[0] if res else {}
+            res = j.get("results") or {}
             if isinstance(res, dict):
                 cand = []
                 if isinstance(res.get("last"), dict):
@@ -120,23 +116,6 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
     except Exception:
         pass
     # 3) v2 snapshot stock
-    # 3b) v2 snapshot indices (for I:SPX and similar)
-    try:
-        if symbol.startswith('I:'):
-            u = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/indices/tickers/{symbol}"
-            r = requests.get(_append_key(u, api_key), timeout=15)
-            if r.ok:
-                j = r.json() or {}
-                last = j.get('last') or j.get('lastTrade') or {}
-                p = last.get('price') or last.get('p')
-                if p is None and isinstance(j.get('day'), dict):
-                    p = j['day'].get('close') or j['day'].get('c')
-                if p is not None:
-                    return float(p), int(_time.time()), "v2.snapshot.indices"
-    except Exception:
-        pass
-
-# 3) v2 snapshot stock
     try:
         u = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
         r = requests.get(_append_key(u, api_key), timeout=15)
@@ -214,8 +193,10 @@ def _remap_chain(items: List[dict], S: Optional[float], ts_unix: int) -> Dict[st
         "optionChain": {
             "result": [{
                 "regularMarketPrice": float(S) if S is not None else None,
+                    "regularMarketPreviousClose": float(S) if S is not None else None,
                 "quote": {
                     "regularMarketPrice": float(S) if S is not None else None,
+                    "regularMarketPreviousClose": float(S) if S is not None else None,
                     "regularMarketDayHigh": None,
                     "regularMarketDayLow": None,
                     "regularMarketTime": int(ts_unix),
@@ -253,11 +234,7 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     ts = int(_time.time())
     price_source = "items.underlying_asset"
     if S is None:
-        _s2, _ts2, _ps = _price_fallback(poly_symbol, api_key)
-        if _s2 is not None:
-            S = _s2
-            ts = _ts2 if _ts2 is not None else ts
-        price_source = _ps
+        S, ts, price_source = _price_fallback(poly_symbol, api_key)
 
     # Build normalized json
     out_json = _remap_chain(items, S, ts)
