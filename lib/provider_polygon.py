@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Polygon provider adapter → Yahoo-like JSON expected by compute.extract_core_from_chain().
-- Uses ONLY query param apiKey (no headers).
+- Uses ONLY query param apiKey (no headers). Avoids duplicate apiKey.
 - Robust price fallback incl. indices snapshot for SPX (I:SPX).
 """
 from typing import Dict, Any, List, Optional, Tuple
@@ -36,7 +36,8 @@ def _to_iso(ts_unix: int) -> str:
 def _paginate(url: str, api_key: str, params: Optional[dict] = None, cap: int = 80) -> List[dict]:
     out: List[dict] = []
     next_url = _append_key(url, api_key)
-    next_params = dict(params or {})
+    # strip apiKey if случайно оказался в params
+    next_params = {k: v for k, v in (params or {}).items() if k.lower() != "apikey"}
     for _ in range(cap):
         r = requests.get(next_url, params=next_params, timeout=30)
         r.raise_for_status()
@@ -216,7 +217,7 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
 
     # Load options chain
     url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{poly_symbol}"
-    params = {"limit": 250, "order": "asc", "sort": "ticker", "apiKey": api_key}
+    params = {"limit": 250, "order": "asc", "sort": "ticker"}
     exp_iso = None
     if expiry_unix:
         exp_iso = _to_iso(int(expiry_unix))
