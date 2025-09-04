@@ -8,7 +8,6 @@ from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
-from lib.provider_table import render_provider_strike_table
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
@@ -301,13 +300,6 @@ try:
     st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
     pass
-
-
-# === Provider table by strike ===
-try:
-    render_provider_strike_table(blocks_by_date, selected_exp)
-except Exception as _e:
-    st.warning(f"Не удалось построить таблицу провайдера: {_e}")
 
 # === Key Levels chart ===
 render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
