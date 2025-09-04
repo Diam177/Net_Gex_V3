@@ -87,7 +87,9 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
         r = requests.get(u, params={"ticker": symbol, "apiKey": api_key}, timeout=15)
         if r.ok:
             j = r.json()
-            res = j.get("results") or {}
+            res = j.get("results")
+            if isinstance(res, list):
+                res = res[0] if res else {}
             if isinstance(res, dict):
                 cand = []
                 if isinstance(res.get("last"), dict):
@@ -104,7 +106,9 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
         r = requests.get(u, params={"ticker": symbol, "apiKey": api_key}, timeout=15)
         if r.ok:
             j = r.json()
-            res = j.get("results") or {}
+            res = j.get("results")
+            if isinstance(res, list):
+                res = res[0] if res else {}
             if isinstance(res, dict):
                 cand = []
                 if isinstance(res.get("last"), dict):
@@ -231,7 +235,11 @@ def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, ex
     ts = int(_time.time())
     price_source = "items.underlying_asset"
     if S is None:
-        S, ts, price_source = _price_fallback(poly_symbol, api_key)
+        _s2, _ts2, _ps = _price_fallback(poly_symbol, api_key)
+        if _s2 is not None:
+            S = _s2
+            ts = _ts2 if _ts2 is not None else ts
+        price_source = _ps
 
     # Build normalized json
     out_json = _remap_chain(items, S, ts)
