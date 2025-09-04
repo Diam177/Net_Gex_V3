@@ -120,6 +120,23 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
     except Exception:
         pass
     # 3) v2 snapshot stock
+    # 3b) v2 snapshot indices (for I:SPX and similar)
+    try:
+        if symbol.startswith('I:'):
+            u = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/indices/tickers/{symbol}"
+            r = requests.get(_append_key(u, api_key), timeout=15)
+            if r.ok:
+                j = r.json() or {}
+                last = j.get('last') or j.get('lastTrade') or {}
+                p = last.get('price') or last.get('p')
+                if p is None and isinstance(j.get('day'), dict):
+                    p = j['day'].get('close') or j['day'].get('c')
+                if p is not None:
+                    return float(p), int(_time.time()), "v2.snapshot.indices"
+    except Exception:
+        pass
+
+# 3) v2 snapshot stock
     try:
         u = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
         r = requests.get(_append_key(u, api_key), timeout=15)
@@ -196,6 +213,7 @@ def _remap_chain(items: List[dict], S: Optional[float], ts_unix: int) -> Dict[st
     return {
         "optionChain": {
             "result": [{
+                "regularMarketPrice": float(S) if S is not None else None,
                 "quote": {
                     "regularMarketPrice": float(S) if S is not None else None,
                     "regularMarketDayHigh": None,
