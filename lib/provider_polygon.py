@@ -221,8 +221,8 @@ def fetch_option_chain(ticker: str,
         S = _scan_underlying_price_from_items(items)
         ts_unix = int(_time.time())
         price_source = "items.underlying_asset"
-out_json = _remap_to_yahoo_like(items, S, ts_unix)
-
+    out_json = _remap_to_yahoo_like(items, S, ts_unix)
+    
     # 4) сырые байты провайдера
     raw_dump = {
         "endpoint": "/v3/snapshot/options",
@@ -236,7 +236,7 @@ out_json = _remap_to_yahoo_like(items, S, ts_unix)
     return out_json, raw_bytes
 
 
-# ------------- stock candles (intraday) -------------
+    # ------------- stock candles (intraday) -------------
 
 def fetch_stock_history(ticker: str,
                         host_unused: Optional[str],
