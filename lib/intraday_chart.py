@@ -5,7 +5,40 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from .provider import fetch_stock_history, debug_meta
+# Legacy import (Rapid) — guard it and provide Polygon fallback
+try:
+    from .provider import fetch_stock_history, debug_meta  # type: ignore
+except Exception:
+    import requests as _req
+    import datetime as _dt
+    def debug_meta():
+        return {}
+    def fetch_stock_history(ticker, host_unused=None, api_key=None, interval='1m', limit=640):
+        if api_key is None:
+            import os as _os
+            api_key = _os.environ.get('POLYGON_API_KEY')
+            try:
+                import streamlit as _st
+                api_key = _st.secrets.get('POLYGON_API_KEY', api_key)
+            except Exception:
+                pass
+        if not api_key:
+            raise RuntimeError('POLYGON_API_KEY is missing')
+        sym = 'I:SPX' if (ticker or '').strip().upper() in ('SPX','^SPX') else (ticker or '').strip().upper()
+        _imap = {'1m':(1,'minute'),'2m':(2,'minute'),'5m':(5,'minute'),'15m':(15,'minute'),
+                 '30m':(30,'minute'),'1h':(60,'minute'),'1d':(1,'day')}
+        mult, span = _imap.get(interval, (1,'minute'))
+        to_ms = int(_dt.datetime.utcnow().timestamp()*1000)
+        from_ms = to_ms - 5*24*60*60*1000
+        url = f'https://api.polygon.io/v2/aggs/ticker/{sym}/range/{mult}/{span}/{from_ms}/{to_ms}'
+        r = _req.get(url, params={'adjusted':'true','sort':'asc','limit':int(limit),'apiKey':api_key}, timeout=20)
+        r.raise_for_status()
+        res = r.json().get('results') or []
+        out = []
+        for it in res[-int(limit):]:
+            out.append({'t': int(it.get('t',0)), 'o': it.get('o'), 'h': it.get('h'), 'l': it.get('l'), 'c': it.get('c'), 'v': it.get('v')})
+        return out
+
 
 @st.cache_data(show_spinner=False, ttl=60)
 def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
