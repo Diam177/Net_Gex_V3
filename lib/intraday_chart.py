@@ -1,306 +1,236 @@
+# -*- coding: utf-8 -*-
 import os
+import math
+import time
 import json
-from typing import Optional, Dict, Any
+import requests
+import datetime as _dt
+from dateutil import tz
+
 import pandas as pd
-import plotly.graph_objects as go
+import numpy as np
 import streamlit as st
+import plotly.graph_objects as go
 
-from .provider import fetch_stock_history, debug_meta
+# =====================================================================================
+# Helpers: time & formatting
+# =====================================================================================
+NY_TZ = tz.gettz("America/New_York")
 
-@st.cache_data(show_spinner=False, ttl=60)
-def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
-    data, content = fetch_stock_history(ticker, host, key, interval=interval, limit=int(limit), dividend=dividend)
-    return data, content
+def _now_utc():
+    return _dt.datetime.utcnow().replace(tzinfo=tz.UTC)
 
+def _today_ny(dt_utc=None):
+    """Return date (YYYY-MM-DD) for New York based on provided UTC time (or now)."""
+    dt_utc = dt_utc or _now_utc()
+    return dt_utc.astimezone(NY_TZ).date()
 
-def _normalize_candles_json(candles_json):
+def _session_bounds_local(local_tz, day=None):
     """
-    Normalize various candle payload shapes to a list of dicts with:
-    {'ts': pandas.Timestamp, 'open': float, 'high': float, 'low': float, 'close': float, 'volume': float}
-    Supports:
-      - Polygon.io Aggregates: {'results':[{'t':ms,'o':...,'h':...,'l':...,'c':...,'v':...}, ...]}
-      - RapidAPI style: {'candles':[{'timestamp_unix':.. or 'timestamp':.. or 't':.., 'open':..,'high':..,'low':..,'close':..,'volume':..}, ...]}
+    Build today's regular session [9:30, 16:00] in user's local timezone.
     """
-    import pandas as pd
-    rows = []
+    day = day or _dt.datetime.now(tz=local_tz).date()
+    start_local = _dt.datetime(day.year, day.month, day.day, 9, 30, tzinfo=local_tz)
+    end_local   = _dt.datetime(day.year, day.month, day.day, 16, 0, tzinfo=local_tz)
+    return start_local, end_local
 
-    if not candles_json:
-        return rows
-
-    # Detect container
-    items = None
-    if isinstance(candles_json, dict):
-        if 'results' in candles_json and isinstance(candles_json['results'], list):
-            items = candles_json['results']
-        elif 'candles' in candles_json and isinstance(candles_json['candles'], list):
-            items = candles_json['candles']
-        else:
-            # maybe raw list already
-            if isinstance(candles_json.get('data'), list):
-                items = candles_json['data']
-    if items is None and isinstance(candles_json, list):
-        items = candles_json
-
-    def to_ts(v):
-        # supports seconds or milliseconds unix, or ISO string
-        if v is None:
-            return pd.NaT
-        try:
-            v = int(str(v)[:13])  # keep ms if provided
-            if v > 10_000_000_000:  # ms
-                return pd.to_datetime(v, unit='ms', utc=True).tz_convert('America/New_York')
-            else:
-                return pd.to_datetime(v, unit='s', utc=True).tz_convert('America/New_York')
-        except Exception:
-            try:
-                return pd.to_datetime(v).tz_convert('America/New_York')
-            except Exception:
-                return pd.NaT
-
-    if items:
-        for it in items:
-            t = it.get('t') or it.get('timestamp_unix') or it.get('timestamp') or it.get('time') or it.get('ts')
-            o = it.get('o') or it.get('open')
-            h = it.get('h') or it.get('high')
-            l = it.get('l') or it.get('low')
-            c = it.get('c') or it.get('close')
-            v = it.get('v') or it.get('volume')
-            rows.append({'ts': to_ts(t), 'open': _to_float(o), 'high': _to_float(h), 'low': _to_float(l), 'close': _to_float(c), 'volume': _to_float(v)})
-
-    # drop bad timestamps
-    rows = [r for r in rows if pd.notna(r['ts'])]
-    return rows
-
-
-def _filter_session_for_date(dfc: pd.DataFrame, session_date_et: pd.Timestamp) -> pd.DataFrame:
-    if dfc.empty: return dfc
-    if session_date_et.tz is None:
-        session_date_et = session_date_et.tz_localize("America/New_York")
-    start_et = session_date_et + pd.Timedelta(hours=9, minutes=30)
-    end_et   = session_date_et + pd.Timedelta(hours=16)
-    start_utc = start_et.tz_convert("UTC")
-    end_utc   = end_et.tz_convert("UTC")
-    d = dfc.sort_values("ts").copy()
-    d["ts"] = pd.to_datetime(d["ts"], utc=True)
-    mask = (d["ts"] >= start_utc) & (d["ts"] <= end_utc)
-    return d.loc[mask].reset_index(drop=True)
-
-def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key: Optional[str]) -> None:
-    st.subheader("Key Levels")
-
-    # === Переключатель над чартом ===
-    st.toggle("Last session", value=st.session_state.get("kl_last_session", False), key="kl_last_session")
-
-    # Значения Interval/Limit берём из session_state (они в сайдбаре)
-    interval = st.session_state.get("kl_interval", "1m")
+def _fmt_date_for_caption(dt_local):
     try:
-        limit = int(st.session_state.get("kl_limit", 640))
+        return dt_local.strftime("%b %-d, %Y")
     except Exception:
-        limit = 640
-    last_session = bool(st.session_state.get("kl_last_session", False))
+        # Windows-compatible (no %-d)
+        return dt_local.strftime("%b %d, %Y")
 
-    # --- Получение данных (без загрузчика файлов и debug) ---
-    candles_json, candles_bytes = None, None
+# =====================================================================================
+# Polygon fetchers
+# =====================================================================================
+POLYGON_BASE = "https://api.polygon.io"
 
-    test_path = "/mnt/data/TEST ENDPOINT.TXT"
-    if os.path.exists(test_path):
-        try:
-            with open(test_path, "rb") as f:
-                tb = f.read()
-            candles_json = json.loads(tb.decode("utf-8"))
-            candles_bytes = tb
-            st.info("Using local test file: TEST ENDPOINT.TXT")
-        except Exception:
-            candles_json = None
-            candles_bytes = None
+def _polygon_symbol(symbol: str) -> str:
+    s = (symbol or "").strip().upper()
+    return "I:SPX" if s in ("SPX", "^SPX") else s
 
-    if candles_json is None and rapid_host and rapid_key:
-        try:
-            candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))
-        except Exception as e:
-            st.error(f"Request error: {e}")
+def _fetch_polygon_candles(symbol: str, api_key: str, interval="1m", limit=640):
+    """
+    Fetch minute candles using polygon v2 aggs endpoint.
+    Returns list of dicts with keys: t (ms), o, h, l, c, v.
+    """
+    sym = _polygon_symbol(symbol)
+    interval_map = {
+        "1m": (1, "minute"),
+        "2m": (2, "minute"),
+        "5m": (5, "minute"),
+        "15m": (15, "minute"),
+        "30m": (30, "minute"),
+        "1h": (60, "minute"),
+        "1d": (1, "day"),
+    }
+    mult, timespan = interval_map.get(interval, (1, "minute"))
 
-    if candles_json is None:
-        st.warning("No data for Key Levels (нужны RAPIDAPI_HOST/RAPIDAPI_KEY).")
-        return
+    # Define a from/to around now to get the most recent limit bars
+    to_ts = int(_now_utc().timestamp() * 1000)
+    # Over-request enough history; polygon returns the most recent bars within range when 'sort=desc'
+    # Use ~5 days back for minute bars to be safe
+    from_ts = to_ts - 5 * 24 * 60 * 60 * 1000
 
-    dfc = _normalize_candles_json(candles_json)
-    if dfc.empty:
-        st.warning("Candles are empty or not recognized.")
-        return
+    url = f"{POLYGON_BASE}/v2/aggs/ticker/{sym}/range/{mult}/{timespan}/{from_ts}/{to_ts}"
+    params = {"limit": limit, "sort": "desc", "apiKey": api_key}
+    r = requests.get(url, params=params, timeout=20)
+    r.raise_for_status()
+    js = r.json()
+    results = js.get("results") or []
+    # we want newest at bottom (asc), limit N
+    results = list(reversed(results))[-limit:]
+    # remap to common keys
+    out = []
+    for it in results:
+        out.append({
+            "t": int(it.get("t")),
+            "o": float(it.get("o")) if it.get("o") is not None else None,
+            "h": float(it.get("h")) if it.get("h") is not None else None,
+            "l": float(it.get("l")) if it.get("l") is not None else None,
+            "c": float(it.get("c")) if it.get("c") is not None else None,
+            "v": float(it.get("v")) if it.get("v") is not None else None,
+        })
+    return out
 
-    session_date_et = pd.Timestamp.now(tz="America/New_York").normalize()
+# =====================================================================================
+# Normalization & VWAP
+# =====================================================================================
+def _normalize_candles_json(candles_json, local_tz):
+    rows = []
+    for item in candles_json or []:
+        ts = item.get("t") or item.get("timestamp") or item.get("ts")
+        if ts is None:
+            continue
+        # polygon gives ms
+        if ts > 10_000_000_000:
+            ts_ms = int(ts)
+        else:
+            ts_ms = int(ts * 1000)
+        dt_utc = _dt.datetime.utcfromtimestamp(ts_ms/1000.0).replace(tzinfo=tz.UTC)
+        dt_local = dt_utc.astimezone(local_tz)
+        rows.append({
+            "ts": ts_ms,
+            "dt_local": dt_local,
+            "o": item.get("o") or item.get("open"),
+            "h": item.get("h") or item.get("high"),
+            "l": item.get("l") or item.get("low"),
+            "c": item.get("c") or item.get("close"),
+            "v": item.get("v") or item.get("volume"),
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # ensure numeric
+    for col in ["o","h","l","c","v"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["dt_local"]).sort_values("dt_local").reset_index(drop=True)
+    # VWAP (typical price variant)
+    tp = (df["h"] + df["l"] + df["c"]).astype(float) / 3.0
+    v = df["v"].astype(float).fillna(0.0)
+    cum_v = v.cumsum().replace(0, np.nan)
+    cum_pv = (tp * v).cumsum()
+    df["vwap"] = (cum_pv / cum_v).ffill()
+    return df
 
-    if last_session:
-        df_plot = _take_last_session(dfc, gap_minutes=60)
-        has_candles = not df_plot.empty
-        if not has_candles:
-            st.warning("Could not detect last session.")
-            return
-    else:
-        df_plot = _filter_session_for_date(dfc, session_date_et)
-        has_candles = not df_plot.empty
-
-    if has_candles:
-        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
-        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
-        x_mid = df_plot["ts"].iloc[len(df_plot)//2]
-    else:
-        tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
-        x0, x1 = tickvals[0], tickvals[-1]
-        x_mid = tickvals[len(tickvals)//2]
-
-    # VWAP
-    if has_candles:
-        vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
-        tp = (pd.to_numeric(df_plot["high"], errors="coerce") + pd.to_numeric(df_plot["low"], errors="coerce") + pd.to_numeric(df_plot["close"], errors="coerce")) / 3.0
-        cum_vol = vol.cumsum()
-        vwap = (tp.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
-        vwap = vwap.fillna(method="ffill")
-    else:
-        vwap = None
+# =====================================================================================
+# Plotting
+# =====================================================================================
+def _make_keylevels_figure(df: pd.DataFrame, local_tz, show_last_session=False, levels: dict | None = None):
+    # Determine session bounds in user's local time
+    day = df["dt_local"].iloc[-1].date() if not df.empty else _dt.datetime.now(tz=local_tz).date()
+    ses_start, ses_end = _session_bounds_local(local_tz, day)
 
     fig = go.Figure()
-    if has_candles:
+
+    if not df.empty:
+        # restrict to last regular session if requested
+        if show_last_session:
+            df = df[(df["dt_local"] >= ses_start) & (df["dt_local"] <= ses_end)].copy()
+
+        # Candlesticks
         fig.add_trace(go.Candlestick(
-            x=df_plot["ts"], open=df_plot["open"], high=df_plot["high"],
-            low=df_plot["low"], close=df_plot["close"], name="Price"
+            x=df["dt_local"],
+            open=df["o"], high=df["h"], low=df["l"], close=df["c"],
+            name="Price"
         ))
-    if has_candles and vwap is not None:
-        fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
+        # VWAP line
+        if "vwap" in df.columns and df["vwap"].notna().any():
+            fig.add_trace(go.Scatter(
+                x=df["dt_local"], y=df["vwap"], name="VWAP", mode="lines"
+            ))
+    else:
+        # no data → draw empty session window
+        xs = [ses_start, ses_end]
+        ys = [np.nan, np.nan]
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", name="Price"))
 
-    # Key Levels
-    levels = dict(st.session_state.get("first_chart_max_levels", {})) if isinstance(st.session_state.get("first_chart_max_levels", {}), dict) else {}
-
-    def _fmt_int(x):
-        try: return f"{int(round(float(x)))}"
-        except Exception: return str(x)
-
-    try:
-        from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
-        _cmap = {
-            "max_pos_gex": POS_COLOR,
-            "max_neg_gex": NEG_COLOR,
-            "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
-            "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
-            "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2D83FF"),
-            "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#8C5A0A"),
-            "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
-            "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
-            "gflip":       "#AAAAAA",
-        }
-    except Exception:
-        _cmap = {}
-
-    def _add_line(tag, label):
-        y = levels.get(tag)
-        if y is None: return
-        fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[y, y], mode="lines",
-            name=f"{label} ({_fmt_int(y)})",
-            line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
-            hoverinfo="skip", showlegend=True
-        ))
-
-    _add_line("max_neg_gex", "Max Neg GEX")
-    _add_line("max_pos_gex", "Max Pos GEX")
-    _add_line("put_oi_max",  "Max Put OI")
-    _add_line("call_oi_max", "Max Call OI")
-    _add_line("put_vol_max", "Max Put Volume")
-    _add_line("call_vol_max","Max Call Volume")
-    _add_line("ag_max",      "AG")
-    _add_line("pz_max",      "PZ")
-    _add_line("gflip",       "G-Flip")
-
-    # Сводные подписи при совпадении уровней
-    try:
-        order_pairs = [
-            ("max_neg_gex", "Max Neg GEX"),
-            ("max_pos_gex", "Max Pos GEX"),
-            ("put_oi_max",  "Max Put OI"),
-            ("call_oi_max", "Max Call OI"),
-            ("put_vol_max", "Max Put Volume"),
-            ("call_vol_max","Max Call Volume"),
-            ("ag_max",      "AG"),
-            ("pz_max",      "PZ"),
-            ("gflip",       "G-Flip"),
-        ]
-        groups = {}
-        for tag, label in order_pairs:
-            y = levels.get(tag)
-            if y is None: continue
-            key = float(y)
-            groups.setdefault(key, []).append(label)
-        for y, labels in groups.items():
-            if len(labels) >= 2:
-                fig.add_annotation(
-                    x=x_mid, y=y, xref="x", yref="y",
-                    text=" + ".join(labels), showarrow=False,
-                    xanchor="center", yshift=12, align="center",
-                    bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
-                    borderwidth=1, font=dict(size=11)
-                )
-    except Exception:
-        pass
-
-    # Надпись "Market closed"
-    if not has_candles and not last_session:
-        try: x_center = x0 + (x1 - x0) / 2
-        except Exception: x_center = x_mid
-        y_vals = []
-        for tag in ("max_neg_gex","max_pos_gex","put_oi_max","call_oi_max","put_vol_max","call_vol_max","ag_max","pz_max","gflip"):
-            v = levels.get(tag)
-            if isinstance(v, (int,float)): y_vals.append(float(v))
-        y_center = (min(y_vals)+max(y_vals))/2.0 if y_vals else 0.0
         fig.add_annotation(
-            x=x_center, y=y_center, xref="x", yref="y",
-            text="Market closed", showarrow=False,
-            xanchor="center", yanchor="middle", align="center",
-            font=dict(size=36, color="rgba(255,255,255,0.2)"),
-            bgcolor="rgba(0,0,0,0)"
+            x=ses_start + (ses_end - ses_start) / 2,
+            yref="paper", y=0.5,
+            text="Market closed",
+            showarrow=False, font=dict(size=16)
         )
 
+    # Horizontal levels from first chart (if present)
+    levels = levels or {}
+    for key, color in [("max_pos_gex", "#2FD06F"), ("max_neg_gex", "#FF3B30"), ("gflip", "#B0B8C5")]:
+        val = levels.get(key)
+        if val is None:
+            continue
+        fig.add_hline(y=val, line=dict(color=color, width=1, dash="dash"), opacity=0.8)
+
+    # Layout
     fig.update_layout(
-        height=640, margin=dict(l=90, r=20, t=50, b=50),
-        xaxis_title="Time", yaxis_title="Price",
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        dragmode=False, hovermode=False,
-        plot_bgcolor="#161B22", paper_bgcolor="#161B22",
-        font=dict(color="white"), template=None
+        margin=dict(l=40, r=10, t=40, b=40),
+        xaxis_title=_fmt_date_for_caption(ses_start.astimezone(local_tz)),
+        yaxis_title="Price",
+        xaxis=dict(
+            showgrid=True,
+            tickformat="%H:%M",
+            range=[ses_start, ses_end]
+        ),
+        dragmode="pan"
     )
-    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
-    fig.update_yaxes(fixedrange=True)
-    fig.update_layout(xaxis_rangeslider_visible=False)
+    return fig
 
-    # Дата под осью
+# =====================================================================================
+# Public section
+# =====================================================================================
+def render_key_levels_section(ticker: str):
+    """
+    Render Key Levels (intraday candles + VWAP + horizontal levels) using Polygon only.
+    - API key from st.secrets['POLYGON_API_KEY'] or env.
+    - Interval & Limit taken from st.session_state['kl_interval'/'kl_limit'] if present.
+    - When no intraday data yet (before open), we still render the frame for the session.
+    """
+    local_tz = tz.gettz()  # user's local tz
+    api_key = st.secrets.get("POLYGON_API_KEY", os.environ.get("POLYGON_API_KEY"))
+
+    st.subheader("Key Levels")
+
+    if not api_key:
+        st.info("No POLYGON_API_KEY provided — cannot fetch intraday candles.")
+        return
+
+    # Read controls defined in app sidebar
+    interval = st.session_state.get("kl_interval", "1m")
+    limit = int(st.session_state.get("kl_limit", 640) or 640)
+
+    # Toggle above chart (kept by spec)
+    show_last_session = st.toggle("Last session", value=False, key="kl_last_session_hdr")
+
+    candles = []
     try:
-        if has_candles:
-            _ts0 = df_plot["ts"].iloc[0]
-            _ts0 = pd.to_datetime(_ts0, utc=True) if getattr(_ts0, "tzinfo", None) is None else _ts0
-            _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
-        else:
-            _date_text = session_date_et.strftime("%b %d, %Y")
-        fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
-    except Exception:
-        pass
+        candles = _fetch_polygon_candles(ticker, api_key, interval=interval, limit=limit)
+    except Exception as e:
+        st.warning(f"Polygon error: {e}")
 
-    fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
+    df = _normalize_candles_json(candles, local_tz=local_tz)
 
-    st.download_button(
-        "Скачать JSON (Key Levels)",
-        data=candles_bytes if isinstance(candles_bytes, (bytes,bytearray)) else json.dumps(candles_json, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name=f"{ticker}_{interval}_candles.json",
-        mime="application/json",
-        key="kl_download"
-    )
+    # Horizontal levels from first chart (if available)
+    levels = st.session_state.get("first_chart_max_levels", {}) if isinstance(st.session_state.get("first_chart_max_levels", {}), dict) else {}
 
-
-def _to_float(x):
-    try:
-        if x is None or (isinstance(x,str) and x.strip()=='' ):
-            return None
-        return float(x)
-    except Exception:
-        return None
+    fig = _make_keylevels_figure(df, local_tz, show_last_session=show_last_session, levels=levels)
+    st.plotly_chart(fig, use_container_width=True)
