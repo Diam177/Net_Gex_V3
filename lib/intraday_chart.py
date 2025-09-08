@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from .provider import fetch_stock_history, debug_meta
-from Data import DATA
 
 @st.cache_data(show_spinner=False, ttl=60)
 def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
@@ -175,13 +174,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         vwap = vwap.fillna(method="ffill")
     else:
         vwap = None
-
-    # Save to data store
-    try:
-        DATA.set_intraday(dfc, day_high=(df_plot['high'].max() if has_candles else None),
-                           day_low=(df_plot['low'].min() if has_candles else None))
-    except Exception:
-        pass
 
     fig = go.Figure()
     if has_candles:
