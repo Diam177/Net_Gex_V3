@@ -1,9 +1,9 @@
-
-# lib/provider.py — Polygon-only implementation
+# lib/provider.py
 from __future__ import annotations
-import time
+
 import json
 from typing import Any, Dict, List, Optional, Tuple
+
 import requests
 import datetime
 
@@ -12,182 +12,312 @@ DEFAULT_TIMEOUT = 20
 # Debug state container
 DEBUG_STATE: Dict[str, Any] = {'last': {}}
 
-def debug_meta() -> Dict[str, Any]:
-    return DEBUG_STATE.get('last', {})
+def _normalize_candles_payload(raw_json: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Нормализация форматов ответа по историческим свечам (intraday).
+    Возвращает {"records": List[dict], "root": <path-string>} без модификации значений.
+    Поддерживает:
+      - {"meta": {...}, "body": [ {timestamp/timestamp_unix, open, high, low, close, volume}, ... ]}
+      - {"data": {..., "items": [...]}} / {"result": {...}} / {"candles": [...]}
+    """
+    # 1) Прямой формат: meta/body
+    body = raw_json.get("body")
+    if isinstance(body, list) and body and isinstance(body[0], dict):
+        return {"records": body, "root": "body"}
 
-def _request_json(url: str, params: Dict[str, Any], api_key: Optional[str]) -> Tuple[Dict[str, Any], bytes]:
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    r = requests.get(url, params=params, headers=headers, timeout=DEFAULT_TIMEOUT)
-    r.raise_for_status()
+    # 2) data.items
+    data = raw_json.get("data")
+    if isinstance(data, dict):
+        items = data.get("items") or data.get("body") or data.get("candles")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return {"records": items, "root": "data.items|body|candles"}
+
+    # 3) result.candles
+    result = raw_json.get("result")
+    if isinstance(result, dict):
+        items = result.get("candles") or result.get("items") or result.get("body")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return {"records": items, "root": "result.candles|items|body"}
+
+    # 4) candles на верхнем уровне
+    items = raw_json.get("candles")
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        return {"records": items, "root": "candles"}
+
+    # Fallback: если пришёл массив верхнего уровня
+    if isinstance(raw_json, list):
+        return {"records": raw_json, "root": "<list>"}
+
+    return {"records": [], "root": "locate_failed"}
+
+
+def fetch_stock_history(ticker: str,
+                        host: str,
+                        api_key: str,
+                        interval: str = "1m",
+                        limit: int = 640,
+                        dividend: Optional[bool] = None,
+                        timeout: int = DEFAULT_TIMEOUT) -> Tuple[Dict[str, Any], bytes]:
+    """
+    Получить исторические свечи у провайдера RapidAPI YH Finance:
+    GET https://{host}/api/v2/markets/stock/history?symbol=...&interval=...&limit=...
+    Возвращаем (json_dict, raw_bytes) без преобразований.
+    """
+    base_url = f"https://{host}"
+    url = f"{base_url}/api/v2/markets/stock/history"
+    params = {"symbol": ticker, "interval": interval, "limit": int(limit)}
+    if dividend is not None:
+        params["dividend"] = "true" if dividend else "false"
+
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": host,
+        "Accept": "application/json",
+    }
+
+    meta = {
+        "when": datetime.datetime.utcnow().isoformat() + "Z",
+        "endpoint": url,
+        "params": params.copy(),
+        "headers": {"X-RapidAPI-Host": host},
+        "ok": False,
+        "error": None,
+    }
+
+    try:
+        r = requests.get(url, headers=headers, params=params, timeout=timeout)
+        raw_bytes = r.content
+        r.raise_for_status()
+        data = r.json()
+        meta["ok"] = True
+
+        # Для отладки сохраним короткую сводку
+        payload = _normalize_candles_payload(data)
+        meta["records"] = len(payload.get("records", []))
+        meta["root_path"] = payload.get("root", "?")
+        DEBUG_STATE['last'] = meta
+
+        return data, raw_bytes
+    except Exception as e:
+        meta["error"] = str(e)
+        DEBUG_STATE['last'] = meta
+        raise
+
+# Глобальная «память» для отладочной панели в UI (через контейнер)
+
+def debug_meta() -> Dict[str, Any]:
+    """Вернуть отладочную мета-информацию о последнем запросе к провайдеру."""
+    return dict(DEBUG_STATE.get('last', {}))
+
+
+# ---------- утилиты http/json ----------
+
+def _request_json(url: str, headers: dict, params: dict, timeout: int) -> Tuple[dict, bytes]:
+    """GET → JSON (+ исходные байты). Ошибку сервера отдаём компактно."""
+    r = requests.get(url, headers=headers, params=params, timeout=timeout)
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} {url} {params} -> {r.text[:200]}")
     try:
         return r.json(), r.content
     except Exception:
-        return {"raw": r.text}, r.content
+        # на всякий случай раскодируем вручную (не трогаем исходные байты)
+        return json.loads(r.content.decode("utf-8", errors="ignore")), r.content
 
-def _unix_from_datestr(s: str) -> int:
-    # s: 'YYYY-MM-DD' (Polygon expiration)
-    dt = datetime.datetime.strptime(s, "%Y-%m-%d")
-    # interpret at 00:00:00 UTC of that date
-    return int(datetime.datetime(dt.year, dt.month, dt.day, tzinfo=datetime.timezone.utc).timestamp())
 
-def _group_snapshot_results_by_expiration(results: List[Dict[str, Any]]) -> Tuple[List[int], Dict[int, Dict[str, Any]]]:
-    by_exp: Dict[int, Dict[str, Any]] = {}
-    exps: set[int] = set()
-    for it in (results or []):
-        det = it.get("details", {}) or {}
-        day = it.get("day", {}) or {}
-        k = det.get("strike_price")
-        if k is None: 
-            continue
-        k = float(k)
-        exp_str = det.get("expiration_date")
-        if not exp_str:
-            continue
-        exp_unix = _unix_from_datestr(exp_str)
-        exps.add(exp_unix)
-        typ = (det.get("contract_type") or "").lower()
-        # normalize fields
-        row = {
-            "strike": k,
-            "openInterest": int(it.get("open_interest") or 0),
-            "volume": int(day.get("volume") or 0),
-            "impliedVolatility": float(it.get("implied_volatility")) if it.get("implied_volatility") is not None else None,
-        }
-        blk = by_exp.setdefault(exp_unix, {"expirationDate": exp_unix, "calls": [], "puts": []})
-        if typ == "call":
-            blk["calls"].append(row)
-        elif typ == "put":
-            blk["puts"].append(row)
-        else:
-            # skip unknown
-            pass
-    return sorted(exps), by_exp
-
-def _fetch_underlying_quote_polygon(ticker: str, api_key: str) -> Tuple[Dict[str, Any], float, int, List[Dict[str, Any]]]:
-    # Try snapshot -> if fails, use previous close
-    attempts: List[Dict[str, Any]] = []
-    S = None; t0 = None; quote: Dict[str, Any] = {}
-    # 1) Try last trade (works for both stocks and indices)
-    url = f"https://api.polygon.io/v2/last/trade/{ticker}"
+def _locate_root_mutable(chain_json: dict) -> Tuple[dict, str]:
+    """
+    Находим «корень» с полями вида quote / expirationDates / options[..].
+    Поддерживаем несколько реальных форматов провайдера.
+    """
+    # 1) Классический Yahoo
     try:
-        js, _ = _request_json(url, {}, api_key)
-        attempts.append({"url": url, "ok": True})
-        pr = js.get("results", {}).get("p") if isinstance(js.get("results"), dict) else js.get("last", {}).get("price")
-        ts = js.get("results", {}).get("t") if isinstance(js.get("results"), dict) else js.get("last", {}).get("sip_timestamp")
-        if pr is not None:
-            S = float(pr)
-        if ts is not None:
-            t0 = int(int(ts)/1_000_000_000) if isinstance(ts, int) and ts > 10**12 else int(ts)
-    except Exception as e:
-        attempts.append({"url": url, "ok": False, "err": str(e)})
-    # 2) Fallback: previous close aggregate
-    if S is None or t0 is None:
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev"
+        res = chain_json.get("optionChain", {}).get("result", [])
+        if isinstance(res, list) and res:
+            return res[0], "optionChain.result[0]"
+    except Exception:
+        pass
+
+    # 2) body
+    body = chain_json.get("body", None)
+    if isinstance(body, list) and body:
+        return body[0], "body[0]"
+    if isinstance(body, dict):
+        return body, "body"
+
+    # 3) data
+    data = chain_json.get("data", None)
+    if isinstance(data, list) and data:
+        return data[0], "data[0]"
+    if isinstance(data, dict):
+        return data, "data"
+
+    # 4) result
+    res2 = chain_json.get("result", None)
+    if isinstance(res2, list) and res2:
+        return res2[0], "result[0]"
+    if isinstance(res2, dict):
+        return res2, "result"
+
+    # 5) запасной — сам корень, если это dict
+    if isinstance(chain_json, dict):
+        return chain_json, "<root>"
+
+    raise RuntimeError("Cannot locate root in chain JSON")
+
+
+def _price_in_quote(root: dict) -> Tuple[Optional[float], Optional[int], str]:
+    """
+    Проверяем, есть ли числовая цена в root['quote'] или root['underlying'].
+    Ничего не скачиваем дополнительно и не придумываем.
+    """
+    def _extract(q: dict) -> Tuple[Optional[float], Optional[int]]:
+        price = None
+        for k in ("regularMarketPrice", "postMarketPrice", "last", "lastPrice",
+                  "price", "close", "regularMarketPreviousClose"):
+            v = q.get(k)
+            if v is None:
+                continue
+            try:
+                price = float(v)
+                break
+            except Exception:
+                continue
+        t0 = None
+        for k in ("regularMarketTime", "postMarketTime", "time", "timestamp", "lastTradeDate"):
+            v = q.get(k)
+            if v is None:
+                continue
+            try:
+                t0 = int(v)
+                break
+            except Exception:
+                try:
+                    t0 = int(float(v))
+                    break
+                except Exception:
+                    continue
+        return price, t0
+
+    q = root.get("quote", {})
+    if isinstance(q, dict):
+        p, t = _extract(q)
+        if p is not None:
+            return p, t, "quote"
+
+    u = root.get("underlying", {})
+    if isinstance(u, dict):
+        p, t = _extract(u)
+        if p is not None:
+            return p, t, "underlying"
+
+    return None, None, "not_found"
+
+
+# ---------- основной вызов провайдера ----------
+
+def fetch_option_chain(
+    ticker: str,
+    host: str,
+    api_key: str,
+    expiry_unix: Optional[int] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> Tuple[dict, bytes]:
+    """
+    Запрашиваем опционную цепочку у yahoo-finance15 (через RapidAPI-host).
+    Порядок попыток подобран так, чтобы избежать ошибки «The selected display is invalid.»:
+      1) v1/markets/options — без параметра display
+      2) v1/markets/options — display=straddle
+      3) v1/markets/options — display=chain (как самый последний вариант)
+      4) набор yahoo-fallback’ов (path / query_symbol)
+
+    Никаких дополнительных запросов за ценой не делаем — мы её не "выдумываем".
+    Возвращаем (json_dict, raw_bytes). Исходные байты не модифицируем.
+    """
+    global _LAST_DEBUG_META
+    base_url = f"https://{host}"
+
+    # Список попыток
+    candidates: List[Dict[str, Any]] = [
+        {"url": f"{base_url}/api/v1/markets/options", "mode": "v1_nodisplay"},
+        {"url": f"{base_url}/api/v1/markets/options", "mode": "v1_display_straddle"},
+        {"url": f"{base_url}/api/v1/markets/options", "mode": "v1_display_chain"},
+        # fallback’и
+        {"url": f"{base_url}/api/yahoo/options/{ticker}", "mode": "path"},
+        {"url": f"{base_url}/api/yahoo/finance/options/{ticker}", "mode": "path"},
+        {"url": f"{base_url}/api/yahoo/finance/option/{ticker}", "mode": "path"},
+        {"url": f"{base_url}/api/yahoo/finance/stock/options/{ticker}", "mode": "path"},
+        {"url": f"{base_url}/api/yahoo/finance/v2/options/{ticker}", "mode": "path"},
+        {"url": f"{base_url}/api/yahoo/options", "mode": "query_symbol"},
+        {"url": f"{base_url}/api/yahoo/finance/options", "mode": "query_symbol"},
+    ]
+
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": host,
+        "Accept": "application/json",
+    }
+
+    meta: Dict[str, Any] = {
+        "ticker": ticker,
+        "host": host,
+        "expiry_unix": int(expiry_unix) if expiry_unix is not None else None,
+        "attempts": [],
+        "used": None,
+        "root_path": None,
+        "price_probe": None,
+    }
+
+    errors: List[str] = []
+    raw_bytes: bytes = b""
+
+    for c in candidates:
+        params: Dict[str, Any] = {}
+        mode = c["mode"]
+
+        if mode.startswith("v1_"):
+            params["ticker"] = ticker
+            if expiry_unix is not None:
+                params["expiration"] = int(expiry_unix)
+            if mode == "v1_display_straddle":
+                params["display"] = "straddle"
+            elif mode == "v1_display_chain":
+                params["display"] = "chain"
+            # v1_nodisplay — без display
+        elif mode == "query_symbol":
+            params["symbol"] = ticker
+            if expiry_unix is not None:
+                params["date"] = int(expiry_unix)
+        else:  # mode == "path"
+            if expiry_unix is not None:
+                params["date"] = int(expiry_unix)
+
         try:
-            js, _ = _request_json(url, {"adjusted": "true"}, api_key)
-            attempts.append({"url": url, "ok": True})
-            res = js.get("results")
-            if isinstance(res, list) and len(res)>0:
-                S = float(res[0].get("c"))
-                t0 = int(res[0].get("t")/1000) if res[0].get("t") else int(time.time())
+            data, content = _request_json(c["url"], headers, params, timeout)
+            raw_bytes = content
+            meta["attempts"].append({"url": c["url"], "params": params, "ok": True})
+            meta["used"] = {"url": c["url"], "params": params}
+
+            # Найдём корень и проверим наличие цены (но ничего не дополняем снаружи)
+            try:
+                root, where = _locate_root_mutable(data)
+                meta["root_path"] = where
+                p, t, src = _price_in_quote(root)
+                meta["price_probe"] = {
+                    "price": p,
+                    "t0": t,
+                    "source": src,
+                }
+            except Exception as e:
+                meta["root_path"] = f"locate_failed: {e}"
+
+            _LAST_DEBUG_META = meta
+            return data, raw_bytes
+
         except Exception as e:
-            attempts.append({"url": url, "ok": False, "err": str(e)})
-    if S is None:
-        S = 0.0
-    if t0 is None:
-        t0 = int(time.time())
-    quote = {"symbol": ticker, "regularMarketPrice": S, "regularMarketTime": t0}
-    return quote, S, t0, attempts
-
-def fetch_option_chain(ticker: str,
-                       host: Optional[str],
-                       key: Optional[str],
-                       expiry_unix: Optional[int] = None) -> Tuple[Dict[str, Any], bytes]:
-    """Fetch options snapshot from Polygon and normalize to generic structure
-    understood by compute.extract_core_from_chain.
-    Returns (data_json, raw_bytes)
-    """
-    api_key = key
-    debug = {"mode": "polygon", "attempts": []}
-    # 1) Get underlying price/time
-    quote, S, t0, q_attempts = _fetch_underlying_quote_polygon(ticker, api_key)
-    debug["attempts"].extend(q_attempts)
-
-    # 2) Snapshot options
-    url = f"https://api.polygon.io/v3/snapshot/options/{ticker}"
-    params = {
-        "limit": 50000,
-        "order": "asc",
-        "sort": "ticker",
-        "price_source": "v2.prev.close",
-    }
-    if expiry_unix is not None:
-        dt = datetime.datetime.utcfromtimestamp(int(expiry_unix))
-        params["expiration_date"] = dt.strftime("%Y-%m-%d")
-    js, raw_bytes = _request_json(url, params, api_key)
-    debug["attempts"].append({"url": url, "params": params, "ok": True, "count": len(js.get("results", []) or [])})
-
-    results = js.get("results") or js.get("items") or []
-    expirations, blocks_by_date = _group_snapshot_results_by_expiration(results)
-
-    # Normalized container
-    data = {
-        "quote": quote,
-        "expirations": expirations,
-        "options": [blocks_by_date[e] for e in expirations],
-        "result": {"items": results},
-    }
-    DEBUG_STATE['last'] = debug
-    return data, raw_bytes
-
-def fetch_stock_history(ticker: str,
-                        host: Optional[str],
-                        key: Optional[str],
-                        interval: str = "1m",
-                        limit: int = 640,
-                        dividend: Optional[bool] = None) -> Tuple[Dict[str, Any], bytes]:
-    """Fetch recent candles from Polygon aggregates. Returns (json_like, raw_bytes).
-    The returned JSON has a top-level 'candles': [{'t','o','h','l','c','v'}...].
-    """
-    api_key = key
-    # Map interval
-    m = 1; span = "minute"
-    if isinstance(interval, str) and interval.endswith("m"):
-        m = int(interval[:-1] or "1"); span = "minute"
-    elif isinstance(interval, str) and interval.endswith("h"):
-        m = int(interval[:-1] or "1"); span = "hour"
-    elif isinstance(interval, str) and interval.endswith("d"):
-        m = int(interval[:-1] or "1"); span = "day"
-    else:
-        try:
-            m = int(interval); span = "minute"
-        except Exception:
-            m = 1; span = "minute"
-
-    now = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
-    days_back = 10 if span in ("minute","hour") else 365
-    start = now - datetime.timedelta(days=days_back)
-    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{m}/{span}/{start.date()}/{now.date()}"
-    params = {"adjusted": "true", "sort": "asc", "limit": int(limit)}
-    js, raw = _request_json(url, params, api_key)
-    items = js.get("results") or []
-    # Normalize
-    recs = []
-    # take last 'limit' items in ascending order
-    items = items[-int(limit):]
-    for r in items:
-        tms = r.get("t")
-        if tms is None: 
+            err = {"url": c["url"], "params": params, "ok": False, "err": str(e)}
+            meta["attempts"].append(err)
+            errors.append(str(e))
             continue
-        ts = int(tms/1000)
-        recs.append({
-            "t": ts,
-            "o": r.get("o"),
-            "h": r.get("h"),
-            "l": r.get("l"),
-            "c": r.get("c"),
-            "v": r.get("v"),
-        })
-    data = {"candles": recs}
-    DEBUG_STATE['last'] = {"mode": "polygon_candles", "url": url, "params": params, "count": len(recs)}
-    return data, raw
+
+    _LAST_DEBUG_META = meta
+    raise RuntimeError("Option chain fetch failed. Tried:\n" + "\n".join(errors))
