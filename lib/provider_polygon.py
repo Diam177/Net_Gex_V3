@@ -173,6 +173,7 @@ def _remap_to_yahoo_like(items: List[dict], S: Optional[float], ts_unix: Optiona
     chain_obj = {
         "quote": {
             "regularMarketPrice": float(S) if S is not None else None,
+            "postMarketPrice": float(S) if S is not None else None,
             "regularMarketDayHigh": None,
             "regularMarketDayLow": None,
             "regularMarketTime": int(ts_unix or _time.time()),
@@ -205,15 +206,22 @@ def fetch_option_chain(ticker: str,
 
     items = _paginate(url, api_key=api_key, params=params, cap=80)
 
-    # 2) цена подложки
-    S = _scan_underlying_price_from_items(items)
+    # 2) цена подложки — СНАЧАЛА пытаемся получить из stocks snapshot / last trade (самая свежая)
+    S = None
     ts_unix = int(_time.time())
-    price_source = "items.underlying_asset"
-    if S is None:
+    price_source = None
+    try:
         S, ts_unix, price_source = _get_underlying_price_http(underlying_symbol, api_key)
+    except Exception:
+        S = None
+        price_source = None
 
-    # 3) нормализованный JSON
-    out_json = _remap_to_yahoo_like(items, S, ts_unix)
+    # Если не удалось — берём из items.underlying_asset (может быть устаревшим)
+    if S is None:
+        S = _scan_underlying_price_from_items(items)
+        ts_unix = int(_time.time())
+        price_source = "items.underlying_asset"
+out_json = _remap_to_yahoo_like(items, S, ts_unix)
 
     # 4) сырые байты провайдера
     raw_dump = {
