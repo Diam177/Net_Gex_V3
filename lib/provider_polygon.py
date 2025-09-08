@@ -226,3 +226,85 @@ def fetch_option_chain(ticker: str,
     }
     raw_bytes = json.dumps(raw_dump, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return out_json, raw_bytes
+
+
+# ------------- stock candles (intraday) -------------
+
+def fetch_stock_history(ticker: str,
+                        host_unused: Optional[str],
+                        api_key: str,
+                        interval: str = "1m",
+                        limit: int = 640,
+                        dividend: Optional[bool] = None,
+                        timeout: int = 20) -> Tuple[Dict[str, Any], bytes]:
+    """
+    Получить исторические свечи у Polygon (v2 aggregates).
+    Возвращает (json_dict, raw_bytes) где json_dict имеет ключ "candles": [ ... ]
+    Поля каждой свечи: timestamp_unix, open, high, low, close, volume.
+    """
+    if not api_key:
+        raise RuntimeError("POLYGON_API_KEY is missing")
+
+    symbol = (ticker or "").strip().upper()
+    # Map interval "1m","5m","15m","1h" -> (mult, timespan)
+    span = "minute"
+    mult = 1
+    try:
+        if isinstance(interval, str) and interval.endswith("m"):
+            mult = max(1, int(float(interval[:-1])))
+            span = "minute"
+        elif isinstance(interval, str) and interval.endswith("h"):
+            mult = max(1, int(float(interval[:-1])) * 60)
+            span = "minute"
+        elif isinstance(interval, str) and interval.endswith("d"):
+            mult = max(1, int(float(interval[:-1])))
+            span = "day"
+        else:
+            mult = 1
+            span = "minute"
+    except Exception:
+        mult = 1
+        span = "minute"
+
+    # Compute time window
+    now_utc = _dt.datetime.utcnow().replace(tzinfo=_dt.timezone.utc)
+    # take a slightly larger window to ensure we get 'limit' sorted asc
+    minutes = mult * max(int(limit), 1)
+    from_dt = now_utc - _dt.timedelta(minutes=minutes * 2)
+    to_dt = now_utc
+    # Polygon expects ISO timestamps or dates
+    from_s = from_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    to_s = to_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+    url = f"{POLYGON_BASE_URL}/v2/aggs/ticker/{symbol}/range/{mult}/{span}/{from_s}/{to_s}"
+    params = {
+        "adjusted": "true",
+        "sort": "asc",
+        "limit": int(limit),
+        "apiKey": api_key,
+    }
+    r = requests.get(url, params=params, timeout=timeout)
+    raw_bytes = r.content
+    r.raise_for_status()
+    j = r.json()
+
+    # Expected j: { "results": [ { "t": 1717600800000, "o":..., "h":..., "l":..., "c":..., "v":... }, ... ] }
+    records: List[Dict[str, Any]] = []
+    try:
+        for rec in j.get("results", []) or []:
+            t = rec.get("t")
+            ts_unix = int(int(t) / 1000) if isinstance(t, (int, float)) else None
+            records.append({
+                "timestamp_unix": ts_unix,
+                "open": rec.get("o"),
+                "high": rec.get("h"),
+                "low":  rec.get("l"),
+                "close":rec.get("c"),
+                "volume": rec.get("v"),
+            })
+    except Exception:
+        # leave empty on failure
+        records = []
+
+    out = {"candles": records}
+    return out, raw_bytes
