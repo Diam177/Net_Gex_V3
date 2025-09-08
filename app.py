@@ -370,8 +370,8 @@ try:
         st.session_state['ao_net_gex_sum_visible'] = _ng_sum_visible
     except Exception:
         pass
-
-st.session_state['first_chart_max_levels'] = _max_levels
+    
+    st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
     pass
 
