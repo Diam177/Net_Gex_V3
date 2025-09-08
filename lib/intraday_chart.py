@@ -8,9 +8,10 @@ import streamlit as st
 from .provider_polygon import fetch_stock_history
 
 @st.cache_data(show_spinner=False, ttl=60)
-def _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))):
+def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
     data, content = fetch_stock_history(ticker, host, key, interval=interval, limit=int(limit), dividend=dividend)
     return data, content
+
 
 def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
     def to_dt(rec: Dict[str, Any]):
