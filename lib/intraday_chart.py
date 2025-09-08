@@ -54,6 +54,8 @@ def _normalize_candles_json(raw_json: Any) -> pd.DataFrame:
             "close":r.get("close")or r.get("c"),
             "volume": r.get("volume") or r.get("v"),
         })
+    if not rows:
+        return pd.DataFrame(columns=["ts","open","high","low","close","volume"])
     dfc = pd.DataFrame(rows).dropna(subset=["ts"]).sort_values("ts")
     return dfc
 
