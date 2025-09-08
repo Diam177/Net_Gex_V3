@@ -1,44 +1,38 @@
 import math, datetime, os
 
-def choose_default_expiration(expirations, now_unix, tz_name: str = "America/New_York"):
+def choose_default_expiration(expirations, now_unix, *, tz_mode: str = "UTC"):
     """
-    Choose the nearest expiration by **calendar date** in a given timezone (default ET),
-    not by exact timestamp. If today's date equals an expiration date in tz, we select it.
-    Fallback: if all expirations are before today, return the latest one.
+    Choose nearest expiration by **calendar date**, not timestamp.
+    Default mode aligns with UI labels which render dates via UTC
+    (see app.py fmt_ts -> utcfromtimestamp).
+
+    - tz_mode="UTC": compare by UTC dates (recommended).
+    - tz_mode="ET":  compare by America/New_York dates (legacy option).
     """
     from datetime import datetime
-    try:
-        from zoneinfo import ZoneInfo  # stdlib (Py3.9+)
-    except Exception:
-        ZoneInfo = None
+    from zoneinfo import ZoneInfo
 
     if not expirations:
         return None
 
-    # Convert 'now' to local date in tz
-    if ZoneInfo is not None:
-        tz = ZoneInfo(tz_name)
+    if tz_mode.upper() == "ET":
+        tz = ZoneInfo("America/New_York")
         now_date = datetime.fromtimestamp(now_unix, tz).date()
-        exp_pairs = [(e, datetime.fromtimestamp(e, tz).date()) for e in expirations]
+        pairs = [(e, datetime.fromtimestamp(e, tz).date()) for e in expirations]
     else:
-        # Fallback to naive UTC date comparison if zoneinfo not available
         now_date = datetime.utcfromtimestamp(now_unix).date()
-        exp_pairs = [(e, datetime.utcfromtimestamp(e).date()) for e in expirations]
+        pairs = [(e, datetime.utcfromtimestamp(e).date()) for e in expirations]
 
-    # Keep expirations whose local date is today or later; pick the earliest by date
-    future = [e for e, d in exp_pairs if d >= now_date]
+    future = [e for e, d in pairs if d >= now_date]
     if future:
-        # If multiple expirations share the same date, choose the smallest timestamp
-        # to preserve original ordering.
-        def key(e):
-            if ZoneInfo is not None:
-                tz = ZoneInfo(tz_name)
-                return (datetime.fromtimestamp(e, tz).date(), e)
-            else:
-                return (datetime.utcfromtimestamp(e).date(), e)
+        # minimize by (date, timestamp) to keep stable order for same-day expirations
+        if tz_mode.upper() == "ET":
+            tz = ZoneInfo("America/New_York")
+            key = lambda e: (datetime.fromtimestamp(e, tz).date(), e)
+        else:
+            key = lambda e: (datetime.utcfromtimestamp(e).date(), e)
         return min(future, key=key)
 
-    # Fallback: all expirations are before 'today' in tz → return the latest available
     return max(expirations)
 
 
