@@ -8,7 +8,6 @@ from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
-from lib.provider_table import render_provider_strike_table
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
@@ -26,6 +25,7 @@ with st.sidebar:
     expiry_placeholder = st.empty()
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
+    download_polygon_placeholder = st.empty()
     table_download_placeholder = st.empty()
 
     # ---- Контролы Key Levels (оставили только Interval/Limit) ----
@@ -135,6 +135,14 @@ download_placeholder.download_button(
     mime="application/json"
 )
 
+# Доп. кнопка: сырые данные от Polygon
+if _PROVIDER == "polygon":
+    download_polygon_placeholder.download_button(
+        "Download Polygon JSON",
+        data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
+        file_name=f"{ticker}_{selected_exp}_polygon_raw.json",
+        mime="application/json"
+    )
 # === Контекст для PZ/PZ_FP (all_series_ctx) ===
 all_series_ctx = []
 for e, block in blocks_by_date.items():
@@ -158,6 +166,9 @@ day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
 # === Метрики для выбранной экспирации ===
+if selected_exp not in blocks_by_date:
+    st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
+    st.stop()
 metrics = compute_series_metrics_for_expiry(
     S=S, t0=t0, expiry_unix=selected_exp,
     block=blocks_by_date[selected_exp],
@@ -301,13 +312,6 @@ try:
     st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
     pass
-
-
-# === Provider table by strike ===
-try:
-    render_provider_strike_table(blocks_by_date, selected_exp)
-except Exception as _e:
-    st.warning(f"Не удалось построить таблицу провайдера: {_e}")
 
 # === Key Levels chart ===
 render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
