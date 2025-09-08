@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time, json, datetime
-
-import importlib, sys
 from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
@@ -12,16 +10,14 @@ from lib.plotting import make_figure, _select_atm_window
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
 # === Secrets / env ===
-RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
-RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 # Provider flag for early UI
-_PROVIDER = "polygon" if POLYGON_API_KEY else "rapid"
+_PROVIDER = "polygon"
 
 with st.sidebar:
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
-    st.caption(f"Data provider: **{_PROVIDER}**")
+    st.caption("Data provider: **polygon**")
     expiry_placeholder = st.empty()
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
@@ -40,39 +36,24 @@ raw_bytes = None
 
 
 # === Provider selection ===
-if POLYGON_API_KEY:
-    provider_module = importlib.import_module("lib.provider_polygon")
-    if "lib.provider_polygon" in sys.modules:
-        importlib.reload(sys.modules["lib.provider_polygon"])
-    fetch_option_chain = provider_module.fetch_option_chain
-    _PROVIDER = "polygon"
-else:
-    provider_module = importlib.import_module("lib.provider")
-    if "lib.provider" in sys.modules:
-        importlib.reload(sys.modules["lib.provider"])
-    fetch_option_chain = provider_module.fetch_option_chain
-    _PROVIDER = "rapid"
+from lib.provider_polygon import fetch_option_chain
+_PROVIDER = "polygon"
 
 @st.cache_data(show_spinner=False, ttl=60)
-def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
-    data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
+def _fetch_chain_cached(ticker, expiry_unix=None):
+    data, content = fetch_option_chain(ticker, None, POLYGON_API_KEY, expiry_unix=expiry_unix)
     return data, content
 
-# === Загрузка данных только из API ===
-if (_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and RAPIDAPI_HOST and RAPIDAPI_KEY):
+# === Загрузка данных (Polygon only) ===
+if POLYGON_API_KEY:
     try:
-        base_json, base_bytes = _fetch_chain_cached(
-            ticker,
-            None if _PROVIDER=="polygon" else RAPIDAPI_HOST,
-            POLYGON_API_KEY if _PROVIDER=="polygon" else RAPIDAPI_KEY,
-            None
-        )
+        base_json, base_bytes = _fetch_chain_cached(ticker)
         raw_data, raw_bytes = base_json, base_bytes
         data_status_placeholder.success("Data received")
     except Exception as e:
-        data_status_placeholder.error(f"Ошибка запроса ({_PROVIDER}): {e}")
+        data_status_placeholder.error(f"Ошибка запроса (polygon): {e}")
 else:
-    data_status_placeholder.warning("Укажите POLYGON_API_KEY (или RAPIDAPI_HOST+RAPIDAPI_KEY) в секретах/ENV.")
+    data_status_placeholder.warning("Укажите POLYGON_API_KEY в секретах/ENV.")
 
 if raw_data is None:
     st.stop()
@@ -113,14 +94,9 @@ sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index
 selected_exp = expirations[exp_labels.index(sel_label)]
 
 # Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and RAPIDAPI_HOST and RAPIDAPI_KEY)):
+if selected_exp not in blocks_by_date and POLYGON_API_KEY:
     try:
-        by_date_json, by_date_bytes = _fetch_chain_cached(
-            ticker,
-            None if _PROVIDER=="polygon" else RAPIDAPI_HOST,
-            POLYGON_API_KEY if _PROVIDER=="polygon" else RAPIDAPI_KEY,
-            selected_exp
-        )
+        by_date_json, by_date_bytes = _fetch_chain_cached(ticker, selected_exp)
         _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
         blocks_by_date.update(blocks_by_date2)
         raw_bytes = by_date_bytes
@@ -314,4 +290,4 @@ except Exception:
     pass
 
 # === Key Levels chart ===
-render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
+render_key_levels_section(ticker)
