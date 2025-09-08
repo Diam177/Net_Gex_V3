@@ -271,7 +271,12 @@ try:
     if g_flip_val is not None:
         _max_levels["gflip"] = float(g_flip_val)
 
+    DATA.metrics.levels = dict(_max_levels)
     st.session_state['first_chart_max_levels'] = _max_levels
+        try:
+            DATA.metrics.first_levels = dict(_max_levels)
+        except Exception:
+            pass
 except Exception:
     pass
 
