@@ -102,23 +102,36 @@ try:
 except ValueError:
     default_index = 0
 
-sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index=default_index)
-selected_exp = expirations[exp_labels.index(sel_label)]
+sel_labels = expiry_placeholder.multiselect(
+    "Expiration",
+    options=exp_labels,
+    default=[exp_labels[default_index]] if exp_labels else []
+)
+# map labels back to epoch expirations
+_lbl2ts = {lab: ts for lab, ts in zip(exp_labels, expirations)}
+selected_exps = [ _lbl2ts.get(lab) for lab in sel_labels if lab in _lbl2ts ]
+if not selected_exps and expirations:
+    # ensure at least one selection
+    selected_exps = [expirations[default_index]]
+# keep primary (first) for places that expect single value (e.g., raw download name)
+selected_exp = selected_exps[0]
 
-# Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and ((_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and RAPIDAPI_HOST and RAPIDAPI_KEY)):
-    try:
-        by_date_json, by_date_bytes = _fetch_chain_cached(
-            ticker,
-            None if _PROVIDER=="polygon" else RAPIDAPI_HOST,
-            POLYGON_API_KEY if _PROVIDER=="polygon" else RAPIDAPI_KEY,
-            selected_exp
-        )
-        _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
-        blocks_by_date.update(blocks_by_date2)
-        raw_bytes = by_date_bytes
-    except Exception as e:
-        st.warning(f"Не удалось получить блок для выбранной даты: {e}")
+
+# Если выбранных дат нет в блоках — дотягиваем недостающие expiry по одной
+try:
+    for _exp in selected_exps:
+        if _exp not in blocks_by_date and ((_PROVIDER=="polygon" and POLYGON_API_KEY) or (_PROVIDER=="rapid" and RAPIDAPI_HOST and RAPIDAPI_KEY)):
+            by_date_json, by_date_bytes = _fetch_chain_cached(
+                ticker,
+                None if _PROVIDER=="polygon" else RAPIDAPI_HOST,
+                POLYGON_API_KEY if _PROVIDER=="polygon" else RAPIDAPI_KEY,
+                _exp
+            )
+            _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
+            blocks_by_date.update(blocks_by_date2)
+            raw_bytes = by_date_bytes  # last seen
+except Exception as e:
+    st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
 # Кнопка "Скачать сырой JSON"
 download_placeholder.download_button(
@@ -158,17 +171,67 @@ for e, block in blocks_by_date.items():
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
-# === Метрики для выбранной экспирации ===
-if selected_exp not in blocks_by_date:
-    st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
-    st.stop()
-metrics = compute_series_metrics_for_expiry(
-    S=S, t0=t0, expiry_unix=selected_exp,
-    block=blocks_by_date[selected_exp],
-    day_high=day_high, day_low=day_low,
-    all_series=all_series_ctx
-)
+# === Вспомогательная функция: суммирование метрик по нескольким экспирациям ===
+def _sum_metrics_list(metrics_list):
+    import numpy as _np
+    # Собираем унифицированную шкалу страйков
+    all_strikes = _np.array(sorted({float(x) for m in metrics_list for x in m.get("strikes", [])}), dtype=float)
+    if all_strikes.size == 0:
+        # Пусто — вернём структуру как у compute_series_metrics_for_expiry, но с нулями
+        return {
+            "strikes": _np.array([], dtype=float),
+            "put_oi": _np.array([], dtype=float),
+            "call_oi": _np.array([], dtype=float),
+            "put_vol": _np.array([], dtype=float),
+            "call_vol": _np.array([], dtype=float),
+            "net_gex": _np.array([], dtype=float),
+            "ag": _np.array([], dtype=float),
+            "pz": _np.array([], dtype=float),
+            "pz_fp": _np.array([], dtype=float),
+        }
+    # Инициализация аккумулирующих массивов
+    acc = {
+        "put_oi": _np.zeros_like(all_strikes, dtype=float),
+        "call_oi": _np.zeros_like(all_strikes, dtype=float),
+        "put_vol": _np.zeros_like(all_strikes, dtype=float),
+        "call_vol": _np.zeros_like(all_strikes, dtype=float),
+        "net_gex": _np.zeros_like(all_strikes, dtype=float),
+        "ag": _np.zeros_like(all_strikes, dtype=float),
+        "pz": _np.zeros_like(all_strikes, dtype=float),
+        "pz_fp": _np.zeros_like(all_strikes, dtype=float),
+    }
+    # Быстрая индексация по страйку
+    idx_map = {float(k): i for i, k in enumerate(all_strikes.tolist())}
+    for m in metrics_list:
+        s = _np.asarray(m.get("strikes", []), dtype=float)
+        for key in ["put_oi","call_oi","put_vol","call_vol","net_gex","ag","pz","pz_fp"]:
+            arr = _np.asarray(m.get(key, []), dtype=float)
+            if s.size == 0 or arr.size == 0:
+                continue
+            # Сложить по страйкам
+            for val_strike, val in zip(s, arr):
+                j = idx_map.get(float(val_strike))
+                if j is not None and _np.isfinite(val):
+                    acc[key][j] += float(val)
+    # Готово
+    acc["strikes"] = all_strikes
+    return acc
+# === Метрики для выбранных экспираций (сумма по страйкам) ===
+for _exp in selected_exps:
+    if _exp not in blocks_by_date:
+        st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
+        st.stop()
+_metrics_list = []
+for _exp in selected_exps:
+    _metrics = compute_series_metrics_for_expiry(
+        S=S, t0=t0, expiry_unix=_exp,
+        block=blocks_by_date[_exp],
+        day_high=day_high, day_low=day_low,
+        all_series=all_series_ctx
+    )
+    _metrics_list.append(_metrics)
 
+metrics = _sum_metrics_list(_metrics_list)
 # === Таблица по страйкам ===
 df = pd.DataFrame({
     "Strike": metrics["strikes"],
