@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Polygon provider adapter → Yahoo-like JSON expected by compute.extract_core_from_chain().
-- Uses ONLY query param apiKey (no headers). Avoids duplicate apiKey.
-- Robust price fallback incl. indices snapshot for SPX (I:SPX).
+Polygon provider adapter → 'Yahoo-like' JSON для приложения.
+Передаёт ключ ТОЛЬКО через query (apiKey=...), без headers.
 """
+
 from typing import Dict, Any, List, Optional, Tuple
 import datetime as _dt
 import time as _time
@@ -12,12 +12,10 @@ import requests
 
 POLYGON_BASE_URL = "https://api.polygon.io"
 
+# ----------------- helpers -----------------
 
-# ---------------- helpers ----------------
-
-def _append_key(url: str, api_key: str) -> str:
+def _append_api_key(url: str, api_key: str) -> str:
     return url + (("&" if "?" in url else "?") + "apiKey=" + api_key)
-
 
 def _to_unix(date_str: str) -> int:
     try:
@@ -25,19 +23,17 @@ def _to_unix(date_str: str) -> int:
     except Exception:
         return 0
 
-
 def _to_iso(ts_unix: int) -> str:
     try:
         return _dt.datetime.utcfromtimestamp(int(ts_unix)).strftime("%Y-%m-%d")
     except Exception:
         return ""
 
-
 def _paginate(url: str, api_key: str, params: Optional[dict] = None, cap: int = 80) -> List[dict]:
+    """Проходит все страницы Polygon (results + next_url). На каждой добавляем apiKey."""
     out: List[dict] = []
-    next_url = _append_key(url, api_key)
-    # strip apiKey if случайно оказался в params
-    next_params = {k: v for k, v in (params or {}).items() if k.lower() != "apikey"}
+    next_url = _append_api_key(url, api_key)
+    next_params = dict(params or {})
     for _ in range(cap):
         r = requests.get(next_url, params=next_params, timeout=30)
         r.raise_for_status()
@@ -48,12 +44,12 @@ def _paginate(url: str, api_key: str, params: Optional[dict] = None, cap: int = 
         nxt = j.get("next_url")
         if not nxt:
             break
-        next_url = _append_key(nxt, api_key)
-        next_params = {}
+        next_url = _append_api_key(nxt, api_key)
+        next_params = {}  # дальше всё в next_url
     return out
 
-
-def _scan_price_from_items(items: List[dict]) -> Optional[float]:
+def _scan_underlying_price_from_items(items: List[dict]) -> Optional[float]:
+    """Если провайдер вернул цену подложки в элементах цепочки."""
     for it in items:
         ua = it.get("underlying_asset") or {}
         for k in ("price", "close", "last", "p", "value"):
@@ -65,23 +61,22 @@ def _scan_price_from_items(items: List[dict]) -> Optional[float]:
                     pass
     return None
 
-
-def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optional[int], str]:
+def _get_underlying_price_http(symbol: str, api_key: str) -> Tuple[Optional[float], Optional[int], str]:
     # 1) last trade
     try:
         u = f"{POLYGON_BASE_URL}/v2/last/trade/{symbol}"
-        r = requests.get(_append_key(u, api_key), timeout=15)
+        r = requests.get(_append_api_key(u, api_key), timeout=15)
         if r.ok:
             j = r.json()
             res = j.get("results") or {}
             p = res.get("p") or res.get("price")
             t = res.get("t") or res.get("timestamp")
             if p is not None:
-                ts = int(int(t)/1_000_000_000) if isinstance(t, int) and t > 1_000_000_000_000 else int(_time.time())
-                return float(p), ts, "v2.last.trade"
+                ts_unix = int(int(t)/1_000_000_000) if isinstance(t, int) and t > 1_000_000_000_000 else int(_time.time())
+                return float(p), ts_unix, "v2.last.trade"
     except Exception:
         pass
-    # 2) v3 snapshot stocks
+    # 2) v3 stocks snapshot
     try:
         u = f"{POLYGON_BASE_URL}/v3/snapshot/stocks"
         r = requests.get(u, params={"ticker": symbol, "apiKey": api_key}, timeout=15)
@@ -95,30 +90,16 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
                 cand += [res.get(k) for k in ("price", "value", "p", "close")]
                 for v in cand:
                     if v is not None:
-                        return float(v), int(_time.time()), "v3.snapshot.stocks"
+                        try:
+                            return float(v), int(_time.time()), "v3.snapshot.stocks"
+                        except Exception:
+                            pass
     except Exception:
         pass
-    # 2b) v3 snapshot indices (for I:SPX, etc.)
-    try:
-        u = f"{POLYGON_BASE_URL}/v3/snapshot/indices"
-        r = requests.get(u, params={"ticker": symbol, "apiKey": api_key}, timeout=15)
-        if r.ok:
-            j = r.json()
-            res = j.get("results") or {}
-            if isinstance(res, dict):
-                cand = []
-                if isinstance(res.get("last"), dict):
-                    cand.append(res["last"].get("price"))
-                cand += [res.get(k) for k in ("price", "value", "p", "close")]
-                for v in cand:
-                    if v is not None:
-                        return float(v), int(_time.time()), "v3.snapshot.indices"
-    except Exception:
-        pass
-    # 3) v2 snapshot stock
+    # 3) v2 stocks snapshot
     try:
         u = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
-        r = requests.get(_append_key(u, api_key), timeout=15)
+        r = requests.get(_append_api_key(u, api_key), timeout=15)
         if r.ok:
             j = r.json()
             last_trade = j.get("lastTrade") or {}
@@ -139,34 +120,33 @@ def _price_fallback(symbol: str, api_key: str) -> Tuple[Optional[float], Optiona
             if res:
                 p = res[0].get("close") or res[0].get("c")
                 t = res[0].get("t")
-                ts = int(int(t)/1000) if isinstance(t, int) and t > 1_000_000_000_000 else int(_time.time())
+                ts_unix = int(int(t)/1_000) if isinstance(t, int) and t > 1_000_000_000_000 else int(_time.time())
                 if p is not None:
-                    return float(p), ts, "v2.prev.close"
+                    return float(p), ts_unix, "v2.prev.close"
     except Exception:
         pass
     return None, None, "none"
 
-
-def _remap_chain(items: List[dict], S: Optional[float], ts_unix: int) -> Dict[str, Any]:
+def _remap_to_yahoo_like(items: List[dict], S: Optional[float], ts_unix: Optional[int]) -> Dict[str, Any]:
     grouped: Dict[str, Dict[str, Any]] = {}
-    exp_map: Dict[str, int] = {}
+    exp_unix_map: Dict[str, int] = {}
 
-    def push(exp_str: str, side: str, rec: Dict[str, Any]):
+    def _push(exp_str: str, kind: str, rec: Dict[str, Any]):
         blk = grouped.setdefault(exp_str, {"expirationDate": exp_str, "calls": [], "puts": []})
-        blk["calls" if side == "call" else "puts"].append(rec)
+        blk["calls" if kind == "call" else "puts"].append(rec)
 
     for it in items:
         details = it.get("details") or {}
         ctype = (details.get("contract_type") or "").lower()
         if ctype not in ("call", "put"):
             continue
-        exp = details.get("expiration_date")
+        exp_str = details.get("expiration_date")
         strike = details.get("strike_price")
-        if not exp or strike is None:
+        if not exp_str or strike is None:
             continue
 
-        if exp not in exp_map:
-            exp_map[exp] = _to_unix(exp)
+        if exp_str not in exp_unix_map:
+            exp_unix_map[exp_str] = _to_unix(exp_str)
 
         day = it.get("day") or {}
         last_trade = it.get("last_trade") or {}
@@ -178,72 +158,68 @@ def _remap_chain(items: List[dict], S: Optional[float], ts_unix: int) -> Dict[st
             "volume": int((day.get("volume") or 0) or 0),
             "impliedVolatility": float(it.get("implied_volatility")) if it.get("implied_volatility") is not None else None,
             "lastPrice": float(last_trade.get("price") or last_trade.get("p")) if (last_trade.get("price") or last_trade.get("p")) else None,
-            "expiration": exp,
+            "expiration": exp_str,
         }
-        push(exp, ctype, rec)
+        _push(exp_str, ctype, rec)
 
-    expirationDates = sorted(exp_map.values())
-    options_blocks = []
-    for exp in sorted(grouped.keys(), key=lambda s: exp_map.get(s, 0)):
-        blk = dict(grouped[exp])
-        blk["expirationDate"] = exp_map[exp]  # unix
+    expirationDates = sorted(exp_unix_map.values())
+
+    options_blocks: List[Dict[str, Any]] = []
+    for exp_str in sorted(grouped.keys(), key=lambda s: exp_unix_map.get(s, 0)):
+        blk = dict(grouped[exp_str])
+        blk["expirationDate"] = exp_unix_map[exp_str]  # unix!
         options_blocks.append(blk)
 
-    return {
-        "optionChain": {
-            "result": [{
-                "regularMarketPrice": float(S) if S is not None else None,
-                    "regularMarketPreviousClose": float(S) if S is not None else None,
-                "quote": {
-                    "regularMarketPrice": float(S) if S is not None else None,
-                    "regularMarketPreviousClose": float(S) if S is not None else None,
-                    "regularMarketDayHigh": None,
-                    "regularMarketDayLow": None,
-                    "regularMarketTime": int(ts_unix),
-                },
-                "expirationDates": expirationDates,
-                "options": options_blocks,
-            }],
-            "error": None,
-        }
+    chain_obj = {
+        "quote": {
+            "regularMarketPrice": float(S) if S is not None else None,
+            "regularMarketDayHigh": None,
+            "regularMarketDayLow": None,
+            "regularMarketTime": int(ts_unix or _time.time()),
+        },
+        "expirationDates": expirationDates,
+        "options": options_blocks,
     }
+    return {"optionChain": {"result": [chain_obj], "error": None}}
 
+# ----------------- public API -----------------
 
-# ---------------- public API ----------------
-
-def fetch_option_chain(ticker: str, host_unused: Optional[str], api_key: str, expiry_unix: Optional[int] = None) -> Tuple[Dict[str, Any], bytes]:
+def fetch_option_chain(ticker: str,
+                       host_unused: Optional[str],
+                       api_key: str,
+                       expiry_unix: Optional[int] = None) -> Tuple[Dict[str, Any], bytes]:
     if not api_key:
         raise RuntimeError("POLYGON_API_KEY is missing")
 
-    symbol = (ticker or "").strip().upper()
-    poly_symbol = "I:SPX" if symbol in ("SPX", "^SPX") else symbol
+    underlying = (ticker or "").strip().upper()
+    underlying_symbol = "I:SPX" if underlying in ("SPX", "^SPX") else underlying
 
-    # Load options chain
-    url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{poly_symbol}"
-    params = {"limit": 250, "order": "asc", "sort": "ticker"}
-    exp_iso = None
+    # 1) основная выборка (с фильтром expiration_date при необходимости)
+    url = f"{POLYGON_BASE_URL}/v3/snapshot/options/{underlying_symbol}"
+    params = {"limit": 250, "order": "asc", "sort": "ticker", "apiKey": api_key}
+    expiration_date_iso = None
     if expiry_unix:
-        exp_iso = _to_iso(int(expiry_unix))
-        if exp_iso:
-            params["expiration_date"] = exp_iso
+        expiration_date_iso = _to_iso(int(expiry_unix))
+        if expiration_date_iso:
+            params["expiration_date"] = expiration_date_iso
 
     items = _paginate(url, api_key=api_key, params=params, cap=80)
 
-    # Underlying price
-    S = _scan_price_from_items(items)
-    ts = int(_time.time())
+    # 2) цена подложки
+    S = _scan_underlying_price_from_items(items)
+    ts_unix = int(_time.time())
     price_source = "items.underlying_asset"
     if S is None:
-        S, ts, price_source = _price_fallback(poly_symbol, api_key)
+        S, ts_unix, price_source = _get_underlying_price_http(underlying_symbol, api_key)
 
-    # Build normalized json
-    out_json = _remap_chain(items, S, ts)
+    # 3) нормализованный JSON
+    out_json = _remap_to_yahoo_like(items, S, ts_unix)
 
-    # Raw bytes
+    # 4) сырые байты провайдера
     raw_dump = {
         "endpoint": "/v3/snapshot/options",
-        "ticker": poly_symbol,
-        "expiration_date": exp_iso,
+        "ticker": underlying_symbol,
+        "expiration_date": expiration_date_iso,
         "price_source": price_source,
         "items_count": len(items),
         "items": items,
