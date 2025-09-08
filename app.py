@@ -47,7 +47,7 @@ if POLYGON_API_KEY:
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса: {e}")
 else:
-    data_status_placeholder.warning("Укажите RAPIDAPI_HOST и RAPIDAPI_KEY в секретах/ENV.")
+    data_status_placeholder.warning("Укажите POLYGON_API_KEY в секретах/ENV.")
 
 if raw_data is None:
     st.stop()
@@ -55,8 +55,8 @@ if raw_data is None:
 # === Parse core ===
 try:
     quote, t0, S, expirations, blocks_by_date = extract_core_from_chain(raw_data)
-# Save to store
-DATA.set_chain(raw_data, raw_bytes, quote, t0, S, expirations, blocks_by_date)
+    # Save to store
+    DATA.set_chain(raw_data, raw_bytes, quote, t0, S, expirations, blocks_by_date)
 except Exception as e:
     st.error(f"Неверная структура JSON: {e}")
     st.stop()
