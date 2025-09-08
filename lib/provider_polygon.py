@@ -273,10 +273,10 @@ def fetch_stock_history(ticker: str,
     from_dt = now_utc - _dt.timedelta(minutes=minutes * 2)
     to_dt = now_utc
     # Polygon expects ISO timestamps or dates
-    from_s = from_dt.strftime("%Y-%m-%dT%H:%M:%S")
-    to_s = to_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    from_ms = int(from_dt.timestamp() * 1000)
+    to_ms = int(to_dt.timestamp() * 1000)
 
-    url = f"{POLYGON_BASE_URL}/v2/aggs/ticker/{symbol}/range/{mult}/{span}/{from_s}/{to_s}"
+    url = f"{POLYGON_BASE_URL}/v2/aggs/ticker/{symbol}/range/{mult}/{span}/{from_ms}/{to_ms}"
     params = {
         "adjusted": "true",
         "sort": "asc",
