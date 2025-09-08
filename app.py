@@ -8,6 +8,7 @@ from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
+from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
@@ -369,5 +370,17 @@ try:
 except Exception:
     pass
 
+# === Подготовка сводки для Advanced Analysis ===
+try:
+    update_ao_summary(ticker=ticker, spot=S, df=df, all_series_ctx=all_series_ctx)
+except Exception:
+    pass
+
 # === Key Levels chart ===
 render_key_levels_section(ticker, None, POLYGON_API_KEY)
+
+# === Advanced Options Market Analysis block ===
+try:
+    render_advanced_analysis_block(ticker)
+except Exception:
+    pass
