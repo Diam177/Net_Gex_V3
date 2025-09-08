@@ -28,6 +28,7 @@ class MetricsData:
     pz: List[float] = field(default_factory=list)
     pz_fp: List[float] = field(default_factory=list)
     g_flip: Optional[float] = None
+    first_levels: Dict[str, float] = field(default_factory=dict)
 
 @dataclass
 class IntradayData:
@@ -63,7 +64,8 @@ class _Store:
             ag=list(map(float, d.get('ag', []))),
             pz=list(map(float, d.get('pz', []))),
             pz_fp=list(map(float, d.get('pz_fp', []))),
-            g_flip=g_flip
+            g_flip=g_flip,
+            first_levels=dict(d.get('first_levels', {}))
         )
 
     # Intraday
