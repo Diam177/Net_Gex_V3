@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time, json, datetime
+
+from lib.provider import fetch_option_chain
 from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
@@ -10,18 +12,15 @@ from lib.plotting import make_figure, _select_atm_window
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
 # === Secrets / env ===
-POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
-# Provider flag for early UI
-_PROVIDER = "polygon"
+RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
+RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 
 with st.sidebar:
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
-    st.caption("Data provider: **polygon**")
     expiry_placeholder = st.empty()
     data_status_placeholder = st.empty()
     download_placeholder = st.empty()
-    download_polygon_placeholder = st.empty()
     table_download_placeholder = st.empty()
 
     # ---- Контролы Key Levels (оставили только Interval/Limit) ----
@@ -34,26 +33,21 @@ with st.sidebar:
 raw_data = None
 raw_bytes = None
 
-
-# === Provider selection ===
-from lib.provider_polygon import fetch_option_chain
-_PROVIDER = "polygon"
-
 @st.cache_data(show_spinner=False, ttl=60)
-def _fetch_chain_cached(ticker, expiry_unix=None):
-    data, content = fetch_option_chain(ticker, None, POLYGON_API_KEY, expiry_unix=expiry_unix)
+def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
+    data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
     return data, content
 
-# === Загрузка данных (Polygon only) ===
-if POLYGON_API_KEY:
+# === Загрузка данных только из API ===
+if RAPIDAPI_HOST and RAPIDAPI_KEY:
     try:
-        base_json, base_bytes = _fetch_chain_cached(ticker)
+        base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
         raw_data, raw_bytes = base_json, base_bytes
         data_status_placeholder.success("Data received")
     except Exception as e:
-        data_status_placeholder.error(f"Ошибка запроса (polygon): {e}")
+        data_status_placeholder.error(f"Ошибка запроса: {e}")
 else:
-    data_status_placeholder.warning("Укажите POLYGON_API_KEY в секретах/ENV.")
+    data_status_placeholder.warning("Укажите RAPIDAPI_HOST и RAPIDAPI_KEY в секретах/ENV.")
 
 if raw_data is None:
     st.stop()
@@ -94,9 +88,9 @@ sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index
 selected_exp = expirations[exp_labels.index(sel_label)]
 
 # Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and POLYGON_API_KEY:
+if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
     try:
-        by_date_json, by_date_bytes = _fetch_chain_cached(ticker, selected_exp)
+        by_date_json, by_date_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, selected_exp)
         _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
         blocks_by_date.update(blocks_by_date2)
         raw_bytes = by_date_bytes
@@ -111,14 +105,6 @@ download_placeholder.download_button(
     mime="application/json"
 )
 
-# Доп. кнопка: сырые данные от Polygon
-if _PROVIDER == "polygon":
-    download_polygon_placeholder.download_button(
-        "Download Polygon JSON",
-        data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
-        file_name=f"{ticker}_{selected_exp}_polygon_raw.json",
-        mime="application/json"
-    )
 # === Контекст для PZ/PZ_FP (all_series_ctx) ===
 all_series_ctx = []
 for e, block in blocks_by_date.items():
@@ -142,9 +128,6 @@ day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
 # === Метрики для выбранной экспирации ===
-if selected_exp not in blocks_by_date:
-    st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
-    st.stop()
 metrics = compute_series_metrics_for_expiry(
     S=S, t0=t0, expiry_unix=selected_exp,
     block=blocks_by_date[selected_exp],
@@ -290,4 +273,4 @@ except Exception:
     pass
 
 # === Key Levels chart ===
-render_key_levels_section(ticker)
+render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
