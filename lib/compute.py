@@ -98,7 +98,7 @@ def extract_core_from_chain(chain_json):
             quote = _first_nonempty_dict(root.get("quote", {}), root.get("underlying", {}))
             # robust price/time
             S = None
-            for key in ("regularMarketPrice","postMarketPrice","last","lastPrice","price","close","regularMarketPreviousClose"):
+            for key in ("postMarketPrice","last","lastPrice","price","regularMarketPrice","close","regularMarketPreviousClose"):
                 if key in quote and quote[key] is not None:
                     S = float(quote[key]); break
             if S is None:
