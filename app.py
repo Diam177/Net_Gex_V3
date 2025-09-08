@@ -47,7 +47,7 @@ if POLYGON_API_KEY:
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса: {e}")
 else:
-    data_status_placeholder.warning("Укажите POLYGONAPI_HOST и POLYGONAPI_KEY в секретах/ENV.")
+    data_status_placeholder.warning("Укажите RAPIDAPI_HOST и RAPIDAPI_KEY в секретах/ENV.")
 
 if raw_data is None:
     st.stop()
@@ -55,8 +55,8 @@ if raw_data is None:
 # === Parse core ===
 try:
     quote, t0, S, expirations, blocks_by_date = extract_core_from_chain(raw_data)
-    # Save to central store
-    DATA.set_chain(raw_data, raw_bytes, quote, t0, S, expirations, blocks_by_date)
+# Save to store
+DATA.set_chain(raw_data, raw_bytes, quote, t0, S, expirations, blocks_by_date)
 except Exception as e:
     st.error(f"Неверная структура JSON: {e}")
     st.stop()
@@ -90,7 +90,7 @@ sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index
 selected_exp = expirations[exp_labels.index(sel_label)]
 
 # Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and POLYGONAPI_HOST and POLYGONAPI_KEY:
+if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
     try:
         by_date_json, by_date_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY, selected_exp)
         _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
@@ -136,8 +136,9 @@ metrics = compute_series_metrics_for_expiry(
     day_high=day_high, day_low=day_low,
     all_series=all_series_ctx
 )
-DATA.set_metrics(metrics)
 
+
+DATA.set_metrics(metrics)
 # === Таблица по страйкам ===
 df = pd.DataFrame({
     "Strike": metrics["strikes"],
@@ -273,10 +274,6 @@ try:
 
     DATA.metrics.levels = dict(_max_levels)
     st.session_state['first_chart_max_levels'] = _max_levels
-        try:
-            DATA.metrics.first_levels = dict(_max_levels)
-        except Exception:
-            pass
 except Exception:
     pass
 
