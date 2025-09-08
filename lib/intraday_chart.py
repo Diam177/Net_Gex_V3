@@ -8,7 +8,7 @@ import streamlit as st
 from .provider_polygon import fetch_stock_history
 
 @st.cache_data(show_spinner=False, ttl=60)
-def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
+def _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))):
     data, content = fetch_stock_history(ticker, host, key, interval=interval, limit=int(limit), dividend=dividend)
     return data, content
 
@@ -129,14 +129,14 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             candles_json = None
             candles_bytes = None
 
-    if candles_json is None and rapid_host and rapid_key:
+    if candles_json is None and rapid_key:
         try:
             candles_json, candles_bytes = _fetch_candles_cached(ticker, rapid_host, rapid_key, interval=interval, limit=int(limit))
         except Exception as e:
             st.error(f"Request error: {e}")
 
     if candles_json is None:
-        st.warning("No data for Key Levels (нужны RAPIDAPI_HOST/RAPIDAPI_KEY).")
+        st.warning("No data for Key Levels (нужен API ключ для источника данных).")
         return
 
     dfc = _normalize_candles_json(candles_json)
