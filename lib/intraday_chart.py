@@ -304,18 +304,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         pass
 
     fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
-    # store VWAP of last session (for advanced block)
-    try:
-        _dfv = df_plot.copy() if 'df_plot' in locals() else None
-        if _dfv is not None and not _dfv.empty and all(col in _dfv.columns for col in ("high","low","close","volume")):
-            _tp = (_dfv["high"] + _dfv["low"] + _dfv["close"]) / 3.0
-            _cv = _dfv["volume"].clip(lower=0)
-            _vw = (_tp.mul(_cv)).cumsum() / _cv.cumsum().replace(0, pd.NA)
-            _vw_last = float(_vw.dropna().iloc[-1]) if _vw.dropna().shape[0] else None
-            st.session_state["kl_vwap_last"] = _vw_last
-    except Exception:
-        pass
-
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
 
     st.download_button(
