@@ -40,13 +40,14 @@ raw_bytes = None
 
 
 # === Provider selection ===
-if # === Provider selection ===
 provider_module = importlib.import_module("lib.provider_polygon")
 if "lib.provider_polygon" in sys.modules:
     importlib.reload(sys.modules["lib.provider_polygon"])
 fetch_option_chain = provider_module.fetch_option_chain
 _PROVIDER = "polygon"
- host, key, expiry_unix=None):
+
+@st.cache_data(show_spinner=False, ttl=60)
+def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
     data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
     return data, content
 
