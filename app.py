@@ -16,7 +16,7 @@ RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 # Provider flag for early UI
-_PROVIDER = "polygon" if POLYGON_API_KEY else "rapid"
+_PROVIDER = "polygon"
 
 with st.sidebar:
     # Основные поля
@@ -40,21 +40,13 @@ raw_bytes = None
 
 
 # === Provider selection ===
-if POLYGON_API_KEY:
-    provider_module = importlib.import_module("lib.provider_polygon")
-    if "lib.provider_polygon" in sys.modules:
-        importlib.reload(sys.modules["lib.provider_polygon"])
-    fetch_option_chain = provider_module.fetch_option_chain
-    _PROVIDER = "polygon"
-else:
-    provider_module = importlib.import_module("lib.provider")
-    if "lib.provider" in sys.modules:
-        importlib.reload(sys.modules["lib.provider"])
-    fetch_option_chain = provider_module.fetch_option_chain
-    _PROVIDER = "rapid"
-
-@st.cache_data(show_spinner=False, ttl=60)
-def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
+if # === Provider selection ===
+provider_module = importlib.import_module("lib.provider_polygon")
+if "lib.provider_polygon" in sys.modules:
+    importlib.reload(sys.modules["lib.provider_polygon"])
+fetch_option_chain = provider_module.fetch_option_chain
+_PROVIDER = "polygon"
+ host, key, expiry_unix=None):
     data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
     return data, content
 
@@ -314,4 +306,4 @@ except Exception:
     pass
 
 # === Key Levels chart ===
-render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
+render_key_levels_section(ticker, None, POLYGON_API_KEY)
