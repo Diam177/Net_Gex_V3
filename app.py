@@ -8,12 +8,12 @@ from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
+from Data import DATA
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
 # === Secrets / env ===
-RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
-RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
+POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 
 with st.sidebar:
     # Основные поля
@@ -34,20 +34,20 @@ raw_data = None
 raw_bytes = None
 
 @st.cache_data(show_spinner=False, ttl=60)
-def _fetch_chain_cached(ticker, host, key, expiry_unix=None):
-    data, content = fetch_option_chain(ticker, host, key, expiry_unix=expiry_unix)
+def _fetch_chain_cached(ticker, key, expiry_unix=None):
+    data, content = fetch_option_chain(ticker, None, key, expiry_unix=expiry_unix)
     return data, content
 
 # === Загрузка данных только из API ===
-if RAPIDAPI_HOST and RAPIDAPI_KEY:
+if POLYGON_API_KEY:
     try:
-        base_json, base_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, None)
+        base_json, base_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY, None)
         raw_data, raw_bytes = base_json, base_bytes
         data_status_placeholder.success("Data received")
     except Exception as e:
         data_status_placeholder.error(f"Ошибка запроса: {e}")
 else:
-    data_status_placeholder.warning("Укажите RAPIDAPI_HOST и RAPIDAPI_KEY в секретах/ENV.")
+    data_status_placeholder.warning("Укажите POLYGONAPI_HOST и POLYGONAPI_KEY в секретах/ENV.")
 
 if raw_data is None:
     st.stop()
@@ -55,6 +55,8 @@ if raw_data is None:
 # === Parse core ===
 try:
     quote, t0, S, expirations, blocks_by_date = extract_core_from_chain(raw_data)
+    # Save to central store
+    DATA.set_chain(raw_data, raw_bytes, quote, t0, S, expirations, blocks_by_date)
 except Exception as e:
     st.error(f"Неверная структура JSON: {e}")
     st.stop()
@@ -88,9 +90,9 @@ sel_label = expiry_placeholder.selectbox("Expiration", options=exp_labels, index
 selected_exp = expirations[exp_labels.index(sel_label)]
 
 # Если выбранной даты нет в блоках — дотягиваем конкретный expiry
-if selected_exp not in blocks_by_date and RAPIDAPI_HOST and RAPIDAPI_KEY:
+if selected_exp not in blocks_by_date and POLYGONAPI_HOST and POLYGONAPI_KEY:
     try:
-        by_date_json, by_date_bytes = _fetch_chain_cached(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY, selected_exp)
+        by_date_json, by_date_bytes = _fetch_chain_cached(ticker, POLYGON_API_KEY, selected_exp)
         _, _, _, expirations2, blocks_by_date2 = extract_core_from_chain(by_date_json)
         blocks_by_date.update(blocks_by_date2)
         raw_bytes = by_date_bytes
@@ -134,6 +136,7 @@ metrics = compute_series_metrics_for_expiry(
     day_high=day_high, day_low=day_low,
     all_series=all_series_ctx
 )
+DATA.set_metrics(metrics)
 
 # === Таблица по страйкам ===
 df = pd.DataFrame({
@@ -273,4 +276,4 @@ except Exception:
     pass
 
 # === Key Levels chart ===
-render_key_levels_section(ticker, RAPIDAPI_HOST, RAPIDAPI_KEY)
+render_key_levels_section(ticker, None, POLYGON_API_KEY)
