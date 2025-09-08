@@ -181,7 +181,7 @@ def render_advanced_analysis_block(
         price_text = f"{price_val:.2f}" if isinstance(price_val, (int, float)) and np.isfinite(price_val) else "—"
 
         # VWAP (last visible)
-        vwap_val = _safe_last(vwap_series) if vwap_series is not None else None
+        vwap_val = _safe_last(vwap_series) if vwap_series is not None else st.session_state.get('kl_vwap_last')
         vwap_text = f"{vwap_val:.2f}" if isinstance(vwap_val, (int, float)) and np.isfinite(vwap_val) else "—"
 
         pc_oi_html  = _pc_color_html(ao.get("pc_oi"))
