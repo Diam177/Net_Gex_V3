@@ -288,6 +288,41 @@ def fetch_stock_history(ticker: str,
     r.raise_for_status()
     j = r.json()
 
+    # Fallback: if no results, try last regular trading session window in ET (09:30-16:00)
+    def _retry_last_session():
+        try:
+            import pytz
+            tz = pytz.timezone("America/New_York")
+            now_et = _dt.datetime.now(tz)
+            # move to previous weekday if weekend
+            while now_et.weekday() >= 5:
+                now_et = now_et - _dt.timedelta(days=1)
+            session_start = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+            session_end   = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+            # if we're before 10:00 ET, use previous weekday
+            if now_et < session_start + _dt.timedelta(minutes=30):
+                prev = now_et - _dt.timedelta(days=1)
+                while prev.weekday() >= 5:
+                    prev = prev - _dt.timedelta(days=1)
+                session_start = prev.replace(hour=9, minute=30, second=0, microsecond=0)
+                session_end   = prev.replace(hour=16, minute=0, second=0, microsecond=0)
+            from_ms = int(session_start.astimezone(_dt.timezone.utc).timestamp()*1000)
+            to_ms   = int(session_end.astimezone(_dt.timezone.utc).timestamp()*1000)
+            url2 = f"{POLYGON_BASE_URL}/v2/aggs/ticker/{symbol}/range/{mult}/{span}/{from_ms}/{to_ms}"
+            r2 = requests.get(url2, params=params, timeout=timeout)
+            rb2 = r2.content
+            r2.raise_for_status()
+            j2 = r2.json()
+            return j2, rb2
+        except Exception:
+            return None, None
+
+    if not j.get("results"):
+        j2, rb2 = _retry_last_session()
+        if j2 is not None:
+            j = j2
+            raw_bytes = rb2 or raw_bytes
+
     # Expected j: { "results": [ { "t": 1717600800000, "o":..., "h":..., "l":..., "c":..., "v":... }, ... ] }
     records: List[Dict[str, Any]] = []
     try:
