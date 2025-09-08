@@ -4,7 +4,7 @@ import numpy as np
 import time, json, datetime
 
 import importlib, sys
-from lib.intraday_chart import render_key_levels_section
+from lib.intraday_chart import render_key_levels_section, precache_key_levels_metrics
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
@@ -312,6 +312,9 @@ idx_keep = _select_atm_window(
 
 # Prefer last candle price if available
 price_to_use = st.session_state.get('kl_price_last', S)
+
+# Pre-cache price/VWAP from candles for consistent Price label
+precache_key_levels_metrics(ticker, None, POLYGON_API_KEY)
 fig = make_figure(
     strikes=df["Strike"].values,
     net_gex=df["Net Gex"].values,
