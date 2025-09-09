@@ -7,31 +7,6 @@ import streamlit as st
 
 from .provider_polygon import fetch_stock_history
 
-def precache_key_levels_metrics(ticker: str, host: str, key: str, interval: str="1m", limit: int=640):
-    """Fetch candles quickly and cache last close & VWAP to st.session_state.
-    This does *not* render anything and reuses the cached fetch.
-    """
-    try:
-        raw_json, _ = _fetch_candles_cached(ticker, host, key, interval=interval, limit=int(limit))
-        df = _normalize_candles_json(raw_json)
-        if df is None or len(df) == 0:
-            return
-        import numpy as _np
-        import pandas as _pd
-        close = _pd.to_numeric(df.get("close"), errors="coerce")
-        vol   = _pd.to_numeric(df.get("volume"), errors="coerce")
-        if close.notna().any():
-            last_price = float(close.dropna().iloc[-1])
-            st.session_state["kl_price_last"] = last_price
-        if close.notna().any() and vol.notna().any():
-            vwap = (close * vol).cumsum() / _pd.to_numeric(vol, errors="coerce").replace(0, _np.nan).cumsum()
-            vwap = vwap.fillna(method="ffill")
-            if vwap.notna().any():
-                st.session_state["kl_vwap_last"] = float(vwap.dropna().iloc[-1])
-    except Exception:
-        pass
-
-
 @st.cache_data(show_spinner=False, ttl=60)
 def _fetch_candles_cached(ticker: str, host: str, key: str, interval: str="1m", limit: int=640, dividend: Optional[bool]=None):
     data, content = fetch_stock_history(ticker, host, key, interval=interval, limit=int(limit), dividend=dividend)
@@ -202,15 +177,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         vwap = vwap.fillna(method="ffill")
     else:
         vwap = None
-
-    # Cache VWAP and last close for other modules
-    try:
-        if has_candles:
-            st.session_state['kl_vwap_last'] = float(vwap.iloc[-1]) if vwap is not None else None
-            st.session_state['kl_price_last'] = float(pd.to_numeric(df_plot['close'].iloc[-1], errors='coerce'))
-    except Exception:
-        pass
-
 
     fig = go.Figure()
     if has_candles:
