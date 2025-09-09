@@ -4,11 +4,10 @@ import numpy as np
 import time, json, datetime
 
 import importlib, sys
-from lib.intraday_chart import render_key_levels_section, precache_key_levels_metrics
+from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
-from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
@@ -306,35 +305,22 @@ idx_keep = _select_atm_window(
     df["Strike"].values,
     df["Call OI"].values,
     df["Put OI"].values,
-    S
+    S,
+    1.5
 )
 
-
-# Prefer last candle price if available
-price_to_use = st.session_state.get('kl_price_last', S)
-
-# Pre-cache price/VWAP from candles for consistent Price label
-precache_key_levels_metrics(ticker, None, POLYGON_API_KEY)
 fig = make_figure(
     strikes=df["Strike"].values,
     net_gex=df["Net Gex"].values,
     series_enabled=toggles,
     series_dict=series_dict,
-    price=price_to_use,
+    price=S,
     ticker=ticker,
     g_flip=g_flip_val
 )
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-
-# === Advanced Options — compute summary ===
-try:
-    import pandas as _pd
-    _df_ao = df.rename(columns={'Put OI':'put_oi','Call OI':'call_oi','Put Volume':'put_volume','Call Volume':'call_volume','Net Gex':'net_gex'})
-    update_ao_summary(ticker, _df_ao, price_to_use, selected_exps)
-except Exception as _e:
-    pass
 # === Уровни для Key Levels ===
 try:
     _strike = np.asarray(df["Strike"].values, dtype=float)
@@ -379,19 +365,9 @@ try:
     if g_flip_val is not None:
         _max_levels["gflip"] = float(g_flip_val)
 
-        # Save visible-window Net GEX sum for Advanced block
-    try:
-        _ng_sum_visible = float(np.nansum(np.asarray(gex_vals, dtype=float)))
-        st.session_state['ao_net_gex_sum_visible'] = _ng_sum_visible
-    except Exception:
-        pass
-    
     st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
     pass
 
 # === Key Levels chart ===
 render_key_levels_section(ticker, None, POLYGON_API_KEY)
-
-# Advanced block under Key Levels
-render_advanced_analysis_block(ticker)
