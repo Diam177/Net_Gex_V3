@@ -278,14 +278,6 @@ def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12
     return float(best["k"])
 
 g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
-# Round G-Flip to nearest available strike for plotting and key levels
-g_flip_rounded = None
-try:
-    _str_arr = np.asarray(df["Strike"].values, dtype=float)
-    if g_flip_val is not None and len(_str_arr) > 0:
-        g_flip_rounded = float(_str_arr[int(np.argmin(np.abs(_str_arr - float(g_flip_val))))])
-except Exception:
-    g_flip_rounded = g_flip_val
 
 # === Plot ===
 st.subheader("GammaStrat v6.5")
@@ -324,7 +316,7 @@ fig = make_figure(
     series_dict=series_dict,
     price=S,
     ticker=ticker,
-    g_flip=g_flip_rounded if g_flip_rounded is not None else g_flip_val
+    g_flip=g_flip_val
 )
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -351,6 +343,27 @@ try:
     i_ag = _nan_argmax(df["AG"].values[idx_keep])
     if i_ag is not None:
         _max_levels["ag_max"] = float(_strike[idx_keep[i_ag]])
+    # AG 2nd / 3rd maxima (unique strikes)
+    try:
+        _ag_vals = np.asarray(df["AG"].values, dtype=float)[idx_keep]
+        _finite = np.where(np.isfinite(_ag_vals))[0]
+        if _finite.size > 0:
+            order = _finite[np.argsort(_ag_vals[_finite])[::-1]]
+            uniques = []
+            seen = set()
+            for i in order:
+                k = float(_strike[idx_keep[i]])
+                if k in seen:
+                    continue
+                seen.add(k); uniques.append(i)
+                if len(uniques) >= 3:
+                    break
+            if len(uniques) >= 2:
+                _max_levels["ag_max_2"] = float(_strike[idx_keep[uniques[1]]])
+            if len(uniques) >= 3:
+                _max_levels["ag_max_3"] = float(_strike[idx_keep[uniques[2]]])
+    except Exception:
+        pass
     i_pz = _nan_argmax(df["PZ"].values[idx_keep])
     if i_pz is not None:
         _max_levels["pz_max"] = float(_strike[idx_keep[i_pz]])
@@ -369,9 +382,48 @@ try:
         _max_levels["max_pos_gex"] = float(_strike[idx_keep[int(np.nanargmax(gex_vals))]])
         _max_levels["max_neg_gex"] = float(_strike[idx_keep[int(np.nanargmin(gex_vals))]])
 
-    # G-Flip
+    
+    # Additional Net GEX levels: 2nd/3rd positive and 2nd/3rd negative (by magnitude within sign)
+    try:
+        gpos_idx = np.where(np.isfinite(gex_vals) & (gex_vals > 0))[0]
+        if gpos_idx.size > 0:
+            # sort by descending positive GEX
+            order = gpos_idx[np.argsort(gex_vals[gpos_idx])[::-1]]
+            uniques = []
+            seen = set()
+            for i in order:
+                k = float(_strike[idx_keep[i]])
+                if k in seen: 
+                    continue
+                seen.add(k); uniques.append(i)
+                if len(uniques) >= 3:
+                    break
+            if len(uniques) >= 2:
+                _max_levels["max_pos_gex_2"] = float(_strike[idx_keep[uniques[1]]])
+            if len(uniques) >= 3:
+                _max_levels["max_pos_gex_3"] = float(_strike[idx_keep[uniques[2]]])
+        gneg_idx = np.where(np.isfinite(gex_vals) & (gex_vals < 0))[0]
+        if gneg_idx.size > 0:
+            # sort by ascending (most negative first)
+            order = gneg_idx[np.argsort(gex_vals[gneg_idx])]
+            uniques = []
+            seen = set()
+            for i in order:
+                k = float(_strike[idx_keep[i]])
+                if k in seen: 
+                    continue
+                seen.add(k); uniques.append(i)
+                if len(uniques) >= 3:
+                    break
+            if len(uniques) >= 2:
+                _max_levels["max_neg_gex_2"] = float(_strike[idx_keep[uniques[1]]])
+            if len(uniques) >= 3:
+                _max_levels["max_neg_gex_3"] = float(_strike[idx_keep[uniques[2]]])
+    except Exception:
+        pass
+# G-Flip
     if g_flip_val is not None:
-        _max_levels["gflip"] = float(g_flip_rounded if g_flip_rounded is not None else g_flip_val)
+        _max_levels["gflip"] = float(g_flip_val)
 
     st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
