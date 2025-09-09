@@ -299,7 +299,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     else:
         fig.update_yaxes(fixedrange=True)
     fig.update_layout(
-        height=640, margin=dict(l=90, r=20, t=50, b=50),
+        height=800, margin=dict(l=90, r=20, t=50, b=50),
         xaxis_title="Time", yaxis_title="Price",
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
