@@ -138,7 +138,7 @@ def extract_core_from_chain(chain_json):
                             S = float(root[key]); break
                         except Exception:
                             pass
-t0 = 0
+            t0 = 0
             for key in ("regularMarketTime","postMarketTime","time","timestamp","lastTradeDate" ):
                 if key in quote and quote[key] is not None:
                     t0 = _coerce_int(quote[key]); break
