@@ -257,7 +257,11 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     try:
         order_pairs = [
             ("max_neg_gex", "Max Neg GEX"),
+            ("max_neg_gex_2", "Neg Net GEX #2"),
+            ("max_neg_gex_3", "Neg Net GEX #3"),
             ("max_pos_gex", "Max Pos GEX"),
+            ("max_pos_gex_2", "Pos Net GEX #2"),
+            ("max_pos_gex_3", "Pos Net GEX #3"),
             ("put_oi_max",  "Max Put OI"),
             ("call_oi_max", "Max Call OI"),
             ("put_vol_max", "Max Put Volume"),
