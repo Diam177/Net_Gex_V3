@@ -1,167 +1,114 @@
 # -*- coding: utf-8 -*-
 """
-Advanced Options Market Analysis — calculations & rendering
+Advanced Options Market Analysis — calculations & rendering (minimal, no IV history)
 
-This module is intentionally self-contained and side‑effect free.
-It exposes two functions you can import and use from the app:
+Exposes two functions:
+    - update_ao_summary(ticker, df, S, selected_expirations, extra_iv=None)
+    - render_advanced_analysis_block(fallback_ticker=None, vwap_series=None)
 
-    from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
-
-1) update_ao_summary(...):
-   - Computes Put/Call ratios (by OI and by Volume), aggregated Net GEX,
-     and stores a compact summary in st.session_state["ao_summary"].
-   - Call it in app.py right after вы собрали агрегированный DF по выбранным экспирациям
-     (тот же DF, по которому строится основной график по страйкам).
-   - Ничего не выводит в UI.
-
-2) render_advanced_analysis_block(...):
-   - Рисует блок "Advanced Options Market Analysis: <TICKER>"
-     и использует st.session_state["ao_summary"] + опционально st.session_state["iv_summary"].
-   - Размещайте ВНИЗУ секции Key Levels — сразу после графика/кнопок скачивания.
-
-Обе функции максимально осторожны: если каких‑то данных нет — показывают "—"
-и никогда не ломают страницу.
+This version intentionally omits IV Rank / IV Percentile. It shows only current ATM IV and IV Skew.
 """
-
-from __future__ import annotations
-
-from typing import Optional, Sequence, Mapping, Any
+from typing import Optional, Dict, Any
 import numpy as np
+import pandas as pd
+import streamlit as st
 
-try:
-    import pandas as pd  # type: ignore
-except Exception:  # pragma: no cover
-    pd = None  # for type checkers
+# ---------- helpers ----------
 
-import streamlit as st  # type: ignore
-
-
-# ---------------------------
-# Calculations / Aggregation
-# ---------------------------
-
-def _safe_sum(series) -> Optional[float]:
-    """Robust sum that ignores non-finite values. Returns None if empty."""
+def _safe_last(arr):
     try:
-        if series is None:
+        if arr is None:
             return None
-        arr = np.asarray(series, dtype=float)
-        arr = arr[np.isfinite(arr)]
-        if arr.size == 0:
-            return None
-        return float(arr.sum())
+        if hasattr(arr, "__len__") and len(arr) > 0:
+            return arr[-1]
     except Exception:
-        return None
+        pass
+    return None
 
-
-def _safe_last(array_like) -> Optional[float]:
-    """Return last finite element if possible."""
+def _pc_color_html(val) -> str:
+    """Color thresholds: <0.8 green, 0.8–1.2 yellow, >1.2 red."""
     try:
-        arr = np.asarray(array_like, dtype=float)
-        arr = arr[np.isfinite(arr)]
-        if arr.size == 0:
-            return None
-        return float(arr[-1])
+        v = float(val)
+        txt = f"{v:.2f}"
+        if not np.isfinite(v):
+            return txt
+        if v < 0.8:
+            color = "#16A34A"  # green-600
+        elif v > 1.2:
+            color = "#DC2626"  # red-600
+        else:
+            color = "#CA8A04"  # yellow-600
+        return f"<span style='color:{color};font-weight:600'>{txt}</span>"
     except Exception:
-        return None
+        return "—"
 
-
-def _ratio(num: Optional[float], den: Optional[float]) -> Optional[float]:
-    if num is None or den is None or den == 0 or not np.isfinite(den) or not np.isfinite(num):
-        return None
+def _netgex_color_html(val) -> str:
     try:
-        return float(num / den)
+        v = float(val)
+        txt = f"{v:,.0f}"
+        if not np.isfinite(v):
+            return "—"
+        color = "#16A34A" if v > 0 else ("#DC2626" if v < 0 else "#666")
+        return f"<span style='color:{color};font-weight:600'>{txt}</span>"
     except Exception:
-        return None
+        return "—"
 
+# ---------- public API ----------
 
 def update_ao_summary(
     ticker: str,
-    df_options,  # pandas.DataFrame: aggregated by strike across selected expirations
-    current_price: Optional[float],
-    selected_expirations: Optional[Sequence[str]] = None,
-    extra_iv: Optional[Mapping[str, Any]] = None,
+    df: pd.DataFrame,
+    S: float,
+    selected_expirations,
+    extra_iv: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """
-    Compute a compact summary and store it to st.session_state["ao_summary"].
+    """Compute compact AO summary and stash into st.session_state."""
+    # Aggregate inputs (robust to missing columns)
+    put_oi = np.asarray(df.get("put_oi", []), dtype=float) if isinstance(df, pd.DataFrame) else np.asarray([])
+    call_oi = np.asarray(df.get("call_oi", []), dtype=float) if isinstance(df, pd.DataFrame) else np.asarray([])
+    put_vol = np.asarray(df.get("put_volume", []), dtype=float) if isinstance(df, pd.DataFrame) else np.asarray([])
+    call_vol = np.asarray(df.get("call_volume", []), dtype=float) if isinstance(df, pd.DataFrame) else np.asarray([])
+    net_gex = np.asarray(df.get("net_gex", []), dtype=float) if isinstance(df, pd.DataFrame) else np.asarray([])
 
-    Expected columns in df_options (если каких‑то нет — пропускаем):
-      - 'put_oi', 'call_oi'              (open interest per strike)
-      - 'put_volume', 'call_volume'      (volume per strike)
-      - 'net_gex'                        (per strike; already per your methodology)
-    """
-    if df_options is None or pd is None:
-        st.session_state["ao_summary"] = {
-            "ticker": ticker,
-            "S": current_price,
-            "pc_oi": None,
-            "pc_vol": None,
-            "net_gex_total": None,
-            "expirations": list(selected_expirations or []),
-        }
-        return
+    put_oi_sum  = float(np.nansum(put_oi)) if put_oi.size else np.nan
+    call_oi_sum = float(np.nansum(call_oi)) if call_oi.size else np.nan
+    put_vol_sum = float(np.nansum(put_vol)) if put_vol.size else np.nan
+    call_vol_sum= float(np.nansum(call_vol)) if call_vol.size else np.nan
+    net_gex_sum = float(np.nansum(net_gex)) if net_gex.size else np.nan
 
-    put_oi_sum   = _safe_sum(df_options["put_oi"])      if "put_oi" in df_options else None
-    call_oi_sum  = _safe_sum(df_options["call_oi"])     if "call_oi" in df_options else None
-    put_vol_sum  = _safe_sum(df_options["put_volume"])  if "put_volume" in df_options else None
-    call_vol_sum = _safe_sum(df_options["call_volume"]) if "call_volume" in df_options else None
-    net_gex_sum  = _safe_sum(df_options["net_gex"])     if "net_gex" in df_options else None
+    pc_oi  = (put_oi_sum / call_oi_sum) if (isinstance(call_oi_sum, float) and np.isfinite(call_oi_sum) and call_oi_sum > 0) else np.nan
+    pc_vol = (put_vol_sum / call_vol_sum) if (isinstance(call_vol_sum, float) and np.isfinite(call_vol_sum) and call_vol_sum > 0) else np.nan
 
-    summary = {
+    # Save AO summary
+    st.session_state["ao_summary"] = {
         "ticker": ticker,
-        "S": float(current_price) if isinstance(current_price, (int, float)) and np.isfinite(current_price) else None,
-        "pc_oi": _ratio(put_oi_sum, call_oi_sum),
-        "pc_vol": _ratio(put_vol_sum, call_vol_sum),
-        "net_gex_total": net_gex_sum,
+        "S": float(S) if isinstance(S, (int, float)) and np.isfinite(S) else None,
+        "pc_oi": float(pc_oi) if np.isfinite(pc_oi) else None,
+        "pc_vol": float(pc_vol) if np.isfinite(pc_vol) else None,
+        "net_gex_total": net_gex_sum if np.isfinite(net_gex_sum) else None,
         "expirations": list(selected_expirations or []),
     }
 
-    # Optional IV metrics can be passed in or set elsewhere into st.session_state["iv_summary"]
-    if isinstance(extra_iv, Mapping):
-        st.session_state["iv_summary"] = dict(extra_iv)
-
-    st.session_state["ao_summary"] = summary
-
-
-# ---------------------------
-# Rendering
-# ---------------------------
-
-def _pc_color_html(val: Optional[float]) -> str:
-    """Colorize P/C ratio according to thresholds."""
-    if not isinstance(val, (int, float)) or not np.isfinite(val):
-        return "—"
-    low, high = 0.8, 1.2
-    color = "#F1C40F"  # neutral
-    if val < low:
-        color = "#2ECC71"   # green
-    elif val > high:
-        color = "#E74C3C"   # red
-    return f"<span style='color:{color};font-weight:600'>{val:.2f}</span>"
-
-
-def _netgex_color_html(val: Optional[float]) -> str:
-    if not isinstance(val, (int, float)) or not np.isfinite(val):
-        return "—"
-    color = "#2ECC71" if val > 0 else ("#E74C3C" if val < 0 else "#F1C40F")
-    return f"<span style='color:{color};font-weight:600'>{val:,.0f}</span>"
-
+    # Save IV extras (only current ATM IV and Skew)
+    ivs = {}
+    if isinstance(extra_iv, dict):
+        if extra_iv.get("atm_iv") is not None:
+            try:
+                ivs["atm_iv"] = float(extra_iv.get("atm_iv"))
+            except Exception:
+                pass
+        if extra_iv.get("skew") is not None:
+            try:
+                ivs["skew"] = float(extra_iv.get("skew"))
+            except Exception:
+                pass
+    st.session_state["iv_summary"] = ivs
 
 def render_advanced_analysis_block(
     fallback_ticker: Optional[str] = None,
     vwap_series=None,
 ) -> None:
-    """
-    Render the block using previously computed st.session_state["ao_summary"].
-    Place this call **below** the Key Levels chart.
-
-    Parameters
-    ----------
-    fallback_ticker : str, optional
-        Если по какой-то причине в ao_summary нет тикера.
-    vwap_series : array-like, optional
-        Передайте series VWAP (например, из минутных свечей), чтобы мы могли показать последнее значение.
-    """
+    """Render block under Key Levels using st.session_state summaries."""
     try:
         st.markdown("")  # spacing
         ao = dict(st.session_state.get("ao_summary") or {})
@@ -181,14 +128,12 @@ def render_advanced_analysis_block(
         pc_vol_html = _pc_color_html(ao.get("pc_vol"))
         ng_html     = _netgex_color_html(ao.get("net_gex_total"))
 
-        # Optional IV metrics
+        # Optional IV metrics (current only)
         ivs = st.session_state.get("iv_summary", {}) or {}
-        iv_rank = ivs.get("iv_rank")
-        iv_pct  = ivs.get("iv_percentile")
-        skew    = ivs.get("skew")
-        iv_rank_text = f"{iv_rank:.1f}" if isinstance(iv_rank, (int, float)) and np.isfinite(iv_rank) else "—"
-        iv_pct_text  = f"{iv_pct:.1f}" if isinstance(iv_pct, (int, float)) and np.isfinite(iv_pct) else "—"
-        skew_text    = f"{skew:.2f}" if isinstance(skew, (int, float)) and np.isfinite(skew) else "—"
+        atm_iv = ivs.get("atm_iv")
+        skew   = ivs.get("skew")
+        atm_iv_text = f"{atm_iv:.2f}" if isinstance(atm_iv, (int, float)) and np.isfinite(atm_iv) else "—"
+        skew_text   = f"{skew:.2f}" if isinstance(skew, (int, float)) and np.isfinite(skew) else "—"
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -201,7 +146,7 @@ def render_advanced_analysis_block(
             st.markdown("**Net GEX (sum):** " + ng_html, unsafe_allow_html=True)
             st.caption("Агрегировано по выбранным экспирациям.")
         with c4:
-            st.markdown(f"**IV Rank / Percentile:** {iv_rank_text} / {iv_pct_text}")
+            st.markdown(f"**ATM IV:** {atm_iv_text}")
             st.markdown(f"**Skew (Put/Call IV):** {skew_text}")
 
     except Exception as e:  # never break the page
