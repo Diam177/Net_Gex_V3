@@ -272,7 +272,11 @@ try:
             try:
                 dte_val = float(dte)
             except Exception:
-                dte_val = None
+                # Fallback: compute from T if available (T in years)
+                try:
+                    dte_val = float(s.get("T")) * 365.0
+                except Exception:
+                    dte_val = None
             ivc = s.get("iv_call") or {}
             ivp = s.get("iv_put") or {}
             Ks = set(ivc.keys()) | set(ivp.keys())
@@ -467,3 +471,4 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
+
