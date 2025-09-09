@@ -9,6 +9,7 @@ import datetime as _dt
 import time as _time
 import json
 import requests
+from dateutil import tz as _tz
 
 POLYGON_BASE_URL = "https://api.polygon.io"
 
@@ -18,10 +19,19 @@ def _append_api_key(url: str, api_key: str) -> str:
     return url + (("&" if "?" in url else "?") + "apiKey=" + api_key)
 
 def _to_unix(date_str: str) -> int:
+    """Map YYYY-MM-DD to 16:00 America/New_York of that date (end of RTH).
+    Fallback: end of day UTC.
+    """
     try:
-        return int(_dt.datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=_dt.timezone.utc).timestamp())
+        tz_et = _tz.gettz("America/New_York")
+        dt_local = _dt.datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=tz_et)
+        dt_local = dt_local.replace(hour=16, minute=0, second=0, microsecond=0)
+        return int(dt_local.timestamp())
     except Exception:
-        return 0
+        try:
+            return int(_dt.datetime.strptime(date_str, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=_dt.timezone.utc).timestamp())
+        except Exception:
+            return 0
 
 def _to_iso(ts_unix: int) -> str:
     try:
