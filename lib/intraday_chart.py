@@ -198,18 +198,12 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         from .plotting import LINE_STYLE, POS_COLOR, NEG_COLOR
         _cmap = {
             "max_pos_gex": POS_COLOR,
-            "max_pos_gex_2": POS_COLOR,
-            "max_pos_gex_3": POS_COLOR,
             "max_neg_gex": NEG_COLOR,
-            "max_neg_gex_2": NEG_COLOR,
-            "max_neg_gex_3": NEG_COLOR,
             "call_oi_max": LINE_STYLE.get("Call OI", {}).get("line", "#55aa55"),
             "put_oi_max":  LINE_STYLE.get("Put OI", {}).get("line", "#aa3355"),
             "call_vol_max":LINE_STYLE.get("Call Volume", {}).get("line", "#2D83FF"),
             "put_vol_max": LINE_STYLE.get("Put Volume", {}).get("line", "#8C5A0A"),
             "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
-            "ag_max_2":    LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
-            "ag_max_3":    LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
             "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
             "gflip":       "#AAAAAA",
         }
@@ -217,7 +211,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         _cmap = {}
 
     def _add_line(tag, label):
-        # default dotted major line
         y = levels.get(tag)
         if y is None: return
         fig.add_trace(go.Scatter(
@@ -227,29 +220,13 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             hoverinfo="skip", showlegend=True
         ))
 
-    
-    def _add_line_secondary(tag, label):
-        y = levels.get(tag)
-        if y is None: return
-        fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[y, y], mode="lines",
-            name=f"{label} ({_fmt_int(y)})",
-            line=dict(width=1.5, color=_cmap.get(tag, "#BBBBBB")),
-            hoverinfo="skip", showlegend=True
-        ))
     _add_line("max_neg_gex", "Max Neg GEX")
-    _add_line_secondary("max_neg_gex_2", "Neg Net GEX #2")
-    _add_line_secondary("max_neg_gex_3", "Neg Net GEX #3")
     _add_line("max_pos_gex", "Max Pos GEX")
-    _add_line_secondary("max_pos_gex_2", "Pos Net GEX #2")
-    _add_line_secondary("max_pos_gex_3", "Pos Net GEX #3")
     _add_line("put_oi_max",  "Max Put OI")
     _add_line("call_oi_max", "Max Call OI")
     _add_line("put_vol_max", "Max Put Volume")
     _add_line("call_vol_max","Max Call Volume")
     _add_line("ag_max",      "AG")
-    _add_line_secondary("ag_max_2", "AG #2")
-    _add_line_secondary("ag_max_3", "AG #3")
     _add_line("pz_max",      "PZ")
     _add_line("gflip",       "G-Flip")
 
@@ -257,18 +234,12 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     try:
         order_pairs = [
             ("max_neg_gex", "Max Neg GEX"),
-            ("max_neg_gex_2", "Neg Net GEX #2"),
-            ("max_neg_gex_3", "Neg Net GEX #3"),
             ("max_pos_gex", "Max Pos GEX"),
-            ("max_pos_gex_2", "Pos Net GEX #2"),
-            ("max_pos_gex_3", "Pos Net GEX #3"),
             ("put_oi_max",  "Max Put OI"),
             ("call_oi_max", "Max Call OI"),
             ("put_vol_max", "Max Put Volume"),
             ("call_vol_max","Max Call Volume"),
             ("ag_max",      "AG"),
-            ("ag_max_2",      "AG #2"),
-            ("ag_max_3",      "AG #3"),
             ("pz_max",      "PZ"),
             ("gflip",       "G-Flip"),
         ]
@@ -295,7 +266,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         try: x_center = x0 + (x1 - x0) / 2
         except Exception: x_center = x_mid
         y_vals = []
-        for tag in ("max_neg_gex","max_pos_gex","max_neg_gex_2","max_neg_gex_3","max_pos_gex_2","max_pos_gex_3","put_oi_max","call_oi_max","put_vol_max","call_vol_max","ag_max","ag_max_2","ag_max_3","pz_max","gflip"):
+        for tag in ("max_neg_gex","max_pos_gex","put_oi_max","call_oi_max","put_vol_max","call_vol_max","ag_max","pz_max","gflip"):
             v = levels.get(tag)
             if isinstance(v, (int,float)): y_vals.append(float(v))
         y_center = (min(y_vals)+max(y_vals))/2.0 if y_vals else 0.0
@@ -307,6 +278,25 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             bgcolor="rgba(0,0,0,0)"
         )
 
+    
+    # Fix y-axis range based solely on key levels (not on current price)
+    try:
+        step = float(st.session_state.get("first_chart_step", 1.0))
+    except Exception:
+        step = 1.0
+    _ys = []
+    for _tag, _ in order_pairs:
+        _v = levels.get(_tag)
+        if _v is not None:
+            try: _ys.append(float(_v))
+            except Exception: pass
+    if _ys:
+        _pad = max(step, 0.5)
+        y_min = min(_ys) - 1.5 * _pad
+        y_max = max(_ys) + 1.5 * _pad
+        fig.update_yaxes(range=[y_min, y_max], fixedrange=True)
+    else:
+        fig.update_yaxes(fixedrange=True)
     fig.update_layout(
         height=640, margin=dict(l=90, r=20, t=50, b=50),
         xaxis_title="Time", yaxis_title="Price",
