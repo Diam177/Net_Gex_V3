@@ -1,5 +1,24 @@
 import math, numpy as np
 from math import log, sqrt
+from datetime import datetime, time as _dt_time
+from dateutil import tz as _tz
+
+def _market_phase_now_et():
+    """Return 'pre', 'rth', or 'post' based on America/New_York time (Mon–Fri)."""
+    try:
+        tz = _tz.gettz('America/New_York')
+        now_et = datetime.now(tz=tz)
+        if now_et.weekday() >= 5:
+            return 'rth'  # treat weekend as regular to avoid misleading pre/post
+        t = now_et.time()
+        if t < _dt_time(9, 30):
+            return 'pre'
+        if t >= _dt_time(16, 0):
+            return 'post'
+        return 'rth'
+    except Exception:
+        return 'rth'
+
 
 M_CONTRACT = 100.0
 
@@ -98,18 +117,28 @@ def extract_core_from_chain(chain_json):
             quote = _first_nonempty_dict(root.get("quote", {}), root.get("underlying", {}))
             # robust price/time
             S = None
-            for key in ("regularMarketPrice","postMarketPrice","last","lastPrice","price","close","regularMarketPreviousClose"):
+            phase = _market_phase_now_et()
+            if phase == 'pre':
+                priority = ('preMarketPrice','regularMarketPrice','postMarketPrice','last','lastPrice','price','close','regularMarketPreviousClose')
+            elif phase == 'post':
+                priority = ('postMarketPrice','regularMarketPrice','last','lastPrice','price','close','regularMarketPreviousClose')
+            else:
+                priority = ('regularMarketPrice','last','lastPrice','price','close','regularMarketPreviousClose')
+            for key in priority:
                 if key in quote and quote[key] is not None:
-                    S = float(quote[key]); break
+                    try:
+                        S = float(quote[key]); break
+                    except Exception:
+                        pass
             if S is None:
                 # some responses put price in root
-                for key in ("regularMarketPrice","postMarketPrice","last","lastPrice","price","close"):
+                for key in priority:
                     if key in root and root[key] is not None:
-                        S = float(root[key]); break
-            if S is None:
-                # give up on this root
-                raise KeyError("no price field")
-            t0 = 0
+                        try:
+                            S = float(root[key]); break
+                        except Exception:
+                            pass
+t0 = 0
             for key in ("regularMarketTime","postMarketTime","time","timestamp","lastTradeDate" ):
                 if key in quote and quote[key] is not None:
                     t0 = _coerce_int(quote[key]); break
