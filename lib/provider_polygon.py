@@ -14,98 +14,6 @@ POLYGON_BASE_URL = "https://api.polygon.io"
 
 # ----------------- helpers -----------------
 
-# Extended prices (regular/pre/post) from multiple Polygon endpoints
-def _get_extended_prices_http(symbol: str, api_key: str) -> Dict[str, Any]:
-    """Return dict with keys:
-       - regularMarketPrice (float or None)
-       - preMarketPrice (float or None)
-       - postMarketPrice (float or None)
-       - regularMarketTime (unix int or None)
-    Tries v1 open-close for today (ET), then v3 snapshot stocks, then v2 snapshot.
-    Graceful fallbacks if a field is missing.
-    """
-    out: Dict[str, Any] = {
-        "regularMarketPrice": None,
-        "preMarketPrice": None,
-        "postMarketPrice": None,
-        "regularMarketTime": None,
-    }
-    try:
-        from dateutil import tz as _tz
-        tz_et = _tz.gettz("America/New_York")
-        now_et = _dt.datetime.now(tz=tz_et)
-        date_str = now_et.strftime("%Y-%m-%d")
-    except Exception:
-        date_str = _dt.datetime.utcnow().strftime("%Y-%m-%d")
-
-    def _numeric_first(dct, keys):
-        for k in keys:
-            if isinstance(dct, dict) and k in dct and dct[k] is not None:
-                try:
-                    return float(dct[k])
-                except Exception:
-                    try:
-                        return float(str(dct[k]).replace(',', ''))
-                    except Exception:
-                        pass
-        return None
-
-    # v1 open-close has preMarket/afterHours for stocks
-    try:
-        u = f"{POLYGON_BASE_URL}/v1/open-close/{symbol}/{date_str}"
-        r = requests.get(_append_api_key(u, api_key), timeout=15)
-        if r.ok:
-            j = r.json() or {}
-            out["regularMarketPrice"] = _numeric_first(j, ["close","price","last"])
-            out["preMarketPrice"] = _numeric_first(j, ["preMarket","premarket","pre_market","preMarketPrice"])
-            out["postMarketPrice"] = _numeric_first(j, ["afterHours","after_hours","postMarket","postMarketPrice"])
-            # time not provided directly; use server time
-            out["regularMarketTime"] = int(_time.time())
-    except Exception:
-        pass
-
-    # v3 snapshot stocks/{ticker} (structure can vary); scan a few typical places
-    if out["preMarketPrice"] is None or out["postMarketPrice"] is None or out["regularMarketPrice"] is None:
-        try:
-            u = f"{POLYGON_BASE_URL}/v3/snapshot/stocks/{symbol}"
-            r = requests.get(_append_api_key(u, api_key), timeout=15)
-            if r.ok:
-                j = r.json() or {}
-                data = j.get("results") or j.get("result") or j
-                if isinstance(data, dict):
-                    # try common keys
-                    out["regularMarketPrice"] = out["regularMarketPrice"] or _numeric_first(data, ["lastTrade","last","price"])
-                    # nested lastTrade dict
-                    lt = data.get("lastTrade") if isinstance(data.get("lastTrade"), dict) else None
-                    if lt:
-                        out["regularMarketPrice"] = out["regularMarketPrice"] or _numeric_first(lt, ["p","price"])
-                    out["preMarketPrice"] = out["preMarketPrice"] or _numeric_first(data, ["preMarket","preMarketPrice","premarket"])
-                    out["postMarketPrice"] = out["postMarketPrice"] or _numeric_first(data, ["afterHours","postMarket","postMarketPrice"])
-                    out["regularMarketTime"] = out["regularMarketTime"] or int(_time.time())
-        except Exception:
-            pass
-
-    # v2 snapshot tickers/{symbol}
-    if out["preMarketPrice"] is None or out["postMarketPrice"] is None or out["regularMarketPrice"] is None:
-        try:
-            u = f"{POLYGON_BASE_URL}/v2/snapshot/locale/us/markets/stocks/tickers/{symbol}"
-            r = requests.get(_append_api_key(u, api_key), timeout=15)
-            if r.ok:
-                j = r.json() or {}
-                ticker_obj = j.get("ticker") or j.get("results") or j
-                if isinstance(ticker_obj, dict):
-                    last_trade = ticker_obj.get("lastTrade") or {}
-                    out["regularMarketPrice"] = out["regularMarketPrice"] or _numeric_first(last_trade, ["p","price"])
-                    # some variants may expose these as top-level
-                    out["preMarketPrice"] = out["preMarketPrice"] or _numeric_first(ticker_obj, ["preMarket","preMarketPrice"])
-                    out["postMarketPrice"] = out["postMarketPrice"] or _numeric_first(ticker_obj, ["afterHours","postMarket","postMarketPrice"])
-                    out["regularMarketTime"] = out["regularMarketTime"] or int(_time.time())
-        except Exception:
-            pass
-
-    return out
-
-
 def _append_api_key(url: str, api_key: str) -> str:
     return url + (("&" if "?" in url else "?") + "apiKey=" + api_key)
 
@@ -168,7 +76,26 @@ def _get_underlying_price_http(symbol: str, api_key: str) -> Tuple[Optional[floa
                 return float(p), ts_unix, "v2.last.trade"
     except Exception:
         pass
-    # 2) v3 stocks snapshot
+    
+    # 2b) latest 1-minute aggregate (sorted desc -> freshest bar)
+    try:
+        now_ms = int(_time.time() * 1000)
+        from_ms = now_ms - 3 * 24 * 3600 * 1000  # last 3 days window is enough
+        u = f"{POLYGON_BASE_URL}/v2/aggs/ticker/{symbol}/range/1/minute/{from_ms}/{now_ms}"
+        r = requests.get(u, params={"adjusted": "true", "sort": "desc", "limit": 1, "apiKey": api_key}, timeout=10)
+        if r.ok:
+            j = r.json()
+            arr = j.get("results") or []
+            if isinstance(arr, list) and len(arr) > 0:
+                rec = arr[0]
+                p = rec.get("c")
+                t = rec.get("t")
+                ts_unix = int(int(t)/1000) if isinstance(t, (int, float)) else int(_time.time())
+                if p is not None:
+                    return float(p), ts_unix, "v2.aggs.1m.desc"
+    except Exception:
+        pass
+# 2) v3 stocks snapshot
     try:
         u = f"{POLYGON_BASE_URL}/v3/snapshot/stocks"
         r = requests.get(u, params={"ticker": symbol, "apiKey": api_key}, timeout=15)
@@ -219,7 +146,7 @@ def _get_underlying_price_http(symbol: str, api_key: str) -> Tuple[Optional[floa
         pass
     return None, None, "none"
 
-def _remap_to_yahoo_like(items: List[dict], S: Optional[float], ts_unix: Optional[int], ext_prices: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _remap_to_yahoo_like(items: List[dict], S: Optional[float], ts_unix: Optional[int]) -> Dict[str, Any]:
     grouped: Dict[str, Dict[str, Any]] = {}
     exp_unix_map: Dict[str, int] = {}
 
@@ -268,8 +195,6 @@ def _remap_to_yahoo_like(items: List[dict], S: Optional[float], ts_unix: Optiona
             "regularMarketDayHigh": None,
             "regularMarketDayLow": None,
             "regularMarketTime": int(ts_unix or _time.time()),
-            "preMarketPrice": (None if ext_prices is None else ext_prices.get("preMarketPrice")),
-            "postMarketPrice": (None if ext_prices is None else ext_prices.get("postMarketPrice")),
         },
         "expirationDates": expirationDates,
         "options": options_blocks,
@@ -307,8 +232,7 @@ def fetch_option_chain(ticker: str,
         S, ts_unix, price_source = _get_underlying_price_http(underlying_symbol, api_key)
 
     # 3) нормализованный JSON
-    _ext_prices = _get_extended_prices_http(underlying_symbol, api_key)
-    out_json = _remap_to_yahoo_like(items, S, ts_unix, _ext_prices)
+    out_json = _remap_to_yahoo_like(items, S, ts_unix)
 
     # 4) сырые байты провайдера
     raw_dump = {
