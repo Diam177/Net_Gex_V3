@@ -2,6 +2,32 @@
 import numpy as np
 import plotly.graph_objects as go
 
+from datetime import datetime, time as _dt_time
+from dateutil import tz as _tz
+
+def _price_label_prefix_now_et() -> str:
+    """Return 'Price', 'Price(Pre)', or 'Price(Post)' based on ET time.
+    - Pre:   before 09:30 ET on a weekday
+    - RTH:   09:30–16:00 ET (no suffix)
+    - Post:  after 16:00 ET on a weekday
+    Weekends/unknown tz fallback -> no suffix (just 'Price').
+    """
+    try:
+        tz_et = _tz.gettz("America/New_York")
+        now_et = datetime.now(tz=tz_et)
+        # Only Mon–Fri are trading days. On weekends just show 'Price'.
+        if now_et.weekday() >= 5:
+            return "Price"
+        t = now_et.time()
+        if t < _dt_time(9, 30):
+            return "Price(Pre)"
+        if t >= _dt_time(16, 0):
+            return "Price(Post)"
+        return "Price"
+    except Exception:
+        # Conservative fallback
+        return "Price"
+
 POS_COLOR = "#48B4FF"   # positive Net Gex bars (blue)
 NEG_COLOR = "#FF3B30"   # negative Net Gex bars (red)
 
@@ -201,7 +227,7 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                           y0=0, y1=1, yref="paper",
                           line=dict(width=1, color="#f0a000"), layer="above")
             fig.add_annotation(x=x_idx, y=1.07, xref="x", yref="paper",
-                               text=f"Price: {price_val:.2f}", showarrow=False,
+                               text=f"{_price_label_prefix_now_et()}: {price_val:.2f}", showarrow=False,
                                xanchor="center", yanchor="bottom",
                                font=dict(size=14, color="#f0a000"))
         # G-Flip marker (optional, dashed)
