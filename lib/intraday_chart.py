@@ -160,9 +160,9 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         has_candles = not df_plot.empty
 
     if has_candles:
-        tickvals, ticktext = _build_rth_ticks_30m(df_plot)
-        x0, x1 = df_plot["ts"].iloc[0], df_plot["ts"].iloc[-1]
-        x_mid = df_plot["ts"].iloc[len(df_plot)//2]
+        tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
+        x0, x1 = tickvals[0], tickvals[-1]
+        x_mid = tickvals[len(tickvals)//2]
     else:
         tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
         x0, x1 = tickvals[0], tickvals[-1]
