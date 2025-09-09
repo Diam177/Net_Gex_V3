@@ -262,8 +262,47 @@ try:
             continue
         _diffs.append((_iv_put_acc[k]/c) - (_iv_call_acc[k]/c))
     _skew = float(np.nanmean(_diffs)) if len(_diffs)>0 else None
-    _extra_iv = {"skew": _skew}
+    
+    # --- Compute ATM IV from nearest expiry (min positive DTE) and nearest strike to S ---
+    _atm_iv = None
+    try:
+        best_dte = 1e9
+        for s in (all_series_ctx or []):
+            dte = s.get("days") or s.get("dte") or s.get("DTE")
+            try:
+                dte_val = float(dte)
+            except Exception:
+                dte_val = None
+            ivc = s.get("iv_call") or {}
+            ivp = s.get("iv_put") or {}
+            Ks = set(ivc.keys()) | set(ivp.keys())
+            if not Ks:
+                continue
+            # choose strike closest to S
+            def _to_f(x):
+                try:
+                    return float(x)
+                except Exception:
+                    try:
+                        return float(str(x).replace("C","").replace("P",""))
+                    except Exception:
+                        return float("nan")
+            k_near = min(Ks, key=lambda k: abs(_to_f(k) - float(S)))
+            vals = []
+            if k_near in ivc and ivc[k_near] is not None:
+                vals.append(float(ivc[k_near]))
+            if k_near in ivp and ivp[k_near] is not None:
+                vals.append(float(ivp[k_near]))
+            if vals:
+                if (dte_val is not None and dte_val > 0 and dte_val < best_dte) or (best_dte == 1e9 and dte_val is not None):
+                    best_dte = dte_val if dte_val is not None else best_dte
+                    _atm_iv = float(np.nanmean(vals))
+    except Exception:
+        _atm_iv = None
+
+    _extra_iv = {"skew": _skew, "atm_iv": _atm_iv}
     update_ao_summary(ticker, _df_ao, S, selected_exps, extra_iv=_extra_iv)
+
 except Exception:
     pass
 
@@ -428,4 +467,3 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
-
