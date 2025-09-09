@@ -165,13 +165,6 @@ def render_advanced_analysis_block(
     try:
         st.markdown("")  # spacing
         ao = dict(st.session_state.get("ao_summary") or {})
-        # Prefer visible-window Net GEX sum if available
-        try:
-            _ng_vis = st.session_state.get('ao_net_gex_sum_visible', None)
-            if _ng_vis is not None:
-                ao['net_gex_total'] = float(_ng_vis)
-        except Exception:
-            pass
         ticker = ao.get("ticker") or fallback_ticker or ""
 
         st.subheader(f"Advanced Options Market Analysis: {ticker}")
@@ -181,7 +174,7 @@ def render_advanced_analysis_block(
         price_text = f"{price_val:.2f}" if isinstance(price_val, (int, float)) and np.isfinite(price_val) else "—"
 
         # VWAP (last visible)
-        vwap_val = _safe_last(vwap_series) if vwap_series is not None else st.session_state.get('kl_vwap_last')
+        vwap_val = _safe_last(vwap_series) if vwap_series is not None else None
         vwap_text = f"{vwap_val:.2f}" if isinstance(vwap_val, (int, float)) and np.isfinite(vwap_val) else "—"
 
         pc_oi_html  = _pc_color_html(ao.get("pc_oi"))
