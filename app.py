@@ -6,8 +6,10 @@ import time, json, datetime
 import importlib, sys
 from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
+from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
+from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
 
@@ -232,6 +234,39 @@ for _exp in selected_exps:
     _metrics_list.append(_metrics)
 
 metrics = _sum_metrics_list(_metrics_list)
+# --- Advanced Options summary (for the bottom block) ---
+try:
+    # Prepare lightweight DF with canonical column names expected by update_ao_summary
+    _df_ao = pd.DataFrame({
+        "put_oi": metrics.get("put_oi", []),
+        "call_oi": metrics.get("call_oi", []),
+        "put_volume": metrics.get("put_vol", []),
+        "call_volume": metrics.get("call_vol", []),
+        "net_gex": metrics.get("net_gex", []),
+    })
+    # Compute a simple Put/Call IV Skew across strikes from all_series_ctx (mean of (iv_put - iv_call))
+    _iv_call_acc, _iv_put_acc, _cnt = {}, {}, {}
+    for s in (all_series_ctx or []):
+        for k, v in (s.get("iv_call") or {}).items():
+            if v is None: continue
+            _iv_call_acc[k] = _iv_call_acc.get(k, 0.0) + float(v)
+            _cnt[k] = _cnt.get(k, 0) + 1
+        for k, v in (s.get("iv_put") or {}).items():
+            if v is None: continue
+            _iv_put_acc[k] = _iv_put_acc.get(k, 0.0) + float(v)
+            _cnt[k] = _cnt.get(k, 0) + 1
+    _diffs = []
+    for k in set(_iv_call_acc.keys()).intersection(_iv_put_acc.keys()):
+        c = _cnt.get(k, 1)
+        if c <= 0: 
+            continue
+        _diffs.append((_iv_put_acc[k]/c) - (_iv_call_acc[k]/c))
+    _skew = float(np.nanmean(_diffs)) if len(_diffs)>0 else None
+    _extra_iv = {"skew": _skew}
+    update_ao_summary(ticker, _df_ao, S, selected_exps, extra_iv=_extra_iv)
+except Exception:
+    pass
+
 # === Таблица по страйкам ===
 df = pd.DataFrame({
     "Strike": metrics["strikes"],
@@ -278,14 +313,6 @@ def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12
     return float(best["k"])
 
 g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
-# Round G-Flip to nearest strike in available grid (for plotting & key levels)
-g_flip_rounded = None
-try:
-    _str_arr = np.asarray(df["Strike"].values, dtype=float)
-    if g_flip_val is not None and len(_str_arr) > 0:
-        g_flip_rounded = float(_str_arr[int(np.argmin(np.abs(_str_arr - float(g_flip_val))))])
-except Exception:
-    g_flip_rounded = g_flip_val
 
 # === Plot ===
 st.subheader("GammaStrat v6.5")
@@ -324,7 +351,7 @@ fig = make_figure(
     series_dict=series_dict,
     price=S,
     ticker=ticker,
-    g_flip=(g_flip_rounded if g_flip_rounded is not None else g_flip_val)
+    g_flip=g_flip_val
 )
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -351,27 +378,6 @@ try:
     i_ag = _nan_argmax(df["AG"].values[idx_keep])
     if i_ag is not None:
         _max_levels["ag_max"] = float(_strike[idx_keep[i_ag]])
-    # AG 2nd / 3rd maxima (unique strikes)
-    try:
-        _ag_vals = np.asarray(df["AG"].values, dtype=float)[idx_keep]
-        _finite = np.where(np.isfinite(_ag_vals))[0]
-        if _finite.size > 0:
-            order = _finite[np.argsort(_ag_vals[_finite])[::-1]]
-            uniques = []
-            seen = set()
-            for i in order:
-                k = float(_strike[idx_keep[i]])
-                if k in seen:
-                    continue
-                seen.add(k); uniques.append(i)
-                if len(uniques) >= 3:
-                    break
-            if len(uniques) >= 2:
-                _max_levels["ag_max_2"] = float(_strike[idx_keep[uniques[1]]])
-            if len(uniques) >= 3:
-                _max_levels["ag_max_3"] = float(_strike[idx_keep[uniques[2]]])
-    except Exception:
-        pass
     i_pz = _nan_argmax(df["PZ"].values[idx_keep])
     if i_pz is not None:
         _max_levels["pz_max"] = float(_strike[idx_keep[i_pz]])
@@ -390,48 +396,9 @@ try:
         _max_levels["max_pos_gex"] = float(_strike[idx_keep[int(np.nanargmax(gex_vals))]])
         _max_levels["max_neg_gex"] = float(_strike[idx_keep[int(np.nanargmin(gex_vals))]])
 
-    
-    # Additional Net GEX levels: 2nd/3rd positive and 2nd/3rd negative (by magnitude within sign)
-    try:
-        gpos_idx = np.where(np.isfinite(gex_vals) & (gex_vals > 0))[0]
-        if gpos_idx.size > 0:
-            # sort by descending positive GEX
-            order = gpos_idx[np.argsort(gex_vals[gpos_idx])[::-1]]
-            uniques = []
-            seen = set()
-            for i in order:
-                k = float(_strike[idx_keep[i]])
-                if k in seen: 
-                    continue
-                seen.add(k); uniques.append(i)
-                if len(uniques) >= 3:
-                    break
-            if len(uniques) >= 2:
-                _max_levels["max_pos_gex_2"] = float(_strike[idx_keep[uniques[1]]])
-            if len(uniques) >= 3:
-                _max_levels["max_pos_gex_3"] = float(_strike[idx_keep[uniques[2]]])
-        gneg_idx = np.where(np.isfinite(gex_vals) & (gex_vals < 0))[0]
-        if gneg_idx.size > 0:
-            # sort by ascending (most negative first)
-            order = gneg_idx[np.argsort(gex_vals[gneg_idx])]
-            uniques = []
-            seen = set()
-            for i in order:
-                k = float(_strike[idx_keep[i]])
-                if k in seen: 
-                    continue
-                seen.add(k); uniques.append(i)
-                if len(uniques) >= 3:
-                    break
-            if len(uniques) >= 2:
-                _max_levels["max_neg_gex_2"] = float(_strike[idx_keep[uniques[1]]])
-            if len(uniques) >= 3:
-                _max_levels["max_neg_gex_3"] = float(_strike[idx_keep[uniques[2]]])
-    except Exception:
-        pass
-# G-Flip
+    # G-Flip
     if g_flip_val is not None:
-        _max_levels["gflip"] = float(g_flip_rounded if g_flip_rounded is not None else g_flip_val)
+        _max_levels["gflip"] = float(g_flip_val)
 
     st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
@@ -439,3 +406,26 @@ except Exception:
 
 # === Key Levels chart ===
 render_key_levels_section(ticker, None, POLYGON_API_KEY)
+# === Advanced Options Market Analysis block ===
+
+# Pre-compute simple intraday VWAP series from minute candles
+_vwap_series = None
+try:
+    candles_json, _ = fetch_stock_history(ticker, None, POLYGON_API_KEY, interval=str(st.session_state.get("kl_interval","1m")), limit=int(st.session_state.get("kl_limit",640)))
+    recs = candles_json.get("candles", []) if isinstance(candles_json, dict) else []
+    if recs:
+        sums_pv, sums_v = 0.0, 0.0
+        _vwap_series = []
+        for r in recs:
+            h = float(r.get("high", 0.0)); l = float(r.get("low", 0.0)); c = float(r.get("close", 0.0))
+            v = float(r.get("volume", 0.0))
+            tp = (h + l + c) / 3.0
+            sums_pv += tp * v
+            sums_v  += v
+            if sums_v > 0:
+                _vwap_series.append(sums_pv / sums_v)
+except Exception:
+    _vwap_series = None
+
+render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
+
