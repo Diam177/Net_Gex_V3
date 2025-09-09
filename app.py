@@ -278,6 +278,14 @@ def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12
     return float(best["k"])
 
 g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
+# Round G-Flip to nearest available strike for plotting and key levels
+g_flip_rounded = None
+try:
+    _str_arr = np.asarray(df["Strike"].values, dtype=float)
+    if g_flip_val is not None and len(_str_arr) > 0:
+        g_flip_rounded = float(_str_arr[int(np.argmin(np.abs(_str_arr - float(g_flip_val))))])
+except Exception:
+    g_flip_rounded = g_flip_val
 
 # === Plot ===
 st.subheader("GammaStrat v6.5")
@@ -316,7 +324,7 @@ fig = make_figure(
     series_dict=series_dict,
     price=S,
     ticker=ticker,
-    g_flip=g_flip_val
+    g_flip=g_flip_rounded if g_flip_rounded is not None else g_flip_val
 )
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -363,7 +371,7 @@ try:
 
     # G-Flip
     if g_flip_val is not None:
-        _max_levels["gflip"] = float(g_flip_val)
+        _max_levels["gflip"] = float(g_flip_rounded if g_flip_rounded is not None else g_flip_val)
 
     st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
