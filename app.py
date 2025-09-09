@@ -294,7 +294,7 @@ try:
             if k_near in ivp and ivp[k_near] is not None:
                 vals.append(float(ivp[k_near]))
             if vals:
-                if (dte_val is not None and dte_val > 0 and dte_val < best_dte) or (best_dte == 1e9 and dte_val is not None):
+                if (dte_val is not None and dte_val >= 0 and dte_val < best_dte) or (best_dte == 1e9 and dte_val is not None):
                     best_dte = dte_val if dte_val is not None else best_dte
                     _atm_iv = float(np.nanmean(vals))
     except Exception:
