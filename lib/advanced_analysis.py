@@ -203,7 +203,7 @@ def render_advanced_analysis_block(
 
         # tooltip HTML
         em_tip = "<span style='cursor:help' title='EM = S × ATM_IV × sqrt(t). t=1/252 (1d), 5/252 (1w)'>ℹ</span>"
-c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             st.metric("Текущая цена", price_text)
             st.markdown(f"**VWAP:** {vwap_text}")
