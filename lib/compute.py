@@ -228,7 +228,9 @@ def compute_series_metrics_for_expiry(S, t0, expiry_unix, block, day_high=None, 
     import numpy as np
     strikes, call_oi, put_oi, call_vol, put_vol, iv_call, iv_put = aggregate_series(block)
 
-    T = max((expiry_unix - t0) / (365*24*3600), 1e-6)
+    DT_YEAR = 365.0 * 24 * 3600.0
+    T_raw = (expiry_unix - t0) / DT_YEAR
+    T = T_raw if T_raw > 0 else (1.0/252.0)
     K_atm = min(strikes, key=lambda k: abs(k - S))
     sigma_atm = pick_sigma_atm(K_atm, iv_call, iv_put, strikes)
     k_scale = compute_k_scale(S, K_atm, sigma_atm, T)
