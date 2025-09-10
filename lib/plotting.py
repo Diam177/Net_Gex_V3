@@ -236,11 +236,12 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
                 k_val = float(g_flip)
                 i_near_g = int(np.argmin(np.abs(strikes_keep - k_val)))
                 x_idx_g = i_near_g
+                k_snap = float(strikes_keep[i_near_g])
                 fig.add_shape(type="line", x0=x_idx_g, x1=x_idx_g, xref="x",
                               y0=0, y1=1, yref="paper",
                               line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
                 fig.add_annotation(x=x_idx_g, y=1.08, xref="x", yref="paper",
-                                   text=f"G-Flip: {k_val:.2f}", showarrow=False,
+                                   text=f"G-Flip: {int(round(k_snap))}", showarrow=False,
                                    xanchor="center", yanchor="top",
                                    font=dict(size=14, color="#AAAAAA"))
                 # add legend entry (non-clickable via layout at end)
