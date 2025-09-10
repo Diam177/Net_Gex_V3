@@ -326,7 +326,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         )
 
     fig.update_layout(
-        height=820, margin=dict(l=110, r=20, t=50, b=50),
+        height=820, margin=dict(l=110, r=20, t=50, b=62),
         xaxis_title="Time", yaxis_title="Price",
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
@@ -395,7 +395,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         y_range = None
     fig.update_layout(xaxis_rangeslider_visible=True)
     
-    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10), showgrid=True, gridcolor="rgba(255,255,255,0.05)", gridwidth=0.5)
+    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10), ticklabelposition="outside", ticklabelstandoff=14, showgrid=True, gridcolor="rgba(255,255,255,0.05)", gridwidth=0.5)
     fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10, color="#7d8590"), showgrid=True, gridcolor="rgba(255,255,255,0.05)", gridwidth=0.5)
 
     # Add white overlay labels at level lines (annotations) so they remain visible atop gray ticks
