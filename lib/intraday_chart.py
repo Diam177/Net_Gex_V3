@@ -383,15 +383,20 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10, color="#7d8590"))
     # Overlay y-axis for highlighted tick labels (white on top of gray base)
     try:
-        _y2 = dict(overlaying='y', matches='y', side='left', showgrid=False,
-                   ticks='', ticklen=0, showline=False, zeroline=False,
-                   tickmode=('array' if 'highlight_vals' in locals() and highlight_vals else 'auto'),
-                   tickvals=(highlight_vals if 'highlight_vals' in locals() else None),
-                   ticktext=([str(v) for v in highlight_vals] if 'highlight_vals' in locals() and highlight_vals else None),
-                   tickfont=dict(size=10, color='#FFFFFF'))
+        _y2 = dict(
+            overlaying='y', matches='y', side='left',
+            anchor='free', position=0,  # lock to left edge
+            showgrid=False, showline=False, zeroline=False,
+            ticks='', ticklen=0,
+            tickmode=('array' if 'highlight_vals' in locals() and highlight_vals else 'auto'),
+            tickvals=(highlight_vals if 'highlight_vals' in locals() else None),
+            ticktext=([str(v) for v in highlight_vals] if 'highlight_vals' in locals() and highlight_vals else None),
+            tickfont=dict(size=10, color='#FFFFFF')
+        )
         fig.update_layout(yaxis2=_y2)
     except Exception:
         pass
+
 
     
 
