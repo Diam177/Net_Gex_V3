@@ -359,13 +359,40 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             y_tickvals = [round(y_lo + i*step, 10) for i in range(n_ticks)]
             y_range = [float(y_lo), float(y_hi)]
             if y_range[0] == y_range[1]: y_range = [y_range[0]-step, y_range[1]+step]
+            # Values to highlight (where there are lines): snap each level to chosen step
+            highlight_vals = []
+            if _ys:
+                _set = set()
+                for _v in _ys:
+                    _sv = round(_v/step)*step
+                    # snap to nearest tick in y_tickvals to avoid FP drift
+                    if 'y_tickvals' in locals() and y_tickvals:
+                        # find nearest tick
+                        _nearest = min(y_tickvals, key=lambda t: abs(t-_sv))
+                        _set.add(round(_nearest,10))
+                    else:
+                        _set.add(round(_sv,10))
+                highlight_vals = sorted(_set)
+
     except Exception:
         y_tickvals = None
         y_range = None
     fig.update_layout(xaxis_rangeslider_visible=True)
     
     fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10))
-    fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10))
+    fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10, color="#7d8590"))
+    # Overlay y-axis for highlighted tick labels (white on top of gray base)
+    try:
+        _y2 = dict(overlaying='y', matches='y', side='left', showgrid=False,
+                   ticks='', ticklen=0, showline=False, zeroline=False,
+                   tickmode=('array' if 'highlight_vals' in locals() and highlight_vals else 'auto'),
+                   tickvals=(highlight_vals if 'highlight_vals' in locals() else None),
+                   ticktext=([str(v) for v in highlight_vals] if 'highlight_vals' in locals() and highlight_vals else None),
+                   tickfont=dict(size=10, color='#FFFFFF'))
+        fig.update_layout(yaxis2=_y2)
+    except Exception:
+        pass
+
     
 
     # Дата под осью
