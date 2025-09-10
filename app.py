@@ -379,13 +379,7 @@ series_dict = {
 }
 
 # позиционный вызов — совместим с текущей сигнатурой
-idx_keep = _select_atm_window(
-    df["Strike"].values,
-    df["Call OI"].values,
-    df["Put OI"].values,
-    S,
-    1.5
-)
+idx_keep = _select_atm_window(df["Strike"].values, df["Call OI"].values, df["Put OI"].values, S)
 
 fig = make_figure(
     strikes=df["Strike"].values,
