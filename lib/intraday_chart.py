@@ -218,6 +218,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         }
     except Exception:
         _cmap = {}
+    DASHED_TAGS = set(['max_pos_gex_2','max_pos_gex_3','max_neg_gex_2','max_neg_gex_3','ag_max_2','ag_max_3'])
 
     def _add_line(tag, label):
         y = levels.get(tag)
@@ -225,7 +226,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(xaxis='x2',
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
-            line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
+            line=dict(dash=("dash" if tag in DASHED_TAGS else "solid"), width=1.5, color=_cmap.get(tag, "#BBBBBB")),
             hoverinfo="skip", showlegend=True
         ))
 
@@ -235,7 +236,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(xaxis='x2',
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
-            line=dict(width=1.5, color=_cmap.get(tag, "#BBBBBB")),
+            line=dict(dash=("dash" if tag in DASHED_TAGS else "solid"), width=1.5, color=_cmap.get(tag, "#BBBBBB")),
             hoverinfo="skip", showlegend=True
         ))
 
@@ -291,6 +292,20 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                 )
     except Exception:
         pass
+    # Подписи для одиночных линий в том же стиле
+    try:
+        for y, labels in groups.items():
+            if len(labels) == 1:
+                fig.add_annotation(
+                    x=x_mid, y=y, xref="x", yref="y",
+                    text=labels[0], showarrow=False,
+                    xanchor="center", yshift=12, align="center",
+                    bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
+                    borderwidth=1, font=dict(size=11)
+                )
+    except Exception:
+        pass
+
 
     # Надпись "Market closed"
     if not has_candles and not last_session:
