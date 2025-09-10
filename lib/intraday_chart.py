@@ -163,11 +163,12 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
         x0, x1 = tickvals[0], tickvals[-1]
         x_mid = tickvals[len(tickvals)//2]
+        x_right = tickvals[-1]
     else:
         tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
         x0, x1 = tickvals[0], tickvals[-1]
         x_mid = tickvals[len(tickvals)//2]
-
+        x_right = tickvals[-1]
     # VWAP
     if has_candles:
         vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
@@ -284,9 +285,9 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         for y, labels in groups.items():
             if len(labels) >= 2:
                 fig.add_annotation(
-                    x=x_mid, y=y, xref="x", yref="y",
+                    x=x_right, y=y, xref="x", yref="y",
                     text=" + ".join(labels), showarrow=False,
-                    xanchor="center", yshift=12, align="center",
+                    xanchor="right", xshift=-6, yshift=12, align="right",
                     bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
                     borderwidth=1, font=dict(size=11)
                 )
@@ -297,9 +298,9 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         for y, labels in groups.items():
             if len(labels) == 1:
                 fig.add_annotation(
-                    x=x_mid, y=y, xref="x", yref="y",
+                    x=x_right, y=y, xref="x", yref="y",
                     text=labels[0], showarrow=False,
-                    xanchor="center", yshift=12, align="center",
+                    xanchor="right", xshift=-6, yshift=12, align="right",
                     bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
                     borderwidth=1, font=dict(size=11)
                 )
