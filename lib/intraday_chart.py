@@ -425,11 +425,11 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
         else:
             _date_text = session_date_et.strftime("%b %d, %Y")
-        fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
+        fig.update_xaxes(title_text=f"Time<br><span style='font-size:10px;'>{_date_text}</span>", title_standoff=5)
     except Exception:
         pass
 
-    fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
+    fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers', font=dict(size=10)))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
 
     st.download_button(
