@@ -330,7 +330,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         dragmode=False, hovermode=False,
-        plot_bgcolor="#161B22", paper_bgcolor="#161B22",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         font=dict(color="white"), template=None
     )
     # Show rangeslider with candle-only content; set y-range to candle L/H
