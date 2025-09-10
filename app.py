@@ -421,25 +421,6 @@ try:
     i_ag = _nan_argmax(df["AG"].values[idx_keep])
     if i_ag is not None:
         _max_levels["ag_max"] = float(_strike[idx_keep[i_ag]])
-    # Top-3 AG levels (secondary lines)
-    try:
-        _ag_vals = np.asarray(df["AG"].values, dtype=float)[idx_keep]
-        if np.any(np.isfinite(_ag_vals)):
-            order = np.argsort(_ag_vals)[::-1]  # desc
-            uniq = []
-            for j in order:
-                k = int(j)
-                x = float(_strike[idx_keep[k]])
-                if x not in uniq:
-                    uniq.append(x)
-                if len(uniq) >= 3:
-                    break
-            if len(uniq) >= 2:
-                _max_levels["ag_max_2"] = float(uniq[1])
-            if len(uniq) >= 3:
-                _max_levels["ag_max_3"] = float(uniq[2])
-    except Exception:
-        pass
     i_pz = _nan_argmax(df["PZ"].values[idx_keep])
     if i_pz is not None:
         _max_levels["pz_max"] = float(_strike[idx_keep[i_pz]])
@@ -457,39 +438,15 @@ try:
     if np.any(np.isfinite(gex_vals)):
         _max_levels["max_pos_gex"] = float(_strike[idx_keep[int(np.nanargmax(gex_vals))]])
         _max_levels["max_neg_gex"] = float(_strike[idx_keep[int(np.nanargmin(gex_vals))]])
-        # Secondary extremes (top-3 by sign)
-        try:
-            order_desc = np.argsort(gex_vals)[::-1]
-            order_asc  = np.argsort(gex_vals)
-            uniq_pos, uniq_neg = [], []
-            for j in order_desc:
-                x = float(_strike[idx_keep[int(j)]])
-                val = gex_vals[int(j)]
-                if np.isfinite(val) and val>0 and x not in uniq_pos:
-                    uniq_pos.append(x)
-                if len(uniq_pos) >= 3:
-                    break
-            for j in order_asc:
-                x = float(_strike[idx_keep[int(j)]])
-                val = gex_vals[int(j)]
-                if np.isfinite(val) and val<0 and x not in uniq_neg:
-                    uniq_neg.append(x)
-                if len(uniq_neg) >= 3:
-                    break
-            if len(uniq_pos) >= 2:
-                _max_levels["max_pos_gex_2"] = float(uniq_pos[1])
-            if len(uniq_pos) >= 3:
-                _max_levels["max_pos_gex_3"] = float(uniq_pos[2])
-            if len(uniq_neg) >= 2:
-                _max_levels["max_neg_gex_2"] = float(uniq_neg[1])
-            if len(uniq_neg) >= 3:
-                _max_levels["max_neg_gex_3"] = float(uniq_neg[2])
-        except Exception:
-            pass
 
     # G-Flip
     if g_flip_val is not None:
-        _max_levels["gflip"] = float(g_flip_val)
+        try:
+            _k = float(g_flip_val)
+            _i = int(np.argmin(np.abs(_strike - _k)))
+            _max_levels["gflip"] = float(_strike[_i])
+        except Exception:
+            _max_levels["gflip"] = float(g_flip_val)
 
     st.session_state['first_chart_max_levels'] = _max_levels
 except Exception:
@@ -519,4 +476,3 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
-
