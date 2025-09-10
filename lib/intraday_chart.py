@@ -226,7 +226,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(xaxis='x2',
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
-            line=dict(dash=("dash" if tag in DASHED_TAGS else "solid"), width=2, color=_cmap.get(tag, "#BBBBBB")),
+            line=dict(dash=("dot" if tag in DASHED_TAGS else "solid"), width=2, color=_cmap.get(tag, "#BBBBBB")),
             hoverinfo="skip", showlegend=True
         ))
 
@@ -236,7 +236,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         fig.add_trace(go.Scatter(xaxis='x2',
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
-            line=dict(dash=("dash" if tag in DASHED_TAGS else "solid"), width=2, color=_cmap.get(tag, "#BBBBBB")),
+            line=dict(dash=("dot" if tag in DASHED_TAGS else "solid"), width=2, color=_cmap.get(tag, "#BBBBBB")),
             hoverinfo="skip", showlegend=True
         ))
 
