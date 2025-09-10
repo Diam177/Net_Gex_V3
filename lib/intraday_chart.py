@@ -307,8 +307,10 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         )
 
     
-    # === Build y-axis ticks based on levels (show every strike one-by-one)
+    
+    # === Build y-axis ticks based on levels (show every strike one-by-one; supports 1 / 0.5 / 0.25 increments) ===
     y_tickvals = None
+    y_range = None
     try:
         # Collect all numeric level values currently plotted
         level_keys = [
@@ -325,18 +327,39 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
                     _ys.append(float(v))
             except Exception:
                 pass
+
+        def _is_multiple(x, step, eps=1e-6):
+            # check if x is a multiple of step within tolerance
+            return abs((x / step) - round(x / step)) < eps
+
         if len(_ys) >= 1:
-            y_lo = int(min(_ys))  # lower integer strike
-            y_hi = int(max(_ys))  # upper integer strike
-            # Ensure inclusive range and strictly ascending
-            if y_hi < y_lo:
-                y_lo, y_hi = y_hi, y_lo
-            y_tickvals = list(range(y_lo, y_hi + 1, 1))
-            y_ticktext = [str(v) for v in y_tickvals]
+            # Determine smallest step present among {1.0, 0.5, 0.25}
+            step = 1.0
+            if any(not _is_multiple(val, 1.0) for val in _ys):
+                step = 0.5
+            if any(abs((val*4) - round(val*4)) < 1e-6 and not _is_multiple(val, 0.5) for val in _ys):
+                # Any value like *.25 or *.75 -> use 0.25
+                step = 0.25
+            # Boundaries snapped to step
+            y_lo = step * (int(min(_ys) / step) )  # floor to step
+            if y_lo > min(_ys):  # guard if negative due to int truncation toward 0
+                y_lo -= step
+            y_hi = step * (int(max(_ys) / step) )
+            if y_hi < max(_ys):
+                y_hi += step
+            # Build ticks
+            n_ticks = int(round((y_hi - y_lo) / step)) + 1
+            y_tickvals = [round(y_lo + i*step, 10) for i in range(n_ticks)]
+            # Range
+            y_range = [float(y_lo), float(y_hi)]
+            if y_range[0] == y_range[1]:
+                y_range = [y_range[0]-step, y_range[1]+step]
         else:
             y_tickvals = None
+            y_range = None
     except Exception:
         y_tickvals = None
+        y_range = None
     fig.update_layout(
         height=820, margin=dict(l=90, r=20, t=50, b=50),
         xaxis_title="Time", yaxis_title="Price",
@@ -349,6 +372,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
     fig.update_yaxes(
         fixedrange=True,
+        range=(y_range if y_range is not None else None),
         tickmode=('array' if y_tickvals is not None else 'auto'),
         tickvals=(y_tickvals if y_tickvals is not None else None),
         ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None)
