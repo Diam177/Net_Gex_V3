@@ -323,12 +323,49 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         try:
             _ymin = float(pd.to_numeric(df_plot['low'], errors='coerce').min())
             _ymax = float(pd.to_numeric(df_plot['high'], errors='coerce').max())
-            fig.update_layout(xaxis_rangeslider=dict(visible=True, yaxis=dict(range=[_ymin, _ymax])))
+            fig.update_layout(xaxis_rangeslider=dict(visible=True, thickness=0.05, yaxis=dict(range=[_ymin, _ymax])))
         except Exception:
             fig.update_layout(xaxis_rangeslider_visible=True)
-
-    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
-    fig.update_yaxes(fixedrange=True)
+    # === Build Y ticks between min and max Key Levels with dynamic step (1/0.5/0.25) ===
+    y_tickvals = None
+    y_range = None
+    try:
+        level_keys = [
+            "max_neg_gex","max_neg_gex_2","max_neg_gex_3",
+            "max_pos_gex","max_pos_gex_2","max_pos_gex_3",
+            "put_oi_max","call_oi_max","put_vol_max","call_vol_max",
+            "ag_max","ag_max_2","ag_max_3","pz_max","gflip"
+        ]
+        _ys = []
+        for _k in level_keys:
+            _v = levels.get(_k)
+            try:
+                if _v is not None:
+                    _ys.append(float(_v))
+            except Exception:
+                pass
+        def _is_mult(x, step, eps=1e-6):
+            return abs((x/step)-round(x/step)) < eps
+        if _ys:
+            step = 1.0
+            if any(not _is_mult(v, 1.0) for v in _ys): step = 0.5
+            if any(abs(v*4 - round(v*4)) < 1e-6 and not _is_mult(v, 0.5) for v in _ys): step = 0.25
+            y_lo = min(_ys); y_hi = max(_ys)
+            # snap to step
+            import math
+            y_lo = math.floor(y_lo/step)*step
+            y_hi = math.ceil(y_hi/step)*step
+            n_ticks = int(round((y_hi - y_lo)/step)) + 1
+            y_tickvals = [round(y_lo + i*step, 10) for i in range(n_ticks)]
+            y_range = [float(y_lo), float(y_hi)]
+            if y_range[0] == y_range[1]: y_range = [y_range[0]-step, y_range[1]+step]
+    except Exception:
+        y_tickvals = None
+        y_range = None
+    fig.update_layout(xaxis_rangeslider_visible=True)
+    
+    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10))
+    fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10))
     
 
     # Дата под осью
