@@ -337,7 +337,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             y_tickvals = None
     except Exception:
         y_tickvals = None
-fig.update_layout(
+    fig.update_layout(
         height=820, margin=dict(l=90, r=20, t=50, b=50),
         xaxis_title="Time", yaxis_title="Price",
         showlegend=True,
