@@ -369,16 +369,15 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         plot_bgcolor="#161B22", paper_bgcolor="#161B22",
         font=dict(color="white"), template=None
     )
-    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
+    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=12))
     fig.update_yaxes(
         fixedrange=True,
         range=(y_range if y_range is not None else None),
         tickmode=('array' if y_tickvals is not None else 'auto'),
         tickvals=(y_tickvals if y_tickvals is not None else None),
-        ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None)
+        ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None),
+        tickfont=dict(size=12)
     )
-    fig.update_layout(xaxis_rangeslider_visible=False)
-
     # Дата под осью
     try:
         if has_candles:
