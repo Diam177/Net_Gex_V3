@@ -187,7 +187,10 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     if has_candles and vwap is not None:
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
 
-    # Key Levels
+    
+    # Secondary x-axis for overlayed Key Level lines (kept out of rangeslider)
+    fig.update_layout(xaxis2=dict(overlaying='x', matches='x', visible=False))
+# Key Levels
     levels = dict(st.session_state.get("first_chart_max_levels", {})) if isinstance(st.session_state.get("first_chart_max_levels", {}), dict) else {}
 
     def _fmt_int(x):
@@ -219,7 +222,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     def _add_line(tag, label):
         y = levels.get(tag)
         if y is None: return
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Scatter(xaxis='x2',
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
             line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
@@ -229,7 +232,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     def _add_line_secondary(tag, label):
         y = levels.get(tag)
         if y is None: return
-        fig.add_trace(go.Scatter(
+        fig.add_trace(go.Scatter(xaxis='x2',
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
             line=dict(width=1.5, color=_cmap.get(tag, "#BBBBBB")),
@@ -306,60 +309,6 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             bgcolor="rgba(0,0,0,0)"
         )
 
-    
-    
-    # === Build y-axis ticks based on levels (show every strike one-by-one; supports 1 / 0.5 / 0.25 increments) ===
-    y_tickvals = None
-    y_range = None
-    try:
-        # Collect all numeric level values currently plotted
-        level_keys = [
-            "max_neg_gex","max_neg_gex_2","max_neg_gex_3",
-            "max_pos_gex","max_pos_gex_2","max_pos_gex_3",
-            "put_oi_max","call_oi_max","put_vol_max","call_vol_max",
-            "ag_max","ag_max_2","ag_max_3","pz_max","gflip"
-        ]
-        _ys = []
-        for k in level_keys:
-            v = levels.get(k)
-            try:
-                if v is not None:
-                    _ys.append(float(v))
-            except Exception:
-                pass
-
-        def _is_multiple(x, step, eps=1e-6):
-            # check if x is a multiple of step within tolerance
-            return abs((x / step) - round(x / step)) < eps
-
-        if len(_ys) >= 1:
-            # Determine smallest step present among {1.0, 0.5, 0.25}
-            step = 1.0
-            if any(not _is_multiple(val, 1.0) for val in _ys):
-                step = 0.5
-            if any(abs((val*4) - round(val*4)) < 1e-6 and not _is_multiple(val, 0.5) for val in _ys):
-                # Any value like *.25 or *.75 -> use 0.25
-                step = 0.25
-            # Boundaries snapped to step
-            y_lo = step * (int(min(_ys) / step) )  # floor to step
-            if y_lo > min(_ys):  # guard if negative due to int truncation toward 0
-                y_lo -= step
-            y_hi = step * (int(max(_ys) / step) )
-            if y_hi < max(_ys):
-                y_hi += step
-            # Build ticks
-            n_ticks = int(round((y_hi - y_lo) / step)) + 1
-            y_tickvals = [round(y_lo + i*step, 10) for i in range(n_ticks)]
-            # Range
-            y_range = [float(y_lo), float(y_hi)]
-            if y_range[0] == y_range[1]:
-                y_range = [y_range[0]-step, y_range[1]+step]
-        else:
-            y_tickvals = None
-            y_range = None
-    except Exception:
-        y_tickvals = None
-        y_range = None
     fig.update_layout(
         height=820, margin=dict(l=90, r=20, t=50, b=50),
         xaxis_title="Time", yaxis_title="Price",
@@ -369,15 +318,19 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         plot_bgcolor="#161B22", paper_bgcolor="#161B22",
         font=dict(color="white"), template=None
     )
-    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10))
-    fig.update_yaxes(
-        fixedrange=True,
-        range=(y_range if y_range is not None else None),
-        tickmode=('array' if y_tickvals is not None else 'auto'),
-        tickvals=(y_tickvals if y_tickvals is not None else None),
-        ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None),
-        tickfont=dict(size=10)
-    )
+    # Show rangeslider with candle-only content; set y-range to candle L/H
+    if has_candles:
+        try:
+            _ymin = float(pd.to_numeric(df_plot['low'], errors='coerce').min())
+            _ymax = float(pd.to_numeric(df_plot['high'], errors='coerce').max())
+            fig.update_layout(xaxis_rangeslider=dict(visible=True, yaxis=dict(range=[_ymin, _ymax])))
+        except Exception:
+            fig.update_layout(xaxis_rangeslider_visible=True)
+
+    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
+    fig.update_yaxes(fixedrange=True)
+    
+
     # Дата под осью
     try:
         if has_candles:
