@@ -381,6 +381,23 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     
     fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10))
     fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10, color="#7d8590"))
+
+    # Add white overlay labels at level lines (annotations) so they remain visible atop gray ticks
+    try:
+        if 'highlight_vals' in locals() and highlight_vals:
+            _anns = list(fig.layout.annotations) if getattr(fig.layout, 'annotations', None) else []
+            for _yv in highlight_vals:
+                _anns.append(dict(
+                    xref='paper', x=0, xanchor='right',
+                    yref='y', y=float(_yv), yanchor='middle',
+                    text=str(_yv),
+                    showarrow=False,
+                    align='right',
+                    font=dict(size=10, color='#FFFFFF')
+                ))
+            fig.update_layout(annotations=_anns)
+    except Exception:
+        pass
     # Overlay y-axis for highlighted tick labels (white on top of gray base)
     try:
         _y2 = dict(
