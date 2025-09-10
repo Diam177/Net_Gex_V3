@@ -306,7 +306,38 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             bgcolor="rgba(0,0,0,0)"
         )
 
-    fig.update_layout(
+    
+    # === Build y-axis ticks based on levels (show every strike one-by-one)
+    y_tickvals = None
+    try:
+        # Collect all numeric level values currently plotted
+        level_keys = [
+            "max_neg_gex","max_neg_gex_2","max_neg_gex_3",
+            "max_pos_gex","max_pos_gex_2","max_pos_gex_3",
+            "put_oi_max","call_oi_max","put_vol_max","call_vol_max",
+            "ag_max","ag_max_2","ag_max_3","pz_max","gflip"
+        ]
+        _ys = []
+        for k in level_keys:
+            v = levels.get(k)
+            try:
+                if v is not None:
+                    _ys.append(float(v))
+            except Exception:
+                pass
+        if len(_ys) >= 1:
+            y_lo = int(min(_ys))  # lower integer strike
+            y_hi = int(max(_ys))  # upper integer strike
+            # Ensure inclusive range and strictly ascending
+            if y_hi < y_lo:
+                y_lo, y_hi = y_hi, y_lo
+            y_tickvals = list(range(y_lo, y_hi + 1, 1))
+            y_ticktext = [str(v) for v in y_tickvals]
+        else:
+            y_tickvals = None
+    except Exception:
+        y_tickvals = None
+fig.update_layout(
         height=820, margin=dict(l=90, r=20, t=50, b=50),
         xaxis_title="Time", yaxis_title="Price",
         showlegend=True,
@@ -316,7 +347,12 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         font=dict(color="white"), template=None
     )
     fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
-    fig.update_yaxes(fixedrange=True)
+    fig.update_yaxes(
+        fixedrange=True,
+        tickmode=('array' if y_tickvals is not None else 'auto'),
+        tickvals=(y_tickvals if y_tickvals is not None else None),
+        ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None)
+    )
     fig.update_layout(xaxis_rangeslider_visible=False)
 
     # Дата под осью
