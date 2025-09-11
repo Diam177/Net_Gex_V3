@@ -163,12 +163,11 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
         x0, x1 = tickvals[0], tickvals[-1]
         x_mid = tickvals[len(tickvals)//2]
-        x_right = tickvals[-1]
     else:
         tickvals, ticktext = _build_rth_ticks_for_date(session_date_et)
         x0, x1 = tickvals[0], tickvals[-1]
         x_mid = tickvals[len(tickvals)//2]
-        x_right = tickvals[-1]
+
     # VWAP
     if has_candles:
         vol = pd.to_numeric(df_plot.get("volume", 0), errors="coerce").fillna(0.0)
@@ -188,10 +187,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     if has_candles and vwap is not None:
         fig.add_trace(go.Scatter(x=df_plot["ts"], y=vwap, mode="lines", name="VWAP"))
 
-    
-    # Secondary x-axis for overlayed Key Level lines (kept out of rangeslider)
-    fig.update_layout(xaxis2=dict(overlaying='x', matches='x', visible=False))
-# Key Levels
+    # Key Levels
     levels = dict(st.session_state.get("first_chart_max_levels", {})) if isinstance(st.session_state.get("first_chart_max_levels", {}), dict) else {}
 
     def _fmt_int(x):
@@ -219,25 +215,24 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         }
     except Exception:
         _cmap = {}
-    DASHED_TAGS = set(['max_pos_gex_2','max_pos_gex_3','max_neg_gex_2','max_neg_gex_3','ag_max_2','ag_max_3'])
 
     def _add_line(tag, label):
         y = levels.get(tag)
         if y is None: return
-        fig.add_trace(go.Scatter(xaxis='x2',
+        fig.add_trace(go.Scatter(
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
-            line=dict(dash=("dot" if tag in DASHED_TAGS else "solid"), width=2, color=_cmap.get(tag, "#BBBBBB")),
+            line=dict(dash="dot", width=2, color=_cmap.get(tag, "#BBBBBB")),
             hoverinfo="skip", showlegend=True
         ))
 
     def _add_line_secondary(tag, label):
         y = levels.get(tag)
         if y is None: return
-        fig.add_trace(go.Scatter(xaxis='x2',
+        fig.add_trace(go.Scatter(
             x=[x0, x1], y=[y, y], mode="lines",
             name=f"{label} ({_fmt_int(y)})",
-            line=dict(dash=("dot" if tag in DASHED_TAGS else "solid"), width=2, color=_cmap.get(tag, "#BBBBBB")),
+            line=dict(width=1.5, color=_cmap.get(tag, "#BBBBBB")),
             hoverinfo="skip", showlegend=True
         ))
 
@@ -285,28 +280,14 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         for y, labels in groups.items():
             if len(labels) >= 2:
                 fig.add_annotation(
-                    x=x_right, y=y, xref="x", yref="y",
+                    x=x_mid, y=y, xref="x", yref="y",
                     text=" + ".join(labels), showarrow=False,
-                    xanchor="right", xshift=-6, yshift=12, align="right",
+                    xanchor="center", yshift=12, align="center",
                     bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
                     borderwidth=1, font=dict(size=11)
                 )
     except Exception:
         pass
-    # Подписи для одиночных линий в том же стиле
-    try:
-        for y, labels in groups.items():
-            if len(labels) == 1:
-                fig.add_annotation(
-                    x=x_right, y=y, xref="x", yref="y",
-                    text=labels[0], showarrow=False,
-                    xanchor="right", xshift=-6, yshift=12, align="right",
-                    bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
-                    borderwidth=1, font=dict(size=11)
-                )
-    except Exception:
-        pass
-
 
     # Надпись "Market closed"
     if not has_candles and not last_session:
@@ -326,112 +307,40 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         )
 
     fig.update_layout(
-        height=820, margin=dict(l=110, r=20, t=50, b=62),
+        height=820, margin=dict(l=90, r=20, t=50, b=50),
         xaxis_title="Time", yaxis_title="Price",
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         dragmode=False, hovermode=False,
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#161B22", paper_bgcolor="#161B22",
         font=dict(color="white"), template=None
     )
-    # Show rangeslider with candle-only content; set y-range to candle L/H
-    if has_candles:
-        try:
-            _ymin = float(pd.to_numeric(df_plot['low'], errors='coerce').min())
-            _ymax = float(pd.to_numeric(df_plot['high'], errors='coerce').max())
-            fig.update_layout(xaxis_rangeslider=dict(visible=True, thickness=0.05, yaxis=dict(range=[_ymin, _ymax])))
-        except Exception:
-            fig.update_layout(xaxis_rangeslider_visible=True)
-    # === Build Y ticks between min and max Key Levels with dynamic step (1/0.5/0.25) ===
-    y_tickvals = None
-    y_range = None
+    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext)
+    
+    # Compute y-range to include both candles and key levels, add a small headroom
+    y_candidates = []
     try:
-        level_keys = [
-            "max_neg_gex","max_neg_gex_2","max_neg_gex_3",
-            "max_pos_gex","max_pos_gex_2","max_pos_gex_3",
-            "put_oi_max","call_oi_max","put_vol_max","call_vol_max",
-            "ag_max","ag_max_2","ag_max_3","pz_max","gflip"
-        ]
-        _ys = []
-        for _k in level_keys:
-            _v = levels.get(_k)
+        if has_candles and not df_plot.empty:
+            y_candidates.append(float(pd.to_numeric(df_plot["low"], errors="coerce").min()))
+            y_candidates.append(float(pd.to_numeric(df_plot["high"], errors="coerce").max()))
+    except Exception:
+        pass
+    for tag in ["max_pos_gex","max_pos_gex_2","max_pos_gex_3","max_neg_gex","max_neg_gex_2","max_neg_gex_3",
+                "call_oi_max","put_oi_max","call_vol_max","put_vol_max","ag_max","ag_max_2","ag_max_3","pz_max","gflip"]:
+        v = levels.get(tag)
+        if isinstance(v, (int, float)):
             try:
-                if _v is not None:
-                    _ys.append(float(_v))
+                y_candidates.append(float(v))
             except Exception:
                 pass
-        def _is_mult(x, step, eps=1e-6):
-            return abs((x/step)-round(x/step)) < eps
-        if _ys:
-            step = 1.0
-            if any(not _is_mult(v, 1.0) for v in _ys): step = 0.5
-            if any(abs(v*4 - round(v*4)) < 1e-6 and not _is_mult(v, 0.5) for v in _ys): step = 0.25
-            y_lo = min(_ys); y_hi = max(_ys)
-            # snap to step
-            import math
-            y_lo = math.floor(y_lo/step)*step
-            y_hi = math.ceil(y_hi/step)*step
-            n_ticks = int(round((y_hi - y_lo)/step)) + 1
-            y_tickvals = [round(y_lo + i*step, 10) for i in range(n_ticks)]
-            y_range = [float(y_lo), float(y_hi)]
-            if y_range[0] == y_range[1]: y_range = [y_range[0]-step, y_range[1]+step]
-            # Values to highlight (where there are lines): snap each level to chosen step
-            highlight_vals = []
-            if _ys:
-                _set = set()
-                for _v in _ys:
-                    _sv = round(_v/step)*step
-                    # snap to nearest tick in y_tickvals to avoid FP drift
-                    if 'y_tickvals' in locals() and y_tickvals:
-                        # find nearest tick
-                        _nearest = min(y_tickvals, key=lambda t: abs(t-_sv))
-                        _set.add(round(_nearest,10))
-                    else:
-                        _set.add(round(_sv,10))
-                highlight_vals = sorted(_set)
+    if y_candidates:
+        _ymin, _ymax = min(y_candidates), max(y_candidates)
+        _pad = max(0.25, (_ymax - _ymin) * 0.02)
+        fig.update_yaxes(range=[_ymin - _pad, _ymax + _pad], fixedrange=True)
+    else:
+        fig.update_yaxes(fixedrange=True)
 
-    except Exception:
-        y_tickvals = None
-        y_range = None
-    fig.update_layout(xaxis_rangeslider_visible=True)
-    
-    fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10), ticklabelposition="outside", ticklabelstandoff=14, showgrid=True, gridcolor="rgba(255,255,255,0.05)", gridwidth=0.5)
-    fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10, color="#7d8590"), showgrid=True, gridcolor="rgba(255,255,255,0.05)", gridwidth=0.5)
-
-    # Add white overlay labels at level lines (annotations) so they remain visible atop gray ticks
-    try:
-        if 'highlight_vals' in locals() and highlight_vals:
-            _anns = list(fig.layout.annotations) if getattr(fig.layout, 'annotations', None) else []
-            for _yv in highlight_vals:
-                _anns.append(dict(
-                    xref='paper', x=0, xanchor='right',
-                    yref='y', y=float(_yv), yanchor='middle',
-                    text=str(_yv),
-                    showarrow=False,
-                    align='right',
-                    font=dict(size=10, color='#FFFFFF')
-                ))
-            fig.update_layout(annotations=_anns)
-    except Exception:
-        pass
-    # Overlay y-axis for highlighted tick labels (white on top of gray base)
-    try:
-        _y2 = dict(
-            overlaying='y', matches='y', side='left',
-            anchor='free', position=0,  # lock to left edge
-            showgrid=False, showline=False, zeroline=False,
-            ticks='', ticklen=0,
-            tickmode=('array' if 'highlight_vals' in locals() and highlight_vals else 'auto'),
-            tickvals=(highlight_vals if 'highlight_vals' in locals() else None),
-            ticktext=([str(v) for v in highlight_vals] if 'highlight_vals' in locals() and highlight_vals else None),
-            tickfont=dict(size=10, color='#FFFFFF')
-        )
-        fig.update_layout(yaxis2=_y2)
-    except Exception:
-        pass
-
-
-    
+    fig.update_layout(xaxis_rangeslider_visible=False)
 
     # Дата под осью
     try:
@@ -441,11 +350,11 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             _date_text = _ts0.tz_convert("America/New_York").strftime("%b %d, %Y")
         else:
             _date_text = session_date_et.strftime("%b %d, %Y")
-        fig.update_xaxes(title_text=f"Time<br><span style='font-size:10px;'>{_date_text}</span>", title_standoff=5)
+        fig.update_xaxes(title_text=f"Time<br><span style='font-size:12px;'>{_date_text}</span>", title_standoff=5)
     except Exception:
         pass
 
-    fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers', font=dict(size=10)))
+    fig.update_layout(legend=dict(itemclick='toggle', itemdoubleclick='toggleothers'))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "staticPlot": False})
 
     st.download_button(
