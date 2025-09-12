@@ -263,20 +263,74 @@ def compute_series_metrics_for_expiry(S, t0, expiry_unix, block, day_high=None, 
     }
 
 def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_series):
-    import numpy as np
-    tau = 0.5
-    if isinstance(day_high, (int,float)) and isinstance(day_low, (int,float)):
-        R = float(day_high) - float(day_low)
-    else:
-        R = 0.01*S
+    """
+    NEW Power Zone methodology (replacement):
+      - Build volume profiles on the *selected expiry* aligned to strikes_eval.
+      - PZ series = normalized (CallVol + PutVol) w.r.t. strikes_eval.
+      - PZ_FP kept as zeros (deprecated legacy placeholder).
+    """
+    import numpy as _np
 
-    eta, zeta = 0.60, 0.40
-    total_oi = np.array([
-        sum(s["call_oi"].values()) + sum(s["put_oi"].values()) for s in all_series
-    ], dtype=float)
-    T_arr = np.array([s["T"] for s in all_series], dtype=float)
-    W_time = total_oi * (T_arr**(-eta)) * ((1.0 - tau)**zeta)
-    W_time = (W_time / W_time.sum()) if W_time.sum()>0 else np.ones_like(W_time)/len(W_time)
+    strikes_eval = _np.asarray(strikes_eval, dtype=float)
+    n = len(strikes_eval)
+    if n == 0 or all_series is None or len(all_series) == 0:
+        return _np.zeros(n, dtype=float), _np.zeros(n, dtype=float)
+
+    # Choose the series whose strikes best match strikes_eval (min median abs diff)
+    best = None
+    best_err = float("inf")
+    for s in all_series:
+        Ks = _np.asarray(list(s.get("strikes", [])), dtype=float)
+        if Ks.size == 0:
+            continue
+        # nearest-neighbour alignment error
+        idx = _np.searchsorted(Ks, strikes_eval).clip(1, Ks.size-1)
+        left = _np.abs(Ks[idx-1] - strikes_eval)
+        right = _np.abs(Ks[idx] - strikes_eval)
+        pick = _np.where(left <= right, idx-1, idx)
+        err = float(_np.median(_np.abs(Ks[pick] - strikes_eval)))
+        if err < best_err:
+            best_err = err
+            best = s
+
+    if best is None:
+        return _np.zeros(n, dtype=float), _np.zeros(n, dtype=float)
+
+    Ks = _np.asarray(list(best.get("strikes", [])), dtype=float)
+    call_vol_map = best.get("call_vol", {})
+    put_vol_map  = best.get("put_vol",  {})
+
+    # Build aligned volume arrays (raw provider scale)
+    v_call = _np.zeros(n, dtype=float)
+    v_put  = _np.zeros(n, dtype=float)
+    if isinstance(call_vol_map, dict):
+        # strikes may be keys; align by nearest
+        idx = _np.searchsorted(Ks, strikes_eval).clip(1, Ks.size-1)
+        left = _np.abs(Ks[idx-1] - strikes_eval)
+        right= _np.abs(Ks[idx]   - strikes_eval)
+        pick = _np.where(left <= right, idx-1, idx)
+        for i, j in enumerate(pick):
+            k = float(Ks[j])
+            v_call[i] = float(call_vol_map.get(k, call_vol_map.get(int(k), 0.0)))
+            v_put[i]  = float(put_vol_map.get(k,  put_vol_map.get(int(k),  0.0)))
+    else:
+        # assume sequences already aligned
+        v_call = _np.asarray(call_vol_map, dtype=float)[:n]
+        v_put  = _np.asarray(put_vol_map,  dtype=float)[:n]
+
+    v_call = _np.nan_to_num(v_call, nan=0.0, posinf=0.0, neginf=0.0)
+    v_put  = _np.nan_to_num(v_put,  nan=0.0, posinf=0.0, neginf=0.0)
+
+    P = v_call + v_put
+    p_min = float(_np.nanmin(P)) if _np.any(_np.isfinite(P)) else 0.0
+    p_max = float(_np.nanmax(P)) if _np.any(_np.isfinite(P)) else 0.0
+    if p_max > p_min:
+        pz = (P - p_min) / (p_max - p_min)
+    else:
+        pz = _np.zeros(n, dtype=float)
+
+    pz_fp = _np.zeros(n, dtype=float)  # legacy placeholder after methodology change
+    return _np.round(pz, 6), _np.round(pz_fp, 6)
 
     def median_step(xs):
         if len(xs) < 2: return 1.0
@@ -338,7 +392,7 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         gamma_pow = 0.90
         OI_eff = (call_oi_vec + put_oi_vec) ** gamma_pow
         d_steps = np.abs(Ks - S) / max(step_i, 1e-8)
-        d_star = max(2, int(round(h / max(step_i, 1e-8))))
+        d_star = 2.0
         wblend = np.clip(1.0 - d_steps / d_star, 0.0, 1.0)
         Act_raw = wblend * Vol_eff + (1.0 - wblend) * OI_eff
 
@@ -361,15 +415,12 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
 
     pz_vals = []
     for K in strikes_eval:
-        acc = 0.0
+        val = 0.0
+        WdK = Wd_kernel(K, S, h)
         for w, c in zip(W_time, prep):
-            Ks = c["Ks"]
-            # локальная свёртка вокруг самого K (без S-центрирования)
-            wloc = np.exp(-0.5 * ((Ks - float(K)) / h)**2) if h > 0 else np.ones_like(Ks)
-            denom = float(wloc.sum()) if wloc.size > 0 else 1.0
-            prod = c["AG_hat"] * c["Stab_hat"] * c["Act_hat"]
-            acc += w * float(np.sum(wloc * prod) / (denom if denom>0 else 1.0))
-        pz_vals.append(acc)
+            j = int(np.argmin(np.abs(c["Ks"] - K)))
+            val += w * WdK * c["AG_hat"][j] * c["Stab_hat"][j] * c["Act_hat"][j]
+        pz_vals.append(val)
     pz_vals = np.array(pz_vals, dtype=float)
     pz_norm = (pz_vals / pz_vals.max()) if pz_vals.max()>0 else np.zeros_like(pz_vals)
 
@@ -408,8 +459,7 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         stab = Stab_at_K(K)
         agloc = AG_loc(K)
         hf = abs(HF_at_K(K))
-        # убрали S-центрирование: локальная сила/стабильность против «стоимости потока»
-        val = stab * ((agloc**delta_par) if agloc>0 else 0.0) / (eps_small + hf)
+        val = Wd_kernel(K, S, h) * stab * ((agloc**delta_par) if agloc>0 else 0.0) / (eps_small + hf)
         pzfp_vals.append(val)
     pzfp_vals = np.array(pzfp_vals, dtype=float)
     pzfp_norm = (pzfp_vals / pzfp_vals.max()) if pzfp_vals.max()>0 else np.zeros_like(pzfp_vals)
@@ -431,46 +481,104 @@ def compute_power_zone_v2(
     lambda_unstab: float = 0.5,
     lambda_mass: float = 1.0,
     minutes_to_close: float | None = None,
-    bandwidth_dist: float = 15.0,   # в "числе страйков"
+    bandwidth_dist: float = 15.0,
     n_candidates_max: int = 50,
 ):
     """
-    Power Zone v2 (путь-зависимый потенциал).
-    Возвращает словарь с полями:
-      - 'K_star': лучший страйк-магнит (argmin E(K))
-      - 'candidates': список (K, E(K)) отсортированный по возрастанию E
-      - 'E': np.ndarray энергий вдоль strikes_eval
-      - 'mass': np.ndarray масс (0..1) вдоль strikes_eval
-      - 'flow_cost': np.ndarray локальной «стоимости потока» вдоль strikes_eval (>=0)
-      - 'stab': np.ndarray стабильности (0..1) вдоль strikes_eval
-      - 'conf': float, относительная уверенность (0..1)
-    Ничего не трогает в существующей логике; использует те же базовые конструкции (AG/NG/HF), что и compute_pz_and_flow.
+    NEW Power Zone v2: energy replaced by inverse of normalized (CallVol+PutVol).
+    Returns:
+      - K_star: argmax(CallVol+PutVol) with deterministic tie-break,
+      - E: max(P) - P aligned to strikes_eval (so app's (e_max - E)/denom == normalized P),
+      - mass/flow_cost/stab: zeros placeholders to keep API stable,
+      - conf: 1.0 if data present else 0.0.
     """
     import numpy as _np
 
-    strikes_eval = _np.array(list(strikes_eval), dtype=float)
-    n_eval = len(strikes_eval)
-    if n_eval == 0 or all_series is None or len(all_series) == 0:
-        return {
-            "K_star": None, "candidates": [], "E": _np.zeros(0),
-            "mass": _np.zeros(0), "flow_cost": _np.zeros(0),
-            "stab": _np.zeros(0), "conf": 0.0
-        }
+    strikes_eval = _np.asarray(strikes_eval, dtype=float)
+    n = len(strikes_eval)
+    if n == 0 or all_series is None or len(all_series) == 0:
+        return {"K_star": None, "candidates": [], "E": _np.zeros(n),
+                "mass": _np.zeros(n), "flow_cost": _np.zeros(n),
+                "stab": _np.zeros(n), "conf": 0.0}
 
-    # --- Веса по экспирациям (как в compute_pz_and_flow) ---
-    tau = 0.5
-    eta, zeta = 0.60, 0.40
-    total_oi = _np.array([sum(s["call_oi"].values()) + sum(s["put_oi"].values()) for s in all_series], dtype=float)
-    T_arr = _np.array([float(s["T"]) for s in all_series], dtype=float)
-    W_time = total_oi * (T_arr**(-eta)) * ((1.0 - tau)**zeta)
-    W_time = (W_time / W_time.sum()) if W_time.sum() > 0 else _np.ones_like(W_time)/len(W_time)
+    # Pick best-matching series wrt strikes_eval
+    best = None; best_err = float("inf")
+    for s in all_series:
+        Ks = _np.asarray(list(s.get("strikes", [])), dtype=float)
+        if Ks.size == 0: 
+            continue
+        idx = _np.searchsorted(Ks, strikes_eval).clip(1, Ks.size-1)
+        left = _np.abs(Ks[idx-1] - strikes_eval)
+        right= _np.abs(Ks[idx]   - strikes_eval)
+        pick = _np.where(left <= right, idx-1, idx)
+        err = float(_np.median(_np.abs(Ks[pick] - strikes_eval)))
+        if err < best_err:
+            best_err = err; best = s
 
-    # --- Ширина ядра по расстоянию (как в compute_pz_and_flow) ---
-    if isinstance(day_high, (int,float)) and isinstance(day_low, (int,float)):
-        R = float(day_high) - float(day_low)
-    else:
-        R = 0.01*float(S)
-    # шаг по страйкам в eval-сетке
+    if best is None:
+        return {"K_star": None, "candidates": [], "E": _np.zeros(n),
+                "mass": _np.zeros(n), "flow_cost": _np.zeros(n),
+                "stab": _np.zeros(n), "conf": 0.0}
+
+    Ks = _np.asarray(list(best.get("strikes", [])), dtype=float)
+    call_vol_map = best.get("call_vol", {})
+    put_vol_map  = best.get("put_vol",  {})
+
+    # align volumes to strikes_eval (nearest)
+    idx = _np.searchsorted(Ks, strikes_eval).clip(1, Ks.size-1)
+    left = _np.abs(Ks[idx-1] - strikes_eval)
+    right= _np.abs(Ks[idx]   - strikes_eval)
+    pick = _np.where(left <= right, idx-1, idx)
+
+    v_call = _np.zeros(n, dtype=float)
+    v_put  = _np.zeros(n, dtype=float)
+    for i, j in enumerate(pick):
+        k = float(Ks[j])
+        v_call[i] = float(call_vol_map.get(k, call_vol_map.get(int(k), 0.0)))
+        v_put[i]  = float(put_vol_map.get(k,  put_vol_map.get(int(k),  0.0)))
+
+    v_call = _np.nan_to_num(v_call, nan=0.0, posinf=0.0, neginf=0.0)
+    v_put  = _np.nan_to_num(v_put,  nan=0.0, posinf=0.0, neginf=0.0)
+
+    P = v_call + v_put
+    # argmax with deterministic tie-break: nearest to price, then larger call, then larger put
+    vmax = float(_np.nanmax(P)) if _np.any(_np.isfinite(P)) else 0.0
+    if vmax <= 0:
+        E = _np.zeros(n, dtype=float)
+        return {"K_star": None, "candidates": [], "E": E,
+                "mass": _np.zeros(n), "flow_cost": _np.zeros(n),
+                "stab": _np.zeros(n), "conf": 0.0}
+
+    # indices with max P
+    idxs = _np.where(P == vmax)[0]
+    if idxs.size > 1:
+        # 1) nearest to S
+        d = _np.abs(strikes_eval[idxs] - float(S))
+        idxs = idxs[_np.where(d == _np.nanmin(d))[0]]
+        if idxs.size > 1:
+            # 2) larger call
+            cvals = v_call[idxs]
+            idxs = idxs[_np.where(cvals == _np.nanmax(cvals))[0]]
+            if idxs.size > 1:
+                # 3) larger put
+                pvals = v_put[idxs]
+                idxs = idxs[_np.where(pvals == _np.nanmax(pvals))[0]]
+    i_star = int(idxs[0]) if isinstance(idxs, _np.ndarray) else int(idxs)
+
+    # Energy vector so that app's normalization produces normalized P
+    p_max = float(_np.nanmax(P)); p_min = float(_np.nanmin(P))
+    E = (p_max - P)  # non-negative
+
+    return {
+        "K_star": float(strikes_eval[i_star]),
+        "candidates": [float(strikes_eval[i_star])],
+        "E": E.astype(float),
+        "mass": _np.zeros(n, dtype=float),
+        "flow_cost": _np.zeros(n, dtype=float),
+        "stab": _np.zeros(n, dtype=float),
+        "conf": 1.0,
+    }
+
     def _median_step(xs):
         if len(xs) < 2: return 1.0
         diffs = sorted([abs(xs[i+1]-xs[i]) for i in range(len(xs)-1)])
@@ -545,7 +653,7 @@ def compute_power_zone_v2(
         atm_idx = int(_np.argmin(_np.abs(Ks - float(S))))
         idxs = _np.arange(len(Ks))
         dist_steps = _np.abs(idxs - atm_idx)
-        d_star = max(2, int(round(h / max(step_i, 1e-8))))
+        d_star = 2.0
         w_blend = _np.clip(1.0 - dist_steps / d_star, 0.0, 1.0)
         Act_raw = w_blend * Vol_eff + (1.0 - w_blend) * OI_eff
 
