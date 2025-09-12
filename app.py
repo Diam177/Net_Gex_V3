@@ -5,7 +5,7 @@ import time, json, datetime
 
 import importlib, sys
 from lib.intraday_chart import render_key_levels_section
-from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series, compute_power_zone_v2
+from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
@@ -323,24 +323,6 @@ df = pd.DataFrame({
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
 
-# === Power Zone v2 curve (normalized inverse energy) ===
-try:
-    res_pzv2 = compute_power_zone_v2(
-        S=S, t0=t0, strikes_eval=df["Strike"].values,
-        sigma_atm=_atm_iv, day_high=day_high, day_low=day_low,
-        all_series=all_series_ctx, minutes_to_close=None
-    )
-    E = np.asarray(res_pzv2.get("E", []), dtype=float)
-    if E.size == len(df):
-        e_min = float(np.nanmin(E)); e_max = float(np.nanmax(E))
-        denom = (e_max - e_min) if (e_max > e_min) else 1.0
-        pz_v2 = (e_max - E) / denom
-        df["PZ_V2"] = np.round(pz_v2, 6)
-    else:
-        df["PZ_V2"] = np.zeros(len(df), dtype=float)
-except Exception as _e:
-    df["PZ_V2"] = np.zeros(len(df), dtype=float)
-
 # === G-Flip (эвристика) ===
 def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12):
     strikes = np.asarray(strikes_arr, dtype=float)
@@ -377,15 +359,16 @@ g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
 
 # === Plot ===
 st.subheader("GammaStrat v6.5")
-cols = st.columns(10)
+cols = st.columns(9)
 toggles = {}
-names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","PZ_V2","G-Flip"]
-defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False, "PZ_V2": False}
+names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
+defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False}
 for i, name in enumerate(names):
     with cols[i]:
         toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
 
-series_dict = {"Net Gex": df["Net Gex"].values,
+series_dict = {
+    "Net Gex": df["Net Gex"].values,
     "Put OI": df["Put OI"].values,
     "Call OI": df["Call OI"].values,
     "Put Volume": df["Put Volume"].values,
@@ -393,7 +376,6 @@ series_dict = {"Net Gex": df["Net Gex"].values,
     "AG": df["AG"].values,
     "PZ": df["PZ"].values,
     "PZ_FP": df["PZ_FP"].values,
-    "PZ_V2": df["PZ_V2"].values,
 }
 
 # позиционный вызов — совместим с текущей сигнатурой
