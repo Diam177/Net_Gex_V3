@@ -359,16 +359,16 @@ g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
 
 # === Plot ===
 st.subheader("GammaStrat v6.5")
-cols = st.columns(9)
+names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","PZ_V2","G-Flip"]
+cols = st.columns(len(names))
 toggles = {}
-names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
-defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False}
+defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False, "PZ_V2": False}
 for i, name in enumerate(names):
     with cols[i]:
         toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
 
 series_dict = {
-    "Net Gex": df["Net Gex"].values,
+"Net Gex": df["Net Gex"].values,
     "Put OI": df["Put OI"].values,
     "Call OI": df["Call OI"].values,
     "Put Volume": df["Put Volume"].values,
@@ -376,6 +376,7 @@ series_dict = {
     "AG": df["AG"].values,
     "PZ": df["PZ"].values,
     "PZ_FP": df["PZ_FP"].values,
+    "PZ_V2": (df["PZ_V2"].values if "PZ_V2" in df.columns else np.zeros(len(df)))
 }
 
 # позиционный вызов — совместим с текущей сигнатурой
