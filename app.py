@@ -5,10 +5,10 @@ import time, json, datetime
 
 import importlib, sys
 from lib.intraday_chart import render_key_levels_section
-from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
+from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series, compute_power_zone_v2
 from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
-from lib.plotting import make_figure, _select_atm_window, _select_window_score
+from lib.plotting import make_figure, _select_atm_window
 from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
@@ -323,6 +323,24 @@ df = pd.DataFrame({
     "PZ_FP": np.round(metrics["pz_fp"], 6),
 })
 
+# === Power Zone v2 curve (normalized inverse energy) ===
+try:
+    res_pzv2 = compute_power_zone_v2(
+        S=S, t0=t0, strikes_eval=df["Strike"].values,
+        sigma_atm=_atm_iv, day_high=day_high, day_low=day_low,
+        all_series=all_series_ctx, minutes_to_close=None
+    )
+    E = np.asarray(res_pzv2.get("E", []), dtype=float)
+    if E.size == len(df):
+        e_min = float(np.nanmin(E)); e_max = float(np.nanmax(E))
+        denom = (e_max - e_min) if (e_max > e_min) else 1.0
+        pz_v2 = (e_max - E) / denom
+        df["PZ_V2"] = np.round(pz_v2, 6)
+    else:
+        df["PZ_V2"] = np.zeros(len(df), dtype=float)
+except Exception as _e:
+    df["PZ_V2"] = np.zeros(len(df), dtype=float)
+
 # === G-Flip (эвристика) ===
 def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12):
     strikes = np.asarray(strikes_arr, dtype=float)
@@ -359,23 +377,15 @@ g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
 
 # === Plot ===
 st.subheader("GammaStrat v6.5")
-# Strike window mode controls
-_win_mode = st.selectbox("Strike window", ["ATM (default)", "Score (hybrid)", "Full chain"], index=0, key="win_mode_main")
-_full_chain = (_win_mode == "Full chain")
-_window_mode = "score" if _win_mode == "Score (hybrid)" else "atm"
-_score_bandwidth = 15
-_score_nmax = 99
-
-cols = st.columns(9)
+cols = st.columns(10)
 toggles = {}
-names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
-defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False}
+names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","PZ_V2","G-Flip"]
+defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False, "PZ_V2": False}
 for i, name in enumerate(names):
     with cols[i]:
         toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
 
-series_dict = {
-    "Net Gex": df["Net Gex"].values,
+series_dict = {"Net Gex": df["Net Gex"].values,
     "Put OI": df["Put OI"].values,
     "Call OI": df["Call OI"].values,
     "Put Volume": df["Put Volume"].values,
@@ -383,25 +393,11 @@ series_dict = {
     "AG": df["AG"].values,
     "PZ": df["PZ"].values,
     "PZ_FP": df["PZ_FP"].values,
+    "PZ_V2": df["PZ_V2"].values,
 }
 
 # позиционный вызов — совместим с текущей сигнатурой
-idx_keep = (
-    np.arange(len(df["Strike"].values)) if _full_chain else (
-        _select_window_score(
-            df["Strike"].values,
-            df["Call OI"].values,
-            df["Put OI"].values,
-            int(np.argmin(np.abs(df["Strike"].values - float(S)))),
-            df["Call Volume"].values,
-            df["Put Volume"].values,
-            Nmin=15,
-            Nmax=_score_nmax
-        ) if _window_mode=="score" else _select_atm_window(
-            df["Strike"].values, df["Call OI"].values, df["Put OI"].values, S
-        )
-    )
-)
+idx_keep = _select_atm_window(df["Strike"].values, df["Call OI"].values, df["Put OI"].values, S)
 
 fig = make_figure(
     strikes=df["Strike"].values,
@@ -410,13 +406,8 @@ fig = make_figure(
     series_dict=series_dict,
     price=S,
     ticker=ticker,
-    g_flip=g_flip_val,
-    full_chain=_full_chain,
-    window_mode=_window_mode,
-    score_bandwidth=_score_bandwidth,
-    score_nmax=_score_nmax,
-    call_volume=series_dict.get("Call Volume"),
-    put_volume=series_dict.get("Put Volume"))
+    g_flip=g_flip_val
+)
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
