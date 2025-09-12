@@ -8,7 +8,7 @@ from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
-from lib.plotting import make_figure, _select_atm_window
+from lib.plotting import make_figure, _select_atm_window, _select_window_score
 from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
 
 st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
@@ -359,6 +359,13 @@ g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
 
 # === Plot ===
 st.subheader("GammaStrat v6.5")
+# Strike window mode controls
+_win_mode = st.selectbox("Strike window", ["ATM (default)", "Score (hybrid)", "Full chain"], index=0, key="win_mode_main")
+_full_chain = (_win_mode == "Full chain")
+_window_mode = "score" if _win_mode == "Score (hybrid)" else "atm"
+_score_bandwidth = 15
+_score_nmax = 99
+
 cols = st.columns(9)
 toggles = {}
 names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","G-Flip"]
@@ -379,7 +386,22 @@ series_dict = {
 }
 
 # позиционный вызов — совместим с текущей сигнатурой
-idx_keep = _select_atm_window(df["Strike"].values, df["Call OI"].values, df["Put OI"].values, S)
+idx_keep = (
+    np.arange(len(df["Strike"].values)) if _full_chain else (
+        _select_window_score(
+            df["Strike"].values,
+            df["Call OI"].values,
+            df["Put OI"].values,
+            int(np.argmin(np.abs(df["Strike"].values - float(S)))),
+            df["Call Volume"].values,
+            df["Put Volume"].values,
+            Nmin=15,
+            Nmax=_score_nmax
+        ) if _window_mode=="score" else _select_atm_window(
+            df["Strike"].values, df["Call OI"].values, df["Put OI"].values, S
+        )
+    )
+)
 
 fig = make_figure(
     strikes=df["Strike"].values,
@@ -388,8 +410,13 @@ fig = make_figure(
     series_dict=series_dict,
     price=S,
     ticker=ticker,
-    g_flip=g_flip_val
-)
+    g_flip=g_flip_val,
+    full_chain=_full_chain,
+    window_mode=_window_mode,
+    score_bandwidth=_score_bandwidth,
+    score_nmax=_score_nmax,
+    call_volume=series_dict.get("Call Volume"),
+    put_volume=series_dict.get("Put Volume"))
 
 st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
