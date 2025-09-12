@@ -285,7 +285,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         for y, labels in groups.items():
             if len(labels) >= 2:
                 fig.add_annotation(
-                    x=x_right, y=y, xref="x", yref="y",
+                    x=1, y=y, xref="paper", yref="y",
                     text=" + ".join(labels), showarrow=False,
                     xanchor="right", xshift=-6, yshift=12, align="right",
                     bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
@@ -298,7 +298,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
         for y, labels in groups.items():
             if len(labels) == 1:
                 fig.add_annotation(
-                    x=x_right, y=y, xref="x", yref="y",
+                    x=1, y=y, xref="paper", yref="y",
                     text=labels[0], showarrow=False,
                     xanchor="right", xshift=-6, yshift=12, align="right",
                     bgcolor="rgba(0,0,0,0.35)", bordercolor="rgba(255,255,255,0.25)",
@@ -318,7 +318,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             if isinstance(v, (int,float)): y_vals.append(float(v))
         y_center = (min(y_vals)+max(y_vals))/2.0 if y_vals else 0.0
         fig.add_annotation(
-            x=x_center, y=y_center, xref="x", yref="y",
+            x=0.5, y=0.5, xref="paper", yref="paper",
             text="Market closed", showarrow=False,
             xanchor="center", yanchor="middle", align="center",
             font=dict(size=36, color="rgba(255,255,255,0.2)"),
@@ -341,7 +341,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             _ymax = float(pd.to_numeric(df_plot['high'], errors='coerce').max())
             fig.update_layout(xaxis_rangeslider=dict(visible=True, thickness=0.05, yaxis=dict(range=[_ymin, _ymax])))
         except Exception:
-            fig.update_layout(xaxis_rangeslider_visible=True)
+            fig.update_layout(xaxis_rangeslider_visible=has_candles)
     # === Build Y ticks between min and max Key Levels with dynamic step (1/0.5/0.25) ===
     y_tickvals = None
     y_range = None
@@ -405,7 +405,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     except Exception:
         y_tickvals = None
         y_range = None
-    fig.update_layout(xaxis_rangeslider_visible=True)
+    fig.update_layout(xaxis_rangeslider_visible=has_candles)
     
     fig.update_xaxes(range=[tickvals[0], tickvals[-1]], fixedrange=True, tickmode="array", tickvals=tickvals, ticktext=ticktext, tickfont=dict(size=10), ticklabelposition="outside", ticklabelstandoff=14, showgrid=True, gridcolor="rgba(255,255,255,0.05)", gridwidth=0.5)
     fig.update_yaxes(fixedrange=True, range=(y_range if y_range is not None else None), tickmode=("array" if y_tickvals is not None else "auto"), tickvals=(y_tickvals if y_tickvals is not None else None), ticktext=([str(v) for v in y_tickvals] if y_tickvals is not None else None), tickfont=dict(size=10, color="#7d8590"), showgrid=True, gridcolor="rgba(255,255,255,0.05)", gridwidth=0.5)
