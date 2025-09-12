@@ -82,6 +82,100 @@ def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nma
 
     return np.arange(L, R + 1, dtype=int)
 
+
+
+def _gaussian_weight(dist_in_strikes: np.ndarray, bandwidth: int = 15) -> np.ndarray:
+    """Smoothly decaying weight as we move away from ATM in strike-index space."""
+    dist_in_strikes = np.asarray(dist_in_strikes, dtype=float)
+    bw = max(1, int(bandwidth))
+    return np.exp(- (dist_in_strikes / bw) ** 2)
+
+
+def _select_window_score(
+    strikes: np.ndarray,
+    call_oi: np.ndarray,
+    put_oi: np.ndarray,
+    atm_idx: int,
+    call_vol: np.ndarray | None = None,
+    put_vol: np.ndarray | None = None,
+    *,
+    Nmin: int = 15,
+    Nmax: int = 99,
+    weights: dict | None = None,
+    bandwidth: int = 15,
+) -> np.ndarray:
+    """Hybrid score window using multiple signals and distance to price.
+
+    score_k = max( |C-P|/max|C-P|,
+                   wC * C/maxC,
+                   wP * P/maxP,
+                   wCV * CV/maxCV,
+                   wPV * PV/maxPV ) * gaussian(|k - atm_idx|)
+
+    Then choose a contiguous segment length in [Nmin, Nmax] that maximizes score sum
+    and contains ATM.
+    """
+    strikes = np.asarray(strikes)
+    C = np.asarray(call_oi, dtype=float)
+    P = np.asarray(put_oi, dtype=float)
+    n = len(strikes)
+    if n == 0:
+        return np.arange(0, dtype=int)
+
+    abs_diff = np.abs(C - P)
+    max_abs = float(abs_diff.max()) if abs_diff.size else 0.0
+    maxC = float(C.max()) if C.size else 0.0
+    maxP = float(P.max()) if P.size else 0.0
+
+    CV = np.asarray(call_vol, dtype=float) if call_vol is not None else np.zeros_like(C)
+    PV = np.asarray(put_vol, dtype=float) if put_vol is not None else np.zeros_like(P)
+    maxCV = float(CV.max()) if CV.size else 0.0
+    maxPV = float(PV.max()) if PV.size else 0.0
+
+    # default weights
+    w = dict(absdiff=1.0, call_oi=0.7, put_oi=0.7, call_vol=0.4, put_vol=0.4)
+    if isinstance(weights, dict):
+        w.update({k: float(v) for k, v in weights.items() if k in w})
+
+    comp_abs = (abs_diff / max_abs) if max_abs > 0 else np.zeros(n)
+    comp_c   = (C / maxC)         if maxC    > 0 else np.zeros(n)
+    comp_p   = (P / maxP)         if maxP    > 0 else np.zeros(n)
+    comp_cv  = (CV / maxCV)       if maxCV   > 0 else np.zeros(n)
+    comp_pv  = (PV / maxPV)       if maxPV   > 0 else np.zeros(n)
+
+    raw_score = np.maximum.reduce([
+        comp_abs,
+        w["call_oi"] * comp_c,
+        w["put_oi"] * comp_p,
+        w["call_vol"] * comp_cv,
+        w["put_vol"] * comp_pv,
+    ])
+
+    idx = np.arange(n)
+    dist = np.abs(idx - int(atm_idx))
+    weight = _gaussian_weight(dist, bandwidth=bandwidth)
+    score = raw_score * weight
+
+    Nmin = max(1, int(Nmin))
+    Nmax = max(Nmin, int(min(Nmax, n)))
+
+    best_sum = -1.0
+    best_L = 0
+    best_R = max(Nmin - 1, 0)
+
+    # Iterate possible widths ensuring ATM is inside segment
+    for width in range(Nmin, Nmax + 1):
+        L_min = max(0, int(atm_idx) - width + 1)
+        L_max = min(int(atm_idx), n - width)
+        for L in range(L_min, L_max + 1):
+            R = L + width - 1
+            s = float(score[L:R+1].sum())
+            if s > best_sum:
+                best_sum = s
+                best_L, best_R = L, R
+
+    return np.arange(best_L, best_R + 1, dtype=int)
+
 def _format_labels(vals):
     out = []
     for v in vals:
@@ -95,16 +189,45 @@ def _format_labels(vals):
             out.append(str(v))
     return out
 
-def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticker=None, g_flip=None):
+def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticker=None, g_flip=None, call_volume=None, put_volume=None, full_chain: bool = False, window_mode: str = "atm", score_weights: dict | None = None, score_bandwidth: int = 15, score_nmax: int | None = None, idx_keep_override=None):
     strikes = np.asarray(strikes, dtype=float)
     net_gex = np.asarray(net_gex, dtype=float)
 
+    
     idx_keep = np.arange(len(strikes), dtype=int)
-    if (price is not None) and ("Call OI" in series_dict) and ("Put OI" in series_dict):
-        try:
-            idx_keep = _select_atm_window(strikes, series_dict["Call OI"], series_dict["Put OI"], float(price))
-        except Exception:
-            idx_keep = np.arange(len(strikes), dtype=int)
+    try:
+        if idx_keep_override is not None:
+            idx_keep = np.asarray(idx_keep_override, dtype=int)
+        elif (price is not None) and ("Call OI" in series_dict) and ("Put OI" in series_dict):
+            if full_chain:
+                idx_keep = np.arange(len(strikes), dtype=int)
+            elif window_mode == "score":
+                # compute atm index
+                try:
+                    atm_idx = int(np.argmin(np.abs(np.asarray(strikes, dtype=float) - float(price))))
+                except Exception:
+                    atm_idx = 0
+                idx_keep = _select_window_score(
+                    np.asarray(strikes, dtype=float),
+                    np.asarray(series_dict.get("Call OI"), dtype=float),
+                    np.asarray(series_dict.get("Put OI"), dtype=float),
+                    atm_idx=atm_idx,
+                    call_vol=np.asarray(series_dict.get("Call Volume"), dtype=float) if "Call Volume" in series_dict else None,
+                    put_vol=np.asarray(series_dict.get("Put Volume"), dtype=float) if "Put Volume" in series_dict else None,
+                    Nmin=15,
+                    Nmax=int(score_nmax or 99),
+                    weights=score_weights,
+                    bandwidth=int(score_bandwidth),
+                )
+            else:
+                idx_keep = _select_atm_window(
+                    np.asarray(strikes, dtype=float),
+                    np.asarray(series_dict.get("Call OI"), dtype=float),
+                    np.asarray(series_dict.get("Put OI"), dtype=float),
+                    float(price)
+                )
+    except Exception:
+        idx_keep = np.arange(len(strikes), dtype=int)
 
     strikes_keep = strikes[idx_keep]
     x_labels = _format_labels(strikes_keep)
