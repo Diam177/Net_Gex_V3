@@ -338,7 +338,7 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         gamma_pow = 0.90
         OI_eff = (call_oi_vec + put_oi_vec) ** gamma_pow
         d_steps = np.abs(Ks - S) / max(step_i, 1e-8)
-        d_star = 2.0
+        d_star = max(2, int(round(h / max(step_i, 1e-8))))
         wblend = np.clip(1.0 - d_steps / d_star, 0.0, 1.0)
         Act_raw = wblend * Vol_eff + (1.0 - wblend) * OI_eff
 
@@ -361,12 +361,15 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
 
     pz_vals = []
     for K in strikes_eval:
-        val = 0.0
-        WdK = Wd_kernel(K, S, h)
+        acc = 0.0
         for w, c in zip(W_time, prep):
-            j = int(np.argmin(np.abs(c["Ks"] - K)))
-            val += w * WdK * c["AG_hat"][j] * c["Stab_hat"][j] * c["Act_hat"][j]
-        pz_vals.append(val)
+            Ks = c["Ks"]
+            # локальная свёртка вокруг самого K (без S-центрирования)
+            wloc = np.exp(-0.5 * ((Ks - float(K)) / h)**2) if h > 0 else np.ones_like(Ks)
+            denom = float(wloc.sum()) if wloc.size > 0 else 1.0
+            prod = c["AG_hat"] * c["Stab_hat"] * c["Act_hat"]
+            acc += w * float(np.sum(wloc * prod) / (denom if denom>0 else 1.0))
+        pz_vals.append(acc)
     pz_vals = np.array(pz_vals, dtype=float)
     pz_norm = (pz_vals / pz_vals.max()) if pz_vals.max()>0 else np.zeros_like(pz_vals)
 
@@ -405,7 +408,8 @@ def compute_pz_and_flow(S, t0, strikes_eval, sigma_atm, day_high, day_low, all_s
         stab = Stab_at_K(K)
         agloc = AG_loc(K)
         hf = abs(HF_at_K(K))
-        val = Wd_kernel(K, S, h) * stab * ((agloc**delta_par) if agloc>0 else 0.0) / (eps_small + hf)
+        # убрали S-центрирование: локальная сила/стабильность против «стоимости потока»
+        val = stab * ((agloc**delta_par) if agloc>0 else 0.0) / (eps_small + hf)
         pzfp_vals.append(val)
     pzfp_vals = np.array(pzfp_vals, dtype=float)
     pzfp_norm = (pzfp_vals / pzfp_vals.max()) if pzfp_vals.max()>0 else np.zeros_like(pzfp_vals)
@@ -541,7 +545,7 @@ def compute_power_zone_v2(
         atm_idx = int(_np.argmin(_np.abs(Ks - float(S))))
         idxs = _np.arange(len(Ks))
         dist_steps = _np.abs(idxs - atm_idx)
-        d_star = 2.0
+        d_star = max(2, int(round(h / max(step_i, 1e-8))))
         w_blend = _np.clip(1.0 - dist_steps / d_star, 0.0, 1.0)
         Act_raw = w_blend * Vol_eff + (1.0 - w_blend) * OI_eff
 
