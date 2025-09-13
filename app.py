@@ -417,70 +417,7 @@ except Exception:
     pass
 
 # === Таблица по страйкам ===
-
-# --- Build GammaStrat dataframe strictly from final_table if available ---
-_df_override = None
-try:
-    from lib.final_table import build_final_tables_from_corr, process_from_raw, FinalTableConfig
-    import numpy as _np, pandas as _pd
-    _final_cfg = FinalTableConfig(scale_millions=1_000_000)  # scale doesn't affect raw $ columns here
-    _tables = None
-    if ("df_corr" in st.session_state) and ("windows" in st.session_state):
-        _tables = build_final_tables_from_corr(st.session_state["df_corr"], st.session_state["windows"], cfg=_final_cfg)
-    elif ("raw_records" in st.session_state) and ("spot" in st.session_state):
-        _tables = process_from_raw(st.session_state["raw_records"], S=float(st.session_state["spot"]), final_cfg=_final_cfg)
-    if _tables and selected_exps:
-        # Union K across chosen expirations
-        _Ks_all = sorted({float(k) for _e in selected_exps if _e in _tables for k in _tables[_e]["K"].tolist()})
-        if _Ks_all:
-            _Ks = _np.array(_Ks_all, dtype=float)
-            put_oi  = _np.zeros_like(_Ks, dtype=float)
-            call_oi = _np.zeros_like(_Ks, dtype=float)
-            put_vol  = _np.zeros_like(_Ks, dtype=float)
-            call_vol = _np.zeros_like(_Ks, dtype=float)
-            net_gex = _np.zeros_like(_Ks, dtype=float)  # K$ on 1%
-            ag      = _np.zeros_like(_Ks, dtype=float)  # K$ on 1%
-            num_pz  = _np.zeros_like(_Ks, dtype=float)
-            num_erU = _np.zeros_like(_Ks, dtype=float)
-            num_erD = _np.zeros_like(_Ks, dtype=float)
-            den_w   = _np.zeros_like(_Ks, dtype=float)
-            for _e in selected_exps:
-                if _e not in _tables:
-                    continue
-                _t = _tables[_e][["K","call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct","PZ","ER_Up","ER_Down"]].copy()
-                _t.rename(columns={"K":"Strike"}, inplace=True)
-                _t.set_index("Strike", inplace=True)
-                _t = _t.reindex(_Ks_all)
-                call_oi += _np.nan_to_num(_t["call_oi"].values.astype(float))
-                put_oi  += _np.nan_to_num(_t["put_oi"].values.astype(float))
-                call_vol += _np.nan_to_num(_t.get("call_vol", 0.0).values.astype(float))
-                put_vol  += _np.nan_to_num(_t.get("put_vol", 0.0).values.astype(float))
-                net_gex += _np.nan_to_num((_t["NetGEX_1pct"].values.astype(float)) / 1000.0)
-                ag      += _np.nan_to_num((_t["AG_1pct"].values.astype(float)) / 1000.0)
-                w = _np.nan_to_num((_t["call_oi"].values.astype(float) + _t["put_oi"].values.astype(float)))
-                num_pz  += _np.nan_to_num(_t["PZ"].values.astype(float)) * w
-                num_erU += _np.nan_to_num(_t["ER_Up"].values.astype(float)) * w
-                num_erD += _np.nan_to_num(_t["ER_Down"].values.astype(float)) * w
-                den_w   += w
-            pz  = _np.divide(num_pz,  den_w, out=_np.zeros_like(num_pz),  where=den_w>0)
-            erU = _np.divide(num_erU, den_w, out=_np.zeros_like(num_erU), where=den_w>0)
-            erD = _np.divide(num_erD, den_w, out=_np.zeros_like(num_erD), where=den_w>0)
-            _df_override = _pd.DataFrame({
-                "Strike": _Ks,
-                "Put OI": put_oi,
-                "Call OI": call_oi,
-                "Put Volume": put_vol,
-                "Call Volume": call_vol,
-                "Net Gex": net_gex,
-                "AG": ag,
-                "Power Zone": pz,
-                "ER Up": erU,
-                "ER Down": erD,
-            })
-except Exception as __ovr_err:
-    _df_override = None
-# --- End override ---
-df = _df_override if (_df_override is not None and len(_df_override)) else pd.DataFrame({
+df = pd.DataFrame({
     "Strike": metrics.get("strikes", []),
     "Put OI": metrics.get("put_oi", []),
     "Call OI": metrics.get("call_oi", []),
