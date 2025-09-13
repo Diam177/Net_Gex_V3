@@ -136,7 +136,16 @@ def build_final_tables_from_corr(
             df_corr, exp, windows=windows,
             cfg=NetGEXAGConfig(scale=cfg.scale_millions, aggregate="none")
         )
-        if net_tbl.empty:
+        # 1.b) добавим объёмы по сторонам из df_corr
+        g_exp = df_corr[df_corr["exp"] == exp].copy()
+        agg_vol = g_exp.groupby(["K","side"], as_index=False)["vol"].sum()
+        pv = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
+        call_vol_map = {float(k): float(v) for k, v in pv.get("C", pd.Series(dtype=float)).items()}
+        put_vol_map  = {float(k): float(v) for k, v in pv.get("P", pd.Series(dtype=float)).items()}
+        net_tbl["call_vol"] = net_tbl["K"].map(call_vol_map).fillna(0.0)
+        net_tbl["put_vol"]  = net_tbl["K"].map(put_vol_map).fillna(0.0)
+
+if net_tbl.empty:
             results[exp] = net_tbl
             continue
 
