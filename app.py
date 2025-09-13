@@ -179,6 +179,22 @@ for e, block in blocks_by_date.items():
         put_vol_arr = series_metrics.get("put_vol", [])
         gamma_abs_share_arr = series_metrics.get("gamma_abs_share", [])
         gamma_net_share_arr = series_metrics.get("gamma_net_share", [])
+        # --- Slice arrays to the visible ATM window used in GammaStrat v6.5 ---
+        try:
+            import numpy as _np
+            idx_win = _select_atm_window(strikes, call_oi_arr, put_oi_arr, float(S))
+            if hasattr(idx_win, 'size') and int(getattr(idx_win, 'size', 0)) >= 2:
+                idx_win = _np.asarray(idx_win, dtype=int)
+                strikes = strikes[idx_win]
+                call_oi_arr = call_oi_arr[idx_win]
+                put_oi_arr  = put_oi_arr[idx_win]
+                call_vol_arr= call_vol_arr[idx_win]
+                put_vol_arr = put_vol_arr[idx_win]
+                gamma_abs_share_arr = gamma_abs_share_arr[idx_win]
+                gamma_net_share_arr = gamma_net_share_arr[idx_win]
+                _dlog(f'Window slice kept {len(strikes)} strikes: [{float(strikes[0])}, …, {float(strikes[-1])}]')
+        except Exception as _win_e:
+            _dlog(f'Window slice error: {type(_win_e).__name__}: {str(_win_e)}')
         # Convert OI and volume arrays back to dicts keyed by strike for downstream use
         call_oi = {float(k): float(v) for k, v in zip(strikes, call_oi_arr)}
         put_oi  = {float(k): float(v) for k, v in zip(strikes, put_oi_arr)}
@@ -186,6 +202,13 @@ for e, block in blocks_by_date.items():
         put_vol = {float(k): float(v) for k, v in zip(strikes, put_vol_arr)}
         # Obtain IV dictionaries via aggregate_series to avoid computing twice
         strikes_tmp, call_oi_tmp, put_oi_tmp, call_vol_tmp, put_vol_tmp, iv_call, iv_put = aggregate_series(block)
+        # Filter IV dicts to the same visible window
+        try:
+            _Ks_set = set(float(x) for x in strikes)
+            iv_call = {float(k): float(v) for k,v in iv_call.items() if float(k) in _Ks_set}
+            iv_put  = {float(k): float(v) for k,v in iv_put.items()  if float(k) in _Ks_set}
+        except Exception as _iv_e:
+            _dlog(f'IV filter error: {type(_iv_e).__name__}: {str(_iv_e)}')
         # Time to expiry in years
         T = max((e - t0) / (365*24*3600), 1e-6)
         # Append context for this expiry.  Note: gamma_abs_share and gamma_net_share
