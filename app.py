@@ -13,7 +13,9 @@ import time, json, datetime
 
 import importlib, sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'lib'))
+ROOT_DIR = os.path.dirname(__file__)
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
 from lib.intraday_chart import render_key_levels_section
 from lib.provider_polygon import fetch_stock_history
