@@ -366,13 +366,13 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     y_tickvals = None
     y_range = None
     try:
-            # Use the new Power Zone tag instead of legacy "pz_max".
-            level_keys = [
+        # Use the new Power Zone tag instead of legacy "pz_max".
+        level_keys = [
                 "max_neg_gex","max_neg_gex_2","max_neg_gex_3",
                 "max_pos_gex","max_pos_gex_2","max_pos_gex_3",
                 "put_oi_max","call_oi_max","put_vol_max","call_vol_max",
                 "ag_max","ag_max_2","ag_max_3","power_zone_max","gflip"
-            ]
+        ]
         _ys = []
         for _k in level_keys:
             _v = levels.get(_k)
