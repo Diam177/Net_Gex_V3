@@ -10,6 +10,9 @@ from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
 from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
+import os, sys
+sys.path.append(os.path.join(os.path.dirname(__file__), 'lib'))
+from lib.ui_final_table import render_final_table
 
 # Update page title to reflect new Power Zone and Easy Reach metrics
 st.set_page_config(page_title="Net GEX / AG / Power Zone / Easy Reach", layout="wide")
@@ -600,3 +603,15 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
+
+# === Final Table Section (non-intrusive) ===
+try:
+    render_final_table()  # shows the window-strikes table with download buttons
+except Exception as _e:
+    # Keep the app running even if the section fails; log to Streamlit if available
+    try:
+        import streamlit as st
+        st.warning(f"Final table section error: {_e}")
+    except Exception:
+        pass
+# === End Final Table Section ===
