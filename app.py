@@ -14,6 +14,8 @@ from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
 from lib.ui_final_table import render_final_table
 from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
+# Pull in final_table helpers to build metrics directly from the unified final table.
+from lib.final_table import FinalTableConfig, build_final_tables_from_corr, process_from_raw
 
 # Update page title to reflect new Power Zone and Easy Reach metrics
 st.set_page_config(page_title="Net GEX / AG / Power Zone / Easy Reach", layout="wide")
@@ -300,46 +302,77 @@ for _exp in selected_exps:
     if _exp not in blocks_by_date:
         st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
         st.stop()
+
+# --- Build metrics strictly from final_table ---
+# After ensuring that all selected expirations exist in the provider data, we switch
+# to constructing the chart inputs solely from the final tables.  The final table
+# encapsulates per-strike open interest, volume, Net GEX, AG, Power Zone and
+# Easy Reach metrics.  We aggregate these across the selected expirations into
+# a single metrics dictionary.  This replaces the previous approach of using
+# compute_series_metrics_for_expiry and on-the-fly power zone calculations.
+
 _metrics_list = []
+# Determine how to obtain the final tables: prefer using the sanitized df_corr/windows
+# pipeline (populated automatically via sanitize_and_window_pipeline), falling back
+# to raw_records and spot if necessary.
+final_tables_by_exp = None
+try:
+    if ("df_corr" in st.session_state) and ("windows" in st.session_state):
+        final_tables_by_exp = build_final_tables_from_corr(
+            st.session_state["df_corr"],
+            st.session_state["windows"],
+            cfg=FinalTableConfig(scale_millions=1e6)
+        )
+    elif ("raw_records" in st.session_state) and ("spot" in st.session_state):
+        final_tables_by_exp = process_from_raw(
+            st.session_state["raw_records"],
+            float(st.session_state["spot"]),
+            final_cfg=FinalTableConfig(scale_millions=1e6)
+        )
+except Exception:
+    final_tables_by_exp = None
+if not final_tables_by_exp:
+    st.error("Не удалось собрать финальные таблицы из данных.")
+    st.stop()
+
+# Build a metrics entry for each selected expiry and append into _metrics_list.  Missing
+# columns are defaulted to zeros to maintain alignment.  The NetGEX_1pct and
+# AG_1pct columns provide the dollar gamma exposures per 1% move; Power Zone
+# (PZ) and Easy Reach (ER_Up/ER_Down) metrics are taken as-is from the table.
 for _exp in selected_exps:
-    _metrics = compute_series_metrics_for_expiry(
-        S=S, t0=t0, expiry_unix=_exp,
-        block=blocks_by_date[_exp],
-        day_high=day_high, day_low=day_low,
-        all_series=all_series_ctx
-    )
-    _metrics_list.append(_metrics)
+    tbl = final_tables_by_exp.get(_exp)
+    if tbl is None or tbl.empty:
+        st.error(f"Нет данных для экспирации {_exp} в финальной таблице.")
+        st.stop()
+    strikes_arr = np.asarray(tbl["K"], dtype=float)
+    put_oi_arr  = np.asarray(tbl["put_oi"], dtype=float)
+    call_oi_arr = np.asarray(tbl["call_oi"], dtype=float)
+    put_vol_arr = np.asarray(tbl.get("put_vol", np.zeros_like(tbl["K"])), dtype=float)
+    call_vol_arr= np.asarray(tbl.get("call_vol", np.zeros_like(tbl["K"])), dtype=float)
+    net_gex_arr = np.asarray(tbl.get("NetGEX_1pct", np.zeros_like(tbl["K"])), dtype=float)
+    ag_arr      = np.asarray(tbl.get("AG_1pct", np.zeros_like(tbl["K"])), dtype=float)
+    pz_arr      = np.asarray(tbl.get("PZ", np.zeros_like(tbl["K"])), dtype=float)
+    er_up_arr   = np.asarray(tbl.get("ER_Up", np.zeros_like(tbl["K"])), dtype=float)
+    er_down_arr = np.asarray(tbl.get("ER_Down", np.zeros_like(tbl["K"])), dtype=float)
+    _metrics_list.append({
+        "strikes": strikes_arr,
+        "put_oi": put_oi_arr,
+        "call_oi": call_oi_arr,
+        "put_vol": put_vol_arr,
+        "call_vol": call_vol_arr,
+        "net_gex": net_gex_arr,
+        "ag": ag_arr,
+        "power_zone": pz_arr,
+        "er_up": er_up_arr,
+        "er_down": er_down_arr
+    })
 
 metrics = _sum_metrics_list(_metrics_list)
-# --- Compute new Power Zone and Easy Reach metrics across aggregated strikes ---
-try:
-    # Use compute_power_zone_and_er from lib.compute on aggregated strike grid
-    from lib.compute import compute_power_zone_and_er
-    pz_new, er_up, er_down = compute_power_zone_and_er(
-        S=float(S),
-        strikes_eval=metrics.get("strikes", []),
-        all_series_ctx=all_series_ctx,
-        day_high=day_high,
-        day_low=day_low
-    )
-    # Assign into metrics structure
-    if len(pz_new) == len(metrics.get("strikes", [])):
-        metrics["power_zone"] = pz_new
-    else:
-        metrics["power_zone"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
-    if len(er_up) == len(metrics.get("strikes", [])):
-        metrics["er_up"] = er_up
-    else:
-        metrics["er_up"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
-    if len(er_down) == len(metrics.get("strikes", [])):
-        metrics["er_down"] = er_down
-    else:
-        metrics["er_down"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
-except Exception as _e:
-    # On failure set to zeros
-    metrics["power_zone"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
-    metrics["er_up"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
-    metrics["er_down"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
+
+# Note: we intentionally skip recomputing Power Zone and Easy Reach profiles here.
+# These values are already provided by final_table and aggregated via
+# _sum_metrics_list above.  Retaining the legacy compute_power_zone_and_er call
+# would mix two different methodologies and is therefore omitted.
 # --- Advanced Options summary (for the bottom block) ---
 try:
     # Prepare lightweight DF with canonical column names expected by update_ao_summary
