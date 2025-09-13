@@ -31,7 +31,7 @@ POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 _PROVIDER = "polygon"
 
 with st.sidebar:
-    debug_logs = st.checkbox('Debug logs', value=True, help='Показывать диагностические сообщения')
+    debug_logs = st.checkbox('Debug logs', value=True, help='Показывать диагностические сообщения', key='debug_logs')
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
     st.caption(f"Data provider: **{_PROVIDER}**")
@@ -209,17 +209,17 @@ for e, block in blocks_by_date.items():
         except Exception as _valid_e:
             _dlog(f"Skip expiry {e}: validation error: {type(_valid_e).__name__}: {str(_valid_e)}")
             continue
-all_series_ctx.append({
-            "strikes": strikes,
-            "call_oi": call_oi,
-            "put_oi": put_oi,
-            "call_vol": call_vol,
-            "put_vol": put_vol,
-            "gamma_abs_share": gamma_abs_share_arr,
-            "gamma_net_share": gamma_net_share_arr,
-            "iv_call": iv_call,
-            "iv_put": iv_put,
-            "T": T
+        all_series_ctx.append({
+        "strikes": strikes,
+        "call_oi": call_oi,
+        "put_oi": put_oi,
+        "call_vol": call_vol,
+        "put_vol": put_vol,
+        "gamma_abs_share": gamma_abs_share_arr,
+        "gamma_net_share": gamma_net_share_arr,
+        "iv_call": iv_call,
+        "iv_put": iv_put,
+        "T": T
         })
     except Exception:
         pass
