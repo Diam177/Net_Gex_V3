@@ -33,15 +33,16 @@ NEG_COLOR = "#FF3B30"   # negative Net Gex bars (red)
 
 # Line colors & fills for each optional series
 LINE_STYLE = {
-"Put OI":     {"line": "#7F0020", "fill": "rgba(127,0,32,0.25)",
-    "PZ_V2": {"line": "#00C2D1", "fill": "rgba(0,194,209,0.30)"},
-},
+    "Put OI":     {"line": "#7F0020", "fill": "rgba(127,0,32,0.25)"},
     "Call OI":    {"line": "#2FD06F", "fill": "rgba(47,208,111,0.25)"},
     "Put Volume": {"line": "#8C5A0A", "fill": "rgba(140,90,10,0.25)"},
-    "Call Volume":{"line": "#2D83FF", "fill": "rgba(45,131,255,0.25)"},
+    "Call Volume": {"line": "#2D83FF", "fill": "rgba(45,131,255,0.25)"},
     "AG":         {"line": "#8A63F6", "fill": "rgba(138,99,246,0.25)"},
-    "PZ":         {"line": "#FFC400", "fill": "rgba(255,196,0,0.30)"},
-    "PZ_FP":      {"line": "#B0B8C5", "fill": "rgba(176,184,197,0.30)"},
+    # New Power Zone profile (mass)
+    "Power Zone": {"line": "#FFC400", "fill": "rgba(255,196,0,0.30)"},
+    # Easy Reach Up and Down metrics
+    "ER Up":      {"line": "#00C2D1", "fill": "rgba(0,194,209,0.30)"},
+    "ER Down":    {"line": "#B0B8C5", "fill": "rgba(176,184,197,0.30)"},
 }
 
 def _select_atm_window(strikes, call_oi, put_oi, S, p=0.95, q=0.05, Nmin=15, Nmax=49):
@@ -180,16 +181,15 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     # Optional series as smooth spline lines with fill
     SERIES_ORDER = [
-("Put OI", "Put OI"),
+        ("Put OI", "Put OI"),
         ("Call OI", "Call OI"),
         ("Put Volume", "Put Volume"),
         ("Call Volume", "Call Volume"),
         ("AG", "AG"),
-        ("PZ", "PZ"),
-        ("PZ_FP", "PZ_FP"),
-        ("PZ_V2", "PZ_V2"),
-    
-]
+        ("Power Zone", "Power Zone"),
+        ("ER Up", "ER Up"),
+        ("ER Down", "ER Down"),
+    ]
 
     for ser_key, ser_label in SERIES_ORDER:
         if series_enabled.get(ser_key, False) and (ser_key in series_dict):
@@ -262,7 +262,14 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         except Exception:
             pass
         # Build dynamic right-axis title (exclude Net Gex; show only specific series)
-        whitelist = ["Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP"]
+            # Update the whitelist of series names for the secondary axis title.
+            # Legacy PZ and PZ_FP have been replaced by Power Zone and the
+            # Easy Reach metrics.
+            whitelist = [
+                "Put OI", "Call OI",
+                "Put Volume", "Call Volume",
+                "AG", "Power Zone", "ER Up", "ER Down"
+            ]
         picked = [k for k in whitelist if series_enabled.get(k, False)]
         right_title = "Other parameters" + ((" (" + ", ".join(picked) + ")") if picked else "")
     
@@ -359,7 +366,13 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
 
     
 
-        targets = {"put oi","call oi","put volume","call volume","ag","pz","pz_fp"}
+            # Specify which trace names should have their filled area forced to
+            # semi-transparent. Update to reflect the new metric names.
+            targets = {
+                "put oi", "call oi",
+                "put volume", "call volume",
+                "ag", "power zone", "er up", "er down"
+            }
 
         for tr in fig.data:
 
