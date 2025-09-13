@@ -623,4 +623,3 @@ def build_window_panels(
         panels[exp] = panel
 
     return panels
-
