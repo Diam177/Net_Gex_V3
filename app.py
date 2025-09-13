@@ -1,15 +1,3 @@
-import os, sys
-ROOT_DIR = os.path.dirname(__file__)
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-from lib.final_table import (
-    extract_core_from_chain,
-    compute_series_metrics_for_expiry,
-    aggregate_series,
-    build_final_table,
-    get_key_levels_for_chart,
-    put_chain_df_to_global_cache,
-)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -17,7 +5,10 @@ import time, json, datetime
 
 import importlib, sys
 import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'lib'))
+
 from lib.intraday_chart import render_key_levels_section
+from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
@@ -323,6 +314,7 @@ metrics = _sum_metrics_list(_metrics_list)
 # --- Compute new Power Zone and Easy Reach metrics across aggregated strikes ---
 try:
     # Use compute_power_zone_and_er from lib.compute on aggregated strike grid
+    from lib.compute import compute_power_zone_and_er
     pz_new, er_up, er_down = compute_power_zone_and_er(
         S=float(S),
         strikes_eval=metrics.get("strikes", []),
