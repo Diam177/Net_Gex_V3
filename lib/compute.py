@@ -888,9 +888,23 @@ def compute_power_zone_and_er(
         Ks = _np.asarray(s.get("strikes") or [], dtype=float)
         if Ks.size == 0:
             continue
-        # Raw gamma exposures per strike (share)
-        g_abs = _np.asarray(s.get("gamma_abs_share") or _np.zeros_like(Ks), dtype=float)
-        g_net = _np.asarray(s.get("gamma_net_share") or _np.zeros_like(Ks), dtype=float)
+        # Raw gamma exposures per strike (share).  The context may store these
+        # either as arrays aligned with Ks or as dicts keyed by strike.
+        g_raw_abs = s.get("gamma_abs_share")
+        g_raw_net = s.get("gamma_net_share")
+        if isinstance(g_raw_abs, dict):
+            # Build array by indexing dict with each strike
+            g_abs = _np.array([g_raw_abs.get(float(k), 0.0) for k in Ks], dtype=float)
+        elif g_raw_abs is None:
+            g_abs = _np.zeros_like(Ks, dtype=float)
+        else:
+            g_abs = _np.asarray(g_raw_abs, dtype=float)
+        if isinstance(g_raw_net, dict):
+            g_net = _np.array([g_raw_net.get(float(k), 0.0) for k in Ks], dtype=float)
+        elif g_raw_net is None:
+            g_net = _np.zeros_like(Ks, dtype=float)
+        else:
+            g_net = _np.asarray(g_raw_net, dtype=float)
         # Convert to dollar exposures
         AG_e = g_abs * float(S) / 1000.0
         NG_e = _np.abs(g_net) * float(S) / 1000.0
