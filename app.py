@@ -418,6 +418,70 @@ try:
 except Exception:
     pass
 
+
+
+# === Таблица по страйкам (override из финальной таблицы, если доступна) ===
+_df_override = None
+try:
+    if ("df_corr" in st.session_state) and ("windows" in st.session_state):
+        from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+        _tables = build_final_tables_from_corr(st.session_state["df_corr"], st.session_state["windows"], cfg=FinalTableConfig())
+        import numpy as _np
+        import pandas as _pd
+        _Ks_all = sorted({float(k) for _e in (selected_exps or []) if _e in _tables for k in _tables[_e]["K"].tolist()})
+        if _Ks_all:
+            _Ks = _np.array(_Ks_all, dtype=float)
+            # Инициализация аккумуляторов
+            put_oi = _np.zeros_like(_Ks, dtype=float)
+            call_oi = _np.zeros_like(_Ks, dtype=float)
+            net_gex = _np.zeros_like(_Ks, dtype=float)   # в K$
+            ag      = _np.zeros_like(_Ks, dtype=float)   # в K$
+            num_pz  = _np.zeros_like(_Ks, dtype=float)   # числители для w-avg
+            num_erU = _np.zeros_like(_Ks, dtype=float)
+            num_erD = _np.zeros_like(_Ks, dtype=float)
+            den_w   = _np.zeros_like(_Ks, dtype=float)
+            for _e in (selected_exps or []):
+                if _e not in _tables:
+                    continue
+                _t = _tables[_e][["K","call_oi","put_oi","AG_1pct","NetGEX_1pct","PZ","ER_Up","ER_Down"]].copy()
+                _t.rename(columns={"K":"Strike"}, inplace=True)
+                _t.set_index("Strike", inplace=True)
+                # reindex на общий K-лист
+                _t = _t.reindex(_Ks_all)
+                # OI суммы
+                call_oi += _np.nan_to_num(_t["call_oi"].values.astype(float))
+                put_oi  += _np.nan_to_num(_t["put_oi"].values.astype(float))
+                # NetGEX/AG — перевод в K$
+                net_gex += _np.nan_to_num((_t["NetGEX_1pct"].values.astype(float)) / 1000.0)
+                ag      += _np.nan_to_num((_t["AG_1pct"].values.astype(float)) / 1000.0)
+                # веса
+                w = _np.nan_to_num((_t["call_oi"].values.astype(float) + _t["put_oi"].values.astype(float)))
+                num_pz  += _np.nan_to_num(_t["PZ"].values.astype(float)) * w
+                num_erU += _np.nan_to_num(_t["ER_Up"].values.astype(float)) * w
+                num_erD += _np.nan_to_num(_t["ER_Down"].values.astype(float)) * w
+                den_w   += w
+            # финальная сборка
+            pz  = _np.divide(num_pz,  den_w, out=_np.zeros_like(num_pz),  where=den_w>0)
+            erU = _np.divide(num_erU, den_w, out=_np.zeros_like(num_erU), where=den_w>0)
+            erD = _np.divide(num_erD, den_w, out=_np.zeros_like(num_erD), where=den_w>0)
+            _df_override = _pd.DataFrame({
+                "Strike": _Ks,
+                "Put OI": put_oi,
+                "Call OI": call_oi,
+                "Put Volume": _np.zeros_like(_Ks, dtype=float),   # строго из финальной таблицы объёмы не берём
+                "Call Volume": _np.zeros_like(_Ks, dtype=float),
+                "Net Gex": net_gex,
+                "AG": ag,
+                "Power Zone": pz,
+                "ER Up": erU,
+                "ER Down": erD,
+            })
+except Exception as _ovr_err:
+    _df_override = None
+
+if _df_override is not None and len(_df_override):
+    df = _df_override
+else:
 # === Таблица по страйкам ===
 df = pd.DataFrame({
     "Strike": metrics.get("strikes", []),
