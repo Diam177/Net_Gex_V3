@@ -4,11 +4,15 @@ import numpy as np
 import time, json, datetime
 
 import importlib, sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'lib'))
+
 from lib.intraday_chart import render_key_levels_section
 from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
+from lib.ui_final_table import render_final_table
 from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
 
 # Update page title to reflect new Power Zone and Easy Reach metrics
@@ -578,6 +582,17 @@ except Exception:
 
 # === Key Levels chart ===
 render_key_levels_section(ticker, None, POLYGON_API_KEY)
+
+# === Финальная таблица (окно, NetGEX/AG, PZ/ER) ===
+try:
+    render_final_table()
+except Exception as _e:
+    try:
+        import streamlit as st
+        st.warning(f"Final table section error: {_e}")
+    except Exception:
+        pass
+
 # === Advanced Options Market Analysis block ===
 
 # Pre-compute simple intraday VWAP series from minute candles
