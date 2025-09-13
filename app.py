@@ -140,6 +140,54 @@ except Exception as e:
     st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
 # Кнопка "Скачать сырой JSON"
+
+# --- Auto-hook: feed final-table UI with data from provider ---
+try:
+    # Compute/refresh raw_records+spot only if selection changed or not present
+    _exp_sig = tuple(sorted(selected_exps)) if isinstance(selected_exps, (list, tuple)) else ()
+    _need_rebuild = (
+        "raw_records" not in st.session_state or
+        st.session_state.get("_last_exp_sig") != _exp_sig or
+        st.session_state.get("_last_ticker") != ticker
+    )
+    if _need_rebuild:
+        _raw_records = []
+        for _exp in (selected_exps or []):
+            blk = blocks_by_date.get(_exp, {}) or {}
+            for _side, _key in (("C","calls"), ("P","puts")):
+                rows = blk.get(_key, []) or []
+                for r in rows:
+                    rec = {
+                        "side": "call" if _side=="C" else "put",
+                        "strike": r.get("strike"),
+                        "expiration": _exp,
+                        "open_interest": r.get("openInterest") if r.get("openInterest") is not None else r.get("open_interest"),
+                        "volume": r.get("volume"),
+                        "implied_volatility": r.get("impliedVolatility") if r.get("impliedVolatility") is not None else r.get("implied_volatility"),
+                        "delta": r.get("delta"),
+                        "gamma": r.get("gamma"),
+                        "vega": r.get("vega"),
+                        "contract_size": r.get("contractSize") if r.get("contractSize") is not None else r.get("contract_size") or 100,
+                    }
+                    _raw_records.append(rec)
+        if _raw_records:
+            st.session_state["raw_records"] = _raw_records
+            st.session_state["spot"] = float(S)
+            st.session_state["_last_exp_sig"] = _exp_sig
+            st.session_state["_last_ticker"] = ticker
+            # Try to precompute df_corr/windows for instant UI
+            try:
+                from lib.sanitize_window import SanitizerConfig, sanitize_and_window_pipeline
+                _res = sanitize_and_window_pipeline(_raw_records, S=float(S), cfg=SanitizerConfig())
+                st.session_state["df_corr"] = _res["df_corr"]
+                st.session_state["windows"] = _res["windows"]
+            except Exception as _pre_err:
+                # Non-fatal: UI can compute from raw on demand
+                pass
+except Exception as _auto_e:
+    # keep silent, do not break the app
+    pass
+# --- End auto-hook ---
 download_placeholder.download_button(
     "Download JSON",
     data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
