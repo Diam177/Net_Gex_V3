@@ -5,13 +5,14 @@ import time, json, datetime
 
 import importlib, sys
 from lib.intraday_chart import render_key_levels_section
-from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series, compute_power_zone_v2
+from lib.compute import extract_core_from_chain, compute_series_metrics_for_expiry, aggregate_series
 from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
 from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
 
-st.set_page_config(page_title="Net GEX / AG / PZ / PZ_FP", layout="wide")
+# Update page title to reflect new Power Zone and Easy Reach metrics
+st.set_page_config(page_title="Net GEX / AG / Power Zone / Easy Reach", layout="wide")
 
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
@@ -155,7 +156,28 @@ if _PROVIDER == "polygon":
 all_series_ctx = []
 for e, block in blocks_by_date.items():
     try:
-        strikes, call_oi, put_oi, call_vol, put_vol, iv_call, iv_put = aggregate_series(block)
+        # Compute per-series metrics to obtain gamma exposures and OI/vol per strike
+        series_metrics = compute_series_metrics_for_expiry(
+            S=S, t0=t0, expiry_unix=e, block=block,
+            day_high=day_high, day_low=day_low, all_series=None
+        )
+        strikes = series_metrics.get("strikes", [])
+        call_oi_arr = series_metrics.get("call_oi", [])
+        put_oi_arr  = series_metrics.get("put_oi",  [])
+        call_vol_arr= series_metrics.get("call_vol", [])
+        put_vol_arr = series_metrics.get("put_vol", [])
+        gamma_abs_share = series_metrics.get("gamma_abs_share", [])
+        gamma_net_share = series_metrics.get("gamma_net_share", [])
+        # Convert arrays back to dicts keyed by strike
+        call_oi = {float(k): float(v) for k, v in zip(strikes, call_oi_arr)}
+        put_oi  = {float(k): float(v) for k, v in zip(strikes, put_oi_arr)}
+        call_vol= {float(k): float(v) for k, v in zip(strikes, call_vol_arr)}
+        put_vol = {float(k): float(v) for k, v in zip(strikes, put_vol_arr)}
+        g_abs_dict = {float(k): float(v) for k, v in zip(strikes, gamma_abs_share)}
+        g_net_dict = {float(k): float(v) for k, v in zip(strikes, gamma_net_share)}
+        # IV dictionaries are obtained via aggregate_series to avoid computing twice
+        strikes_tmp, call_oi_tmp, put_oi_tmp, call_vol_tmp, put_vol_tmp, iv_call, iv_put = aggregate_series(block)
+        # Time to expiry in years
         T = max((e - t0) / (365*24*3600), 1e-6)
         all_series_ctx.append({
             "strikes": strikes,
@@ -163,6 +185,8 @@ for e, block in blocks_by_date.items():
             "put_oi": put_oi,
             "call_vol": call_vol,
             "put_vol": put_vol,
+            "gamma_abs_share": g_abs_dict,
+            "gamma_net_share": g_net_dict,
             "iv_call": iv_call,
             "iv_put": iv_put,
             "T": T
@@ -188,8 +212,10 @@ def _sum_metrics_list(metrics_list):
             "call_vol": _np.array([], dtype=float),
             "net_gex": _np.array([], dtype=float),
             "ag": _np.array([], dtype=float),
-            "pz": _np.array([], dtype=float),
-            "pz_fp": _np.array([], dtype=float),
+            # placeholders for new profiles; will be computed separately
+            "power_zone": _np.array([], dtype=float),
+            "er_up": _np.array([], dtype=float),
+            "er_down": _np.array([], dtype=float),
         }
     # Инициализация аккумулирующих массивов
     acc = {
@@ -199,14 +225,16 @@ def _sum_metrics_list(metrics_list):
         "call_vol": _np.zeros_like(all_strikes, dtype=float),
         "net_gex": _np.zeros_like(all_strikes, dtype=float),
         "ag": _np.zeros_like(all_strikes, dtype=float),
-        "pz": _np.zeros_like(all_strikes, dtype=float),
-        "pz_fp": _np.zeros_like(all_strikes, dtype=float),
+        # initialize new profiles with zeros; they will be overridden after aggregation
+        "power_zone": _np.zeros_like(all_strikes, dtype=float),
+        "er_up": _np.zeros_like(all_strikes, dtype=float),
+        "er_down": _np.zeros_like(all_strikes, dtype=float),
     }
     # Быстрая индексация по страйку
     idx_map = {float(k): i for i, k in enumerate(all_strikes.tolist())}
     for m in metrics_list:
         s = _np.asarray(m.get("strikes", []), dtype=float)
-        for key in ["put_oi","call_oi","put_vol","call_vol","net_gex","ag","pz","pz_fp"]:
+        for key in ["put_oi","call_oi","put_vol","call_vol","net_gex","ag","power_zone","er_up","er_down"]:
             arr = _np.asarray(m.get(key, []), dtype=float)
             if s.size == 0 or arr.size == 0:
                 continue
@@ -234,6 +262,35 @@ for _exp in selected_exps:
     _metrics_list.append(_metrics)
 
 metrics = _sum_metrics_list(_metrics_list)
+# --- Compute new Power Zone and Easy Reach metrics across aggregated strikes ---
+try:
+    # Use compute_power_zone_and_er from lib.compute on aggregated strike grid
+    from lib.compute import compute_power_zone_and_er
+    pz_new, er_up, er_down = compute_power_zone_and_er(
+        S=float(S),
+        strikes_eval=metrics.get("strikes", []),
+        all_series_ctx=all_series_ctx,
+        day_high=day_high,
+        day_low=day_low
+    )
+    # Assign into metrics structure
+    if len(pz_new) == len(metrics.get("strikes", [])):
+        metrics["power_zone"] = pz_new
+    else:
+        metrics["power_zone"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
+    if len(er_up) == len(metrics.get("strikes", [])):
+        metrics["er_up"] = er_up
+    else:
+        metrics["er_up"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
+    if len(er_down) == len(metrics.get("strikes", [])):
+        metrics["er_down"] = er_down
+    else:
+        metrics["er_down"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
+except Exception as _e:
+    # On failure set to zeros
+    metrics["power_zone"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
+    metrics["er_up"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
+    metrics["er_down"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
 # --- Advanced Options summary (for the bottom block) ---
 try:
     # Prepare lightweight DF with canonical column names expected by update_ao_summary
@@ -312,34 +369,19 @@ except Exception:
 
 # === Таблица по страйкам ===
 df = pd.DataFrame({
-    "Strike": metrics["strikes"],
-    "Put OI": metrics["put_oi"],
-    "Call OI": metrics["call_oi"],
-    "Put Volume": metrics["put_vol"],
-    "Call Volume": metrics["call_vol"],
-    "Net Gex": metrics["net_gex"],
-    "AG": metrics["ag"],
-    "PZ": np.round(metrics["pz"], 6),
-    "PZ_FP": np.round(metrics["pz_fp"], 6),
+    "Strike": metrics.get("strikes", []),
+    "Put OI": metrics.get("put_oi", []),
+    "Call OI": metrics.get("call_oi", []),
+    "Put Volume": metrics.get("put_vol", []),
+    "Call Volume": metrics.get("call_vol", []),
+    "Net Gex": metrics.get("net_gex", []),
+    "AG": metrics.get("ag", []),
+    "Power Zone": np.round(metrics.get("power_zone", np.zeros_like(metrics.get("strikes", []))), 6),
+    "ER Up": np.round(metrics.get("er_up", np.zeros_like(metrics.get("strikes", []))), 6),
+    "ER Down": np.round(metrics.get("er_down", np.zeros_like(metrics.get("strikes", []))), 6),
 })
 
-# === Power Zone v2 curve (normalized inverse energy) ===
-try:
-    res_pzv2 = compute_power_zone_v2(
-        S=S, t0=t0, strikes_eval=df["Strike"].values,
-        sigma_atm=_atm_iv, day_high=day_high, day_low=day_low,
-        all_series=all_series_ctx, minutes_to_close=None
-    )
-    E = np.asarray(res_pzv2.get("E", []), dtype=float)
-    if E.size == len(df):
-        e_min = float(np.nanmin(E)); e_max = float(np.nanmax(E))
-        denom = (e_max - e_min) if (e_max > e_min) else 1.0
-        pz_v2 = (e_max - E) / denom
-        df["PZ_V2"] = np.round(pz_v2, 6)
-    else:
-        df["PZ_V2"] = np.zeros(len(df), dtype=float)
-except Exception as _e:
-    df["PZ_V2"] = np.zeros(len(df), dtype=float)
+# Remove legacy PZ metrics; compute_power_zone_v2 no longer used
 
 # === G-Flip (эвристика) ===
 def compute_gflip(strikes_arr, gex_arr, spot=None, min_run=2, min_amp_ratio=0.12):
@@ -379,21 +421,39 @@ g_flip_val = compute_gflip(df["Strike"].values, df["Net Gex"].values, spot=S)
 st.subheader("GammaStrat v6.5")
 cols = st.columns(10)
 toggles = {}
-names = ["Net Gex","Put OI","Call OI","Put Volume","Call Volume","AG","PZ","PZ_FP","PZ_V2","G-Flip"]
-defaults = {"Net Gex": True, "Put OI": False, "Call OI": False, "Put Volume": False, "Call Volume": False, "AG": False, "PZ": False, "PZ_FP": False, "G-Flip": False, "PZ_V2": False}
+# Define toggle names for each series to be displayed. Legacy PZ metrics are removed and replaced by the new Power Zone and Easy Reach metrics.
+names = [
+    "Net Gex", "Put OI", "Call OI", "Put Volume", "Call Volume",
+    "AG", "Power Zone", "ER Up", "ER Down", "G-Flip"
+]
+defaults = {
+    "Net Gex": True,
+    "Put OI": False,
+    "Call OI": False,
+    "Put Volume": False,
+    "Call Volume": False,
+    "AG": False,
+    "Power Zone": False,
+    "ER Up": False,
+    "ER Down": False,
+    "G-Flip": False
+}
 for i, name in enumerate(names):
     with cols[i]:
         toggles[name] = st.toggle(name, value=defaults.get(name, False), key=f"tgl_{name}")
 
-series_dict = {"Net Gex": df["Net Gex"].values,
+# Build the series dictionary mapping names to data arrays for plotting.
+# It includes the new Power Zone and Easy Reach metrics instead of legacy PZ variants.
+series_dict = {
+    "Net Gex": df["Net Gex"].values,
     "Put OI": df["Put OI"].values,
     "Call OI": df["Call OI"].values,
     "Put Volume": df["Put Volume"].values,
     "Call Volume": df["Call Volume"].values,
     "AG": df["AG"].values,
-    "PZ": df["PZ"].values,
-    "PZ_FP": df["PZ_FP"].values,
-    "PZ_V2": df["PZ_V2"].values,
+    "Power Zone": df.get("Power Zone", pd.Series(dtype=float)).values,
+    "ER Up": df.get("ER Up", pd.Series(dtype=float)).values,
+    "ER Down": df.get("ER Down", pd.Series(dtype=float)).values,
 }
 
 # позиционный вызов — совместим с текущей сигнатурой
@@ -452,9 +512,13 @@ try:
                 _max_levels["ag_max_3"] = float(uniq[2])
     except Exception:
         pass
-    i_pz = _nan_argmax(df["PZ"].values[idx_keep])
-    if i_pz is not None:
-        _max_levels["pz_max"] = float(_strike[idx_keep[i_pz]])
+        # Locate the maximum of the Power Zone profile among kept strikes
+        try:
+            i_pz = _nan_argmax(df["Power Zone"].values[idx_keep])
+        except Exception:
+            i_pz = None
+        if i_pz is not None:
+            _max_levels["power_zone_max"] = float(_strike[idx_keep[i_pz]])
 
     # Call OI / Put OI
     i_coi = _nan_argmax(df["Call OI"].values[idx_keep])
