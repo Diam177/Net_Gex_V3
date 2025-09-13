@@ -1,138 +1,91 @@
-import re
-import streamlit as st
+
+# -*- coding: utf-8 -*-
+"""
+ui_final_table.py — упрощённый UI-блок:
+Показывает финальную таблицу (окно страйков + NetGEX/AG + PZ/ER) и даёт кнопки скачивания.
+Источник данных выбирается автоматически:
+  1) df_corr + windows из st.session_state (если есть)
+  2) raw_records + spot из st.session_state (если есть)
+Если данных нет — выводит лаконичное уведомление.
+"""
+
+from __future__ import annotations
+
+import io
+from typing import Dict, Any
+
 import pandas as pd
-from typing import Iterable
+import streamlit as st
 
-from lib.final_table import get_final_table_cached
+from .final_table import (
+    FinalTableConfig,
+    process_from_raw,
+    build_final_tables_from_corr,
+)
 
-ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
 
-# ----- helpers ---------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def _compute_from_raw_cached(raw_records, S: float, final_cfg: FinalTableConfig):
+    return process_from_raw(raw_records, S=S, final_cfg=final_cfg)
 
-def _as_list(obj) -> list:
-    if obj is None:
-        return []
-    if isinstance(obj, (list, tuple, set)):
-        return list(obj)
-    return [obj]
 
-def _looks_like_iso_date(s: str) -> bool:
-    return bool(ISO_DATE_RE.fullmatch(s.strip()))
+@st.cache_data(show_spinner=False)
+def _build_from_corr_cached(df_corr: pd.DataFrame, windows: Dict[str, Any], final_cfg: FinalTableConfig):
+    return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
 
-def _scan_session_for_expirations() -> list[str]:
-    # 1) Named keys we expect
-    for k in ("expirations_multiselect", "expirations", "Expiration", "Expirations"):
-        v = st.session_state.get(k)
-        if isinstance(v, (list, tuple)) and v:
-            vals = [str(x) for x in v if isinstance(x, (str, int))]
-            dates = [x for x in vals if _looks_like_iso_date(str(x))]
-            if dates:
-                return dates
 
-    # 2) Fallback: scan *all* session_state values for any iterable of ISO dates
-    for v in st.session_state.values():
-        if isinstance(v, (list, tuple, set)) and v:
-            vals = [str(x) for x in v if isinstance(x, (str, int))]
-            dates = [x for x in vals if _looks_like_iso_date(str(x))]
-            if len(dates) >= 1:
-                return dates
+def render_final_table(section_title: str = "Финальная таблица (окно, NetGEX/AG, PZ/ER)") -> None:
+    st.header(section_title)
 
-    # 3) As a last resort, look for a single ISO date string value
-    for v in st.session_state.values():
-        if isinstance(v, str) and _looks_like_iso_date(v):
-            return [v]
+    # Настройки масштаба для *_M
+    scale_millions = st.number_input("Масштаб (млн $ на 1% движения)", value=1_000_000, min_value=1, step=100_000)
+    final_cfg = FinalTableConfig(scale_millions=scale_millions)
 
-    return []
+    tables_by_exp = None
 
-def _get_current_expirations_from_state() -> list[str]:
-    return _scan_session_for_expirations()
+    # 1) Пытаемся использовать конвейер df_corr + windows (быстрее)
+    if ("df_corr" in st.session_state) and ("windows" in st.session_state):
+        try:
+            tables_by_exp = _build_from_corr_cached(st.session_state["df_corr"], st.session_state["windows"], final_cfg)
+        except Exception as e:
+            st.warning(f"Не удалось собрать из df_corr/windows: {e}")
 
-def _get_current_ticker_from_state() -> str | None:
-    candidate_keys = (
-        "ticker", "Ticker", "selected_ticker", "ticker_input",
-        "symbol", "Symbol", "asset", "Asset"
-    )
-    for k in candidate_keys:
-        v = st.session_state.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip().upper()
+    # 2) Фолбэк: из raw_records + spot
+    if not tables_by_exp and ("raw_records" in st.session_state) and ("spot" in st.session_state):
+        try:
+            tables_by_exp = _compute_from_raw_cached(st.session_state["raw_records"], float(st.session_state["spot"]), final_cfg)
+        except Exception as e:
+            st.warning(f"Не удалось собрать из raw_records: {e}")
 
-    # Heuristic scan (short uppercase-like token)
-    skip = {"POLYGON", "RAPIDAPI", "DATA RECEIVED", "KEY LEVELS", "DOWNLOAD JSON"}
-    for v in st.session_state.values():
-        if isinstance(v, str):
-            s = v.strip().upper()
-            if s in skip:
-                continue
-            if re.fullmatch(r"[A-Z][A-Z0-9\.\-]{0,11}", s):
-                return s
-    return None
-
-def _get_current_provider_from_state(default: str = "polygon") -> str:
-    for k in ("data_provider", "provider", "selected_provider", "Data provider"):
-        v = st.session_state.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip().lower()
-    return default
-
-# ----- main ------------------------------------------------------------------
-
-def render_final_table(
-    ticker: str | None = None,
-    expirations: list[str] | None = None,
-    scale_musd: float = 1_000_000.0,
-    provider: str | None = None,
-    title: str = "Финальная таблица (окно, NetGEX/AG, PZ/ER)",
-) -> None:
-    """Render final table for a SINGLE selected expiration.
-
-    Robust discovery:
-    - Ticker/expirations/provider can be omitted and will be inferred from session_state (including heuristic scan).
-    - Cache key includes all params to avoid stale tables.
-    - No internal defaulting of expiration beyond user choice.
-    """
-    st.subheader(title)
-
-    if ticker is None:
-        ticker = _get_current_ticker_from_state()
-    if not ticker:
-        st.warning("Не передан ticker и он не найден в session_state.")
+    if not tables_by_exp:
+        st.info("Нет данных для финальной таблицы. Выберите экспирацию/получите сырые данные.")
         return
 
-    if provider is None:
-        provider = _get_current_provider_from_state()
-
-    if not expirations:
-        expirations = _get_current_expirations_from_state()
-
-    if not expirations:
-        st.info("Выберите хотя бы одну экспирацию слева.")
+    exps = list(tables_by_exp.keys())
+    if not exps:
+        st.info("Нет доступных экспираций для отображения.")
         return
 
-    # Initialize or correct selection
-    if "exp_for_table" not in st.session_state or st.session_state.exp_for_table not in expirations:
-        st.session_state.exp_for_table = expirations[0]
+    exp = st.selectbox("Экспирация", exps, index=0)
+    df_show = tables_by_exp.get(exp)
+    if df_show is None or df_show.empty:
+        st.info("Таблица пуста.")
+        return
 
-    exp_for_table = st.selectbox(
-        "Экспирация",
-        options=expirations,
-        index=expirations.index(st.session_state.exp_for_table),
-        key="exp_for_table_select",
-    )
-    st.session_state.exp_for_table = exp_for_table
+    # Показ таблицы и кнопки скачать
+    st.dataframe(df_show, use_container_width=True, hide_index=True)
 
-    df: pd.DataFrame = get_final_table_cached(
-        ticker=ticker,
-        expiration=exp_for_table,
-        scale_musd=float(scale_musd),
-        provider=provider,
-    )
+    # CSV (включая call_vol/put_vol, если присутствуют в df_show)
+    csv_bytes = df_show.to_csv(index=False).encode("utf-8")
+    st.download_button("Скачать CSV", data=csv_bytes, file_name=f"final_table_{exp}.csv", mime="text/csv")
 
-    st.dataframe(df, use_container_width=True)
-
-    st.download_button(
-        "Скачать CSV",
-        data=df.to_csv(index=False).encode("utf-8"),
-        file_name=f"final_table_{ticker}_{exp_for_table}.csv",
-        mime="text/csv",
-    )
+    # Parquet (если pyarrow установлен)
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        buf = io.BytesIO()
+        table = pa.Table.from_pandas(df_show)
+        pq.write_table(table, buf)
+        st.download_button("Скачать Parquet", data=buf.getvalue(), file_name=f"final_table_{exp}.parquet", mime="application/octet-stream")
+    except Exception:
+        pass
