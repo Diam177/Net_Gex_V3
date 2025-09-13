@@ -179,6 +179,25 @@ for e, block in blocks_by_date.items():
         T = max((e - t0) / (365*24*3600), 1e-6)
         # Append context for this expiry.  Note: gamma_abs_share and gamma_net_share
         # are kept as arrays (aligned with strikes) rather than converting to dict.
+        
+        # --- SAFETY FILTERS: skip broken/empty series that cause PZ/ER to zero out ---
+        try:
+            import numpy as _np
+            _Ks = _np.asarray(strikes, dtype=float)
+            if _Ks.size < 2:
+                # Not enough strikes to build a profile
+                continue
+            _ga = _np.asarray(gamma_abs_share_arr if gamma_abs_share_arr is not None else [], dtype=float)
+            _gn = _np.asarray(gamma_net_share_arr if gamma_net_share_arr is not None else [], dtype=float)
+            if _ga.size == 0 and _gn.size == 0:
+                # No gamma profiles at all
+                continue
+            if (_ga.size and _np.all(_ga == 0)) and (_gn.size and _np.all(_gn == 0)):
+                # Both profiles are strictly zero → skip to avoid degenerate weights
+                continue
+        except Exception:
+            # If validation itself fails, be conservative and skip this series
+            continue
         all_series_ctx.append({
             "strikes": strikes,
             "call_oi": call_oi,
