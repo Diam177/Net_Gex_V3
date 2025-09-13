@@ -233,7 +233,7 @@ def mark_anomalies(df: pd.DataFrame, cfg: SanitizerConfig = SanitizerConfig()) -
     out["bad_vega"] = bad_vga
     out["bad_delta"]= bad_dltC | bad_dltP
     out["bad_T"]    = bad_T
-    out["bad_any"]  = bad_iv | bad_gmm | bad_vega | bad_dltC | bad_dltP | bad_T
+    out["bad_any"]  = bad_iv | bad_gmm | bad_vga | bad_dltC | bad_dltP | bad_T
 
     # Причины (собираем текстом для аудита)
     reasons = []
