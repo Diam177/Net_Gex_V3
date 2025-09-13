@@ -262,16 +262,15 @@ def make_figure(strikes, net_gex, series_enabled, series_dict, price=None, ticke
         except Exception:
             pass
         # Build dynamic right-axis title (exclude Net Gex; show only specific series)
-            # Update the whitelist of series names for the secondary axis title.
-            # Legacy PZ and PZ_FP have been replaced by Power Zone and the
-            # Easy Reach metrics.
-            whitelist = [
-                "Put OI", "Call OI",
-                "Put Volume", "Call Volume",
-                "AG", "Power Zone", "ER Up", "ER Down"
-            ]
-        picked = [k for k in whitelist if series_enabled.get(k, False)]
-        right_title = "Other parameters" + ((" (" + ", ".join(picked) + ")") if picked else "")
+    # Update the whitelist of series names for the secondary axis title.
+    # Legacy PZ and PZ_FP have been replaced by Power Zone and the Easy Reach metrics.
+    whitelist = [
+        "Put OI", "Call OI",
+        "Put Volume", "Call Volume",
+        "AG", "Power Zone", "ER Up", "ER Down"
+    ]
+    picked = [k for k in whitelist if series_enabled.get(k, False)]
+    right_title = "Other parameters" + ((" (" + ", ".join(picked) + ")") if picked else "")
     
     fig.update_layout(
         barmode="overlay", bargap=bargap, bargroupgap=0.0,
