@@ -228,7 +228,7 @@ for e, block in blocks_by_date.items():
     except Exception:
         pass
 
-_dlog(f"Kept series: {len(all_series_ctx)} out of {len(blocks_by_date)}")
+_dlog(f"Kept series: {len(_ctx_list)} out of {len(blocks_by_date)}")
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
@@ -287,6 +287,7 @@ for _exp in selected_exps:
         st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
         st.stop()
 _metrics_list = []
+_ctx_list = []
 for _exp in selected_exps:
     _metrics = compute_series_metrics_for_expiry(
         S=S, t0=t0, expiry_unix=_exp,
@@ -296,6 +297,31 @@ for _exp in selected_exps:
     )
     _metrics_list.append(_metrics)
 
+# Build per-expiry context for PZ/ER on the same strike window
+try:
+    import numpy as _np
+    _Ks = _np.asarray(_metrics.get("strikes", []), dtype=float)
+    if _Ks.size >= 2:
+        _ctx = {
+            "strikes": _Ks,
+            "gamma_abs_share": _np.asarray(_metrics.get("gamma_abs_share", []), dtype=float),
+            "gamma_net_share": _np.asarray(_metrics.get("gamma_net_share", []), dtype=float),
+            "call_oi":  dict(zip(_Ks, _np.asarray(_metrics.get("call_oi", []), dtype=float))),
+            "put_oi":   dict(zip(_Ks, _np.asarray(_metrics.get("put_oi", []), dtype=float))),
+            "call_vol": dict(zip(_Ks, _np.asarray(_metrics.get("call_vol", []), dtype=float))),
+            "put_vol":  dict(zip(_Ks, _np.asarray(_metrics.get("put_vol", []), dtype=float))),
+            "iv_call":  {},
+            "iv_put":   {},
+            "T": max(1e-6, (float(_exp) - float(t0)) / (365.0*24.0*3600.0)),
+        }
+        _ctx_list.append(_ctx)
+except Exception as __ctx_e:
+    try:
+        st.sidebar.write(f"ctx-build error for {_exp}: {type(__ctx_e).__name__}: {str(__ctx_e)}")
+    except Exception:
+        pass
+
+
 metrics = _sum_metrics_list(_metrics_list)
 # --- Compute new Power Zone and Easy Reach metrics across aggregated strikes ---
 try:
@@ -304,7 +330,7 @@ try:
     pz_new, er_up, er_down = compute_power_zone_and_er(
         S=float(S),
         strikes_eval=metrics.get("strikes", []),
-        all_series_ctx=all_series_ctx,
+        all_series_ctx=_ctx_list,
         day_high=day_high,
         day_low=day_low
     )
