@@ -214,7 +214,8 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             "ag_max":      LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
             "ag_max_2":    LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
             "ag_max_3":    LINE_STYLE.get("AG", {}).get("line", "#7D3C98"),
-            "pz_max":      LINE_STYLE.get("PZ", {}).get("line", "#F4D03F"),
+            # Power Zone: use the color from the new metric (fallback to old PZ color)
+            "power_zone_max": LINE_STYLE.get("Power Zone", {}).get("line", "#F4D03F"),
             "gflip":       "#AAAAAA",
         }
     except Exception:
@@ -254,7 +255,8 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     _add_line("ag_max",      "AG")
     _add_line_secondary("ag_max_2", "AG #2")
     _add_line_secondary("ag_max_3", "AG #3")
-    _add_line("pz_max",      "PZ")
+    # Power Zone (new metric)
+    _add_line("power_zone_max", "Power Zone")
     _add_line("gflip",       "G-Flip")
 
     # Сводные подписи при совпадении уровней
@@ -273,7 +275,7 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
             ("ag_max",      "AG"),
             ("ag_max_2",      "AG #2"),
             ("ag_max_3",      "AG #3"),
-            ("pz_max",      "PZ"),
+                ("power_zone_max",      "Power Zone"),
             ("gflip",       "G-Flip"),
         ]
         groups = {}
@@ -310,17 +312,35 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
 
     # Надпись "Market closed"
     if not has_candles and not last_session:
-        try: x_center = x0 + (x1 - x0) / 2
-        except Exception: x_center = x_mid
+        # Determine x-coordinate for the "Market closed" annotation
+        try:
+            x_center = x0 + (x1 - x0) / 2
+        except Exception:
+            x_center = x_mid
+        # Collect y-levels from existing level tags to center the annotation vertically
         y_vals = []
-        for tag in ("max_neg_gex","max_pos_gex","max_neg_gex_2","max_neg_gex_3","max_pos_gex_2","max_pos_gex_3","put_oi_max","call_oi_max","put_vol_max","call_vol_max","ag_max","ag_max_2","ag_max_3","pz_max","gflip"):
+        for tag in (
+            "max_neg_gex", "max_pos_gex", "max_neg_gex_2", "max_neg_gex_3",
+            "max_pos_gex_2", "max_pos_gex_3",
+            "put_oi_max", "call_oi_max",
+            "put_vol_max", "call_vol_max",
+            "ag_max", "ag_max_2", "ag_max_3",
+            "power_zone_max", "gflip"
+        ):
             v = levels.get(tag)
-            if isinstance(v, (int,float)): y_vals.append(float(v))
-        y_center = (min(y_vals)+max(y_vals))/2.0 if y_vals else 0.0
+            if isinstance(v, (int, float)):
+                y_vals.append(float(v))
+        y_center = (min(y_vals) + max(y_vals)) / 2.0 if y_vals else 0.0
         fig.add_annotation(
-            x=0.5, y=0.5, xref="paper", yref="paper",
-            text="Market closed", showarrow=False,
-            xanchor="center", yanchor="middle", align="center",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            text="Market closed",
+            showarrow=False,
+            xanchor="center",
+            yanchor="middle",
+            align="center",
             font=dict(size=36, color="rgba(255,255,255,0.2)"),
             bgcolor="rgba(0,0,0,0)"
         )
@@ -346,12 +366,13 @@ def render_key_levels_section(ticker: str, rapid_host: Optional[str], rapid_key:
     y_tickvals = None
     y_range = None
     try:
-        level_keys = [
-            "max_neg_gex","max_neg_gex_2","max_neg_gex_3",
-            "max_pos_gex","max_pos_gex_2","max_pos_gex_3",
-            "put_oi_max","call_oi_max","put_vol_max","call_vol_max",
-            "ag_max","ag_max_2","ag_max_3","pz_max","gflip"
-        ]
+            # Use the new Power Zone tag instead of legacy "pz_max".
+            level_keys = [
+                "max_neg_gex","max_neg_gex_2","max_neg_gex_3",
+                "max_pos_gex","max_pos_gex_2","max_pos_gex_3",
+                "put_oi_max","call_oi_max","put_vol_max","call_vol_max",
+                "ag_max","ag_max_2","ag_max_3","power_zone_max","gflip"
+            ]
         _ys = []
         for _k in level_keys:
             _v = levels.get(_k)
