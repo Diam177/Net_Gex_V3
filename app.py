@@ -1,3 +1,7 @@
+import os, sys
+ROOT_DIR = os.path.dirname(__file__)
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 from lib.final_table import (
     extract_core_from_chain,
     compute_series_metrics_for_expiry,
@@ -13,10 +17,6 @@ import time, json, datetime
 
 import importlib, sys
 import os
-ROOT_DIR = os.path.dirname(__file__)
-if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
-
 from lib.intraday_chart import render_key_levels_section
 from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
