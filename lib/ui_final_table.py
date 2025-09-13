@@ -17,7 +17,7 @@ from typing import Dict, Any
 import pandas as pd
 import streamlit as st
 
-from .final_table import (
+from lib.final_table import (
     FinalTableConfig,
     process_from_raw,
     build_final_tables_from_corr,
