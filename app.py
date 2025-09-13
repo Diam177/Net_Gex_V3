@@ -224,6 +224,8 @@ for e, block in blocks_by_date.items():
     except Exception:
         pass
 
+if DEBUG:
+    st.sidebar.write(f"Kept series: {len(all_series_ctx)} out of {len(blocks_by_date)}")
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
