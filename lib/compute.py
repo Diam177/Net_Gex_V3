@@ -835,11 +835,8 @@ def compute_power_zone_and_er(
     # Convert evaluation grid to numpy array
     strikes_eval = _np.asarray(list(strikes_eval), dtype=float)
     n_eval = len(strikes_eval)
-    if n_eval == 0:
+    if n_eval == 0 or not all_series_ctx:
         return (_np.zeros(0, dtype=float), _np.zeros(0, dtype=float), _np.zeros(0, dtype=float))
-    if not all_series_ctx:
-        # No valid series → return zeros of evaluation length to avoid length mismatch
-        return (_np.zeros_like(strikes_eval, dtype=float), _np.zeros_like(strikes_eval, dtype=float), _np.zeros_like(strikes_eval, dtype=float))
 
     # --- Weight across expiries (time weighting) ---
     # Use same form as PZ_local: weight ~ total_OI * T^{-eta} * (1-τ)^ζ
@@ -909,6 +906,39 @@ def compute_power_zone_and_er(
         else:
             g_net = _np.asarray(g_raw_net, dtype=float)
         # Convert to dollar exposures
+                # Fallback: if both raw gamma profiles are degenerate (all zeros), synthesize share profiles
+        # using BS gamma and activity weights (prefer OI, fallback to volume). This does NOT affect
+        # dollar Net GEX / AG elsewhere — only the internal mass/stability proxy here.
+        if (g_abs.size and _np.all(g_abs == 0.0)) and (g_net.size and _np.all(g_net == 0.0)):
+            call_oi_dict = s.get("call_oi", {}) or {}
+            put_oi_dict  = s.get("put_oi", {})  or {}
+            call_vol_dict= s.get("call_vol", {}) or {}
+            put_vol_dict = s.get("put_vol", {})  or {}
+            iv_call_dict = s.get("iv_call", {}) or {}
+            iv_put_dict  = s.get("iv_put", {})  or {}
+            T_e = float(s.get("T") or 0.0)
+            def _sigma_for(kv):
+                k = float(kv)
+                ivc = iv_call_dict.get(k, None); ivp = iv_put_dict.get(k, None)
+                if ivc and ivc > 0: return float(ivc)
+                if ivp and ivp > 0: return float(ivp)
+                return 0.30
+            g_abs_syn = _np.zeros_like(g_abs, dtype=float)
+            g_net_syn = _np.zeros_like(g_net, dtype=float)
+            for j, kk in enumerate(Ks):
+                sigma_j = _sigma_for(kk)
+                try:
+                    g_bs = bs_gamma(float(S), float(kk), float(sigma_j), float(T_e))
+                except Exception:
+                    g_bs = 0.0
+                wc = float(call_oi_dict.get(kk, 0.0)); wp = float(put_oi_dict.get(kk, 0.0))
+                if wc == 0.0 and wp == 0.0:
+                    wc = float(call_vol_dict.get(kk, 0.0)); wp = float(put_vol_dict.get(kk, 0.0))
+                # absolute & net share proxies
+                g_abs_syn[j] = g_bs * max(wc + wp, 0.0)
+                g_net_syn[j] = g_bs * (wc - wp)
+            g_abs = g_abs_syn
+            g_net = g_net_syn
         AG_e = g_abs * float(S) / 1000.0
         NG_e = _np.abs(g_net) * float(S) / 1000.0
         # Local smoothing using triangular kernel based on bandwidth h and strike spacing
