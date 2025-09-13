@@ -14,15 +14,6 @@ from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_bl
 # Update page title to reflect new Power Zone and Easy Reach metrics
 st.set_page_config(page_title="Net GEX / AG / Power Zone / Easy Reach", layout="wide")
 
-
-# Debug helper
-DEBUG = bool(st.session_state.get('debug_logs', False) if 'debug_logs' in st.session_state else False)
-def _dlog(msg):
-    if DEBUG:
-        try:
-            st.sidebar.write(msg)
-        except Exception:
-            pass
 # === Secrets / env ===
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
@@ -31,7 +22,6 @@ POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 _PROVIDER = "polygon"
 
 with st.sidebar:
-    debug_logs = st.checkbox('Debug logs', value=True, help='Показывать диагностические сообщения', key='debug_logs')
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
     st.caption(f"Data provider: **{_PROVIDER}**")
@@ -189,43 +179,22 @@ for e, block in blocks_by_date.items():
         T = max((e - t0) / (365*24*3600), 1e-6)
         # Append context for this expiry.  Note: gamma_abs_share and gamma_net_share
         # are kept as arrays (aligned with strikes) rather than converting to dict.
-        
-        
-        # --- SAFETY FILTERS: skip broken/empty series that cause PZ/ER to zero out ---
-        try:
-            import numpy as _np
-            _Ks = _np.asarray(strikes, dtype=float)
-            if _Ks.size < 2:
-                _dlog(f"Skip expiry {e}: not enough strikes ({_Ks.size})")
-                continue
-            _ga = _np.asarray(gamma_abs_share_arr if gamma_abs_share_arr is not None else [], dtype=float)
-            _gn = _np.asarray(gamma_net_share_arr if gamma_net_share_arr is not None else [], dtype=float)
-            if _ga.size == 0 and _gn.size == 0:
-                _dlog(f"Skip expiry {e}: empty gamma arrays")
-                continue
-            if (_ga.size and _np.all(_ga == 0)) and (_gn.size and _np.all(_gn == 0)):
-                _dlog(f"Skip expiry {e}: both gamma profiles are strictly zero")
-                continue
-        except Exception as _valid_e:
-            _dlog(f"Skip expiry {e}: validation error: {type(_valid_e).__name__}: {str(_valid_e)}")
-            continue
         all_series_ctx.append({
-        "strikes": strikes,
-        "call_oi": call_oi,
-        "put_oi": put_oi,
-        "call_vol": call_vol,
-        "put_vol": put_vol,
-        "gamma_abs_share": gamma_abs_share_arr,
-        "gamma_net_share": gamma_net_share_arr,
-        "iv_call": iv_call,
-        "iv_put": iv_put,
-        "T": T
+            "strikes": strikes,
+            "call_oi": call_oi,
+            "put_oi": put_oi,
+            "call_vol": call_vol,
+            "put_vol": put_vol,
+            "gamma_abs_share": gamma_abs_share_arr,
+            "gamma_net_share": gamma_net_share_arr,
+            "iv_call": iv_call,
+            "iv_put": iv_put,
+            "T": T
         })
     except Exception:
         pass
 
-if DEBUG:
-    st.sidebar.write(f"Kept series: {len(all_series_ctx)} out of {len(blocks_by_date)}")
+        _dlog(f"Kept series: {len(all_series_ctx)} out of {len(blocks_by_date)}")
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
@@ -306,27 +275,19 @@ try:
         day_low=day_low
     )
     # Assign into metrics structure
-
     if len(pz_new) == len(metrics.get("strikes", [])):
         metrics["power_zone"] = pz_new
     else:
-        _dlog(f"Power Zone length mismatch: got {len(pz_new)} vs strikes {len(metrics.get('strikes', []))}")
         metrics["power_zone"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
     if len(er_up) == len(metrics.get("strikes", [])):
         metrics["er_up"] = er_up
     else:
-        _dlog(f"ER Up length mismatch: got {len(er_up)} vs strikes {len(metrics.get('strikes', []))}")
         metrics["er_up"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
     if len(er_down) == len(metrics.get("strikes", [])):
         metrics["er_down"] = er_down
     else:
-        _dlog(f"ER Down length mismatch: got {len(er_down)} vs strikes {len(metrics.get('strikes', []))}")
         metrics["er_down"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
 except Exception as _e:
-    if DEBUG:
-        import traceback as _tb
-        st.sidebar.error(f"PZ/ER compute error: {type(_e).__name__}: {str(_e)}")
-        st.sidebar.code(''.join(_tb.format_exception_only(type(_e), _e)))
     # On failure set to zeros
     metrics["power_zone"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
     metrics["er_up"] = np.zeros_like(metrics.get("strikes", []), dtype=float)
@@ -640,3 +601,15 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
+        # --- SAFETY FILTERS (minimal): only skip clearly broken series ---
+        try:
+            import numpy as _np
+            _Ks = _np.asarray(strikes, dtype=float)
+            if _Ks.size < 2:
+                _dlog(f"Skip expiry {e}: not enough strikes ({_Ks.size})")
+                continue
+            # Allow zero gamma profiles through — compute_power_zone_and_er has a robust fallback now.
+        except Exception as _valid_e:
+            _dlog(f"Skip expiry {e}: validation error: {type(_valid_e).__name__}: {str(_valid_e)}")
+            continue
+
