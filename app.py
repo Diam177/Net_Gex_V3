@@ -15,16 +15,6 @@ from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_bl
 st.set_page_config(page_title="Net GEX / AG / Power Zone / Easy Reach", layout="wide")
 
 # === Secrets / env ===
-
-# Debug helper
-DEBUG = bool(st.session_state.get('debug_logs', False))
-def _dlog(msg):
-    if DEBUG:
-        try:
-            st.sidebar.write(msg)
-        except Exception:
-            pass
-
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
@@ -32,7 +22,6 @@ POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 _PROVIDER = "polygon"
 
 with st.sidebar:
-    debug_logs = st.checkbox('Debug logs', value=False, key='debug_logs')
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
     st.caption(f"Data provider: **{_PROVIDER}**")
@@ -179,22 +168,6 @@ for e, block in blocks_by_date.items():
         put_vol_arr = series_metrics.get("put_vol", [])
         gamma_abs_share_arr = series_metrics.get("gamma_abs_share", [])
         gamma_net_share_arr = series_metrics.get("gamma_net_share", [])
-        # --- Slice arrays to the visible ATM window used in GammaStrat v6.5 ---
-        try:
-            import numpy as _np
-            idx_win = _select_atm_window(strikes, call_oi_arr, put_oi_arr, float(S))
-            if hasattr(idx_win, 'size') and int(getattr(idx_win, 'size', 0)) >= 2:
-                idx_win = _np.asarray(idx_win, dtype=int)
-                strikes = strikes[idx_win]
-                call_oi_arr = call_oi_arr[idx_win]
-                put_oi_arr  = put_oi_arr[idx_win]
-                call_vol_arr= call_vol_arr[idx_win]
-                put_vol_arr = put_vol_arr[idx_win]
-                gamma_abs_share_arr = gamma_abs_share_arr[idx_win]
-                gamma_net_share_arr = gamma_net_share_arr[idx_win]
-                _dlog(f'Window slice kept {len(strikes)} strikes: [{float(strikes[0])}, …, {float(strikes[-1])}]')
-        except Exception as _win_e:
-            _dlog(f'Window slice error: {type(_win_e).__name__}: {str(_win_e)}')
         # Convert OI and volume arrays back to dicts keyed by strike for downstream use
         call_oi = {float(k): float(v) for k, v in zip(strikes, call_oi_arr)}
         put_oi  = {float(k): float(v) for k, v in zip(strikes, put_oi_arr)}
@@ -202,13 +175,6 @@ for e, block in blocks_by_date.items():
         put_vol = {float(k): float(v) for k, v in zip(strikes, put_vol_arr)}
         # Obtain IV dictionaries via aggregate_series to avoid computing twice
         strikes_tmp, call_oi_tmp, put_oi_tmp, call_vol_tmp, put_vol_tmp, iv_call, iv_put = aggregate_series(block)
-        # Filter IV dicts to the same visible window
-        try:
-            _Ks_set = set(float(x) for x in strikes)
-            iv_call = {float(k): float(v) for k,v in iv_call.items() if float(k) in _Ks_set}
-            iv_put  = {float(k): float(v) for k,v in iv_put.items()  if float(k) in _Ks_set}
-        except Exception as _iv_e:
-            _dlog(f'IV filter error: {type(_iv_e).__name__}: {str(_iv_e)}')
         # Time to expiry in years
         T = max((e - t0) / (365*24*3600), 1e-6)
         # Append context for this expiry.  Note: gamma_abs_share and gamma_net_share
@@ -228,7 +194,6 @@ for e, block in blocks_by_date.items():
     except Exception:
         pass
 
-_dlog(f"Kept series: {len(_ctx_list)} out of {len(blocks_by_date)}")
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
@@ -287,7 +252,6 @@ for _exp in selected_exps:
         st.error("Не найден блок выбранной экспирации у провайдера. Попробуйте другую дату или обновите страницу.")
         st.stop()
 _metrics_list = []
-_ctx_list = []
 for _exp in selected_exps:
     _metrics = compute_series_metrics_for_expiry(
         S=S, t0=t0, expiry_unix=_exp,
@@ -297,31 +261,6 @@ for _exp in selected_exps:
     )
     _metrics_list.append(_metrics)
 
-# Build per-expiry context for PZ/ER on the same strike window
-try:
-    import numpy as _np
-    _Ks = _np.asarray(_metrics.get("strikes", []), dtype=float)
-    if _Ks.size >= 2:
-        _ctx = {
-            "strikes": _Ks,
-            "gamma_abs_share": _np.asarray(_metrics.get("gamma_abs_share", []), dtype=float),
-            "gamma_net_share": _np.asarray(_metrics.get("gamma_net_share", []), dtype=float),
-            "call_oi":  dict(zip(_Ks, _np.asarray(_metrics.get("call_oi", []), dtype=float))),
-            "put_oi":   dict(zip(_Ks, _np.asarray(_metrics.get("put_oi", []), dtype=float))),
-            "call_vol": dict(zip(_Ks, _np.asarray(_metrics.get("call_vol", []), dtype=float))),
-            "put_vol":  dict(zip(_Ks, _np.asarray(_metrics.get("put_vol", []), dtype=float))),
-            "iv_call":  {},
-            "iv_put":   {},
-            "T": max(1e-6, (float(_exp) - float(t0)) / (365.0*24.0*3600.0)),
-        }
-        _ctx_list.append(_ctx)
-except Exception as __ctx_e:
-    try:
-        st.sidebar.write(f"ctx-build error for {_exp}: {type(__ctx_e).__name__}: {str(__ctx_e)}")
-    except Exception:
-        pass
-
-
 metrics = _sum_metrics_list(_metrics_list)
 # --- Compute new Power Zone and Easy Reach metrics across aggregated strikes ---
 try:
@@ -330,7 +269,7 @@ try:
     pz_new, er_up, er_down = compute_power_zone_and_er(
         S=float(S),
         strikes_eval=metrics.get("strikes", []),
-        all_series_ctx=_ctx_list,
+        all_series_ctx=all_series_ctx,
         day_high=day_high,
         day_low=day_low
     )
