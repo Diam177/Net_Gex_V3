@@ -40,9 +40,9 @@ def _phi(x: np.ndarray) -> np.ndarray:
     return np.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
 
 def _ndist(x: np.ndarray) -> np.ndarray:
-    # Стандартная нормальная cdf
-    # 0.5 * (1 + erf(x / sqrt(2)))
-    return 0.5 * (1.0 + np.erf(x / math.sqrt(2.0)))
+    """Стандартная нормальная CDF без np.erf (используем math.erf)."""
+    x = np.asarray(x, float)
+    return 0.5 * (1.0 + np.vectorize(math.erf)(x / math.sqrt(2.0)))
 
 def _safe_log(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     return np.log(np.clip(x, eps, None))
@@ -623,3 +623,4 @@ def build_window_panels(
         panels[exp] = panel
 
     return panels
+
