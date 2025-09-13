@@ -140,6 +140,51 @@ try:
 except Exception as e:
     st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
+# --- Auto populate session_state for final table ---
+try:
+    # Build raw_records from blocks_by_date for selected expirations
+    _exp_sig = tuple(sorted(selected_exps)) if isinstance(selected_exps, (list, tuple)) else ()
+    _need = (
+        "raw_records" not in st.session_state or
+        st.session_state.get("_last_exp_sig") != _exp_sig or
+        st.session_state.get("_last_ticker") != ticker
+    )
+    if _need:
+        _raw_records = []
+        for _exp in (selected_exps or []):
+            blk = blocks_by_date.get(_exp, {}) or {}
+            for _side, _key in (("C","calls"), ("P","puts")):
+                for r in (blk.get(_key, []) or []):
+                    _raw_records.append({
+                        "side": "call" if _side=="C" else "put",
+                        "strike": r.get("strike"),
+                        "expiration": _exp,
+                        "open_interest": r.get("openInterest") if r.get("openInterest") is not None else r.get("open_interest"),
+                        "volume": r.get("volume"),
+                        "implied_volatility": r.get("impliedVolatility") if r.get("impliedVolatility") is not None else r.get("implied_volatility"),
+                        "delta": r.get("delta"),
+                        "gamma": r.get("gamma"),
+                        "vega": r.get("vega"),
+                        "contract_size": r.get("contractSize") if r.get("contractSize") is not None else r.get("contract_size") or 100,
+                    })
+        if _raw_records:
+            st.session_state["raw_records"] = _raw_records
+            st.session_state["spot"] = float(S)
+            st.session_state["_last_exp_sig"] = _exp_sig
+            st.session_state["_last_ticker"] = ticker
+            # Precompute df_corr/windows (non-fatal if fails)
+            try:
+                from lib.sanitize_window import SanitizerConfig, sanitize_and_window_pipeline
+                _res = sanitize_and_window_pipeline(_raw_records, S=float(S), cfg=SanitizerConfig())
+                st.session_state["df_corr"] = _res["df_corr"]
+                st.session_state["windows"] = _res["windows"]
+            except Exception:
+                pass
+except Exception:
+    pass
+# --- End auto populate ---
+
+
 # Кнопка "Скачать сырой JSON"
 download_placeholder.download_button(
     "Download JSON",
