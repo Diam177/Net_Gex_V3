@@ -15,6 +15,16 @@ from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_bl
 st.set_page_config(page_title="Net GEX / AG / Power Zone / Easy Reach", layout="wide")
 
 # === Secrets / env ===
+
+# Debug helper
+DEBUG = bool(st.session_state.get('debug_logs', False))
+def _dlog(msg):
+    if DEBUG:
+        try:
+            st.sidebar.write(msg)
+        except Exception:
+            pass
+
 RAPIDAPI_HOST = env_or_secret(st, "RAPIDAPI_HOST", None)
 RAPIDAPI_KEY  = env_or_secret(st, "RAPIDAPI_KEY",  None)
 POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
@@ -22,6 +32,7 @@ POLYGON_API_KEY = env_or_secret(st, "POLYGON_API_KEY", None)
 _PROVIDER = "polygon"
 
 with st.sidebar:
+    debug_logs = st.checkbox('Debug logs', value=False, key='debug_logs')
     # Основные поля
     ticker = st.text_input("Ticker", value="SPY").strip().upper()
     st.caption(f"Data provider: **{_PROVIDER}**")
@@ -194,7 +205,7 @@ for e, block in blocks_by_date.items():
     except Exception:
         pass
 
-        _dlog(f"Kept series: {len(all_series_ctx)} out of {len(blocks_by_date)}")
+_dlog(f"Kept series: {len(all_series_ctx)} out of {len(blocks_by_date)}")
 day_high = quote.get("regularMarketDayHigh", None)
 day_low  = quote.get("regularMarketDayLow", None)
 
@@ -601,15 +612,3 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
-        # --- SAFETY FILTERS (minimal): only skip clearly broken series ---
-        try:
-            import numpy as _np
-            _Ks = _np.asarray(strikes, dtype=float)
-            if _Ks.size < 2:
-                _dlog(f"Skip expiry {e}: not enough strikes ({_Ks.size})")
-                continue
-            # Allow zero gamma profiles through — compute_power_zone_and_er has a robust fallback now.
-        except Exception as _valid_e:
-            _dlog(f"Skip expiry {e}: validation error: {type(_valid_e).__name__}: {str(_valid_e)}")
-            continue
-
