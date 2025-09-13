@@ -166,27 +166,27 @@ for e, block in blocks_by_date.items():
         put_oi_arr  = series_metrics.get("put_oi",  [])
         call_vol_arr= series_metrics.get("call_vol", [])
         put_vol_arr = series_metrics.get("put_vol", [])
-        gamma_abs_share = series_metrics.get("gamma_abs_share", [])
-        gamma_net_share = series_metrics.get("gamma_net_share", [])
-        # Convert arrays back to dicts keyed by strike
+        gamma_abs_share_arr = series_metrics.get("gamma_abs_share", [])
+        gamma_net_share_arr = series_metrics.get("gamma_net_share", [])
+        # Convert OI and volume arrays back to dicts keyed by strike for downstream use
         call_oi = {float(k): float(v) for k, v in zip(strikes, call_oi_arr)}
         put_oi  = {float(k): float(v) for k, v in zip(strikes, put_oi_arr)}
         call_vol= {float(k): float(v) for k, v in zip(strikes, call_vol_arr)}
         put_vol = {float(k): float(v) for k, v in zip(strikes, put_vol_arr)}
-        g_abs_dict = {float(k): float(v) for k, v in zip(strikes, gamma_abs_share)}
-        g_net_dict = {float(k): float(v) for k, v in zip(strikes, gamma_net_share)}
-        # IV dictionaries are obtained via aggregate_series to avoid computing twice
+        # Obtain IV dictionaries via aggregate_series to avoid computing twice
         strikes_tmp, call_oi_tmp, put_oi_tmp, call_vol_tmp, put_vol_tmp, iv_call, iv_put = aggregate_series(block)
         # Time to expiry in years
         T = max((e - t0) / (365*24*3600), 1e-6)
+        # Append context for this expiry.  Note: gamma_abs_share and gamma_net_share
+        # are kept as arrays (aligned with strikes) rather than converting to dict.
         all_series_ctx.append({
             "strikes": strikes,
             "call_oi": call_oi,
             "put_oi": put_oi,
             "call_vol": call_vol,
             "put_vol": put_vol,
-            "gamma_abs_share": g_abs_dict,
-            "gamma_net_share": g_net_dict,
+            "gamma_abs_share": gamma_abs_share_arr,
+            "gamma_net_share": gamma_net_share_arr,
             "iv_call": iv_call,
             "iv_put": iv_put,
             "T": T
