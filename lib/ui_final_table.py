@@ -5,18 +5,30 @@ import pandas as pd
 from lib.final_table import get_final_table_cached
 
 def _get_current_expirations_from_state() -> list[str]:
-    # fallback if the parent app didn't pass expirations explicitly
     exps = st.session_state.get("expirations_multiselect")
     if isinstance(exps, list) and exps:
-        # normalize to strings
         return [str(x) for x in exps]
     return []
 
+def _get_current_ticker_from_state() -> str | None:
+    for k in ("ticker", "selected_ticker", "ticker_input"):
+        v = st.session_state.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().upper()
+    return None
+
+def _get_current_provider_from_state(default: str = "polygon") -> str:
+    for k in ("data_provider", "provider", "selected_provider"):
+        v = st.session_state.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip().lower()
+    return default
+
 def render_final_table(
-    ticker: str,
+    ticker: str | None = None,
     expirations: list[str] | None = None,
     scale_musd: float = 1_000_000.0,
-    provider: str = "polygon",
+    provider: str | None = None,
     title: str = "Финальная таблица (окно, NetGEX/AG, PZ/ER)",
 ) -> None:
     """Renders the final per-strike table for a SINGLE selected expiration.
@@ -26,8 +38,18 @@ def render_final_table(
     - Ensures a deterministic single 'exp_for_table' via a selectbox bound to session state.
     - Uses cache keyed by (ticker, expiration, scale_musd, provider).
     - No hidden defaulting inside compute/aggregation layers.
+    - To minimize integration friction, 'ticker' and 'provider' are optional and can be read from session_state.
     """
     st.subheader(title)
+
+    if ticker is None:
+        ticker = _get_current_ticker_from_state()
+    if not ticker:
+        st.warning("Не передан ticker и он не найден в session_state.")
+        return
+
+    if provider is None:
+        provider = _get_current_provider_from_state()
 
     if not expirations:
         expirations = _get_current_expirations_from_state()
