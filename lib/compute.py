@@ -835,8 +835,11 @@ def compute_power_zone_and_er(
     # Convert evaluation grid to numpy array
     strikes_eval = _np.asarray(list(strikes_eval), dtype=float)
     n_eval = len(strikes_eval)
-    if n_eval == 0 or not all_series_ctx:
+    if n_eval == 0:
         return (_np.zeros(0, dtype=float), _np.zeros(0, dtype=float), _np.zeros(0, dtype=float))
+    if not all_series_ctx:
+        # No valid series → return zeros of evaluation length to avoid length mismatch
+        return (_np.zeros_like(strikes_eval, dtype=float), _np.zeros_like(strikes_eval, dtype=float), _np.zeros_like(strikes_eval, dtype=float))
 
     # --- Weight across expiries (time weighting) ---
     # Use same form as PZ_local: weight ~ total_OI * T^{-eta} * (1-τ)^ζ
