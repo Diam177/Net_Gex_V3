@@ -170,6 +170,30 @@ def _remap_to_yahoo_like(items: List[dict], S: Optional[float], ts_unix: Optiona
         day = it.get("day") or {}
         last_trade = it.get("last_trade") or {}
 
+        # В ответ Polygon может содержать реальные параметры гаммы/дельты в поле 'greeks'.
+        # Мы сохраняем их в дополнительные поля, чтобы downstream логика могла использовать
+        # реальные греческие параметры. Если в объекте нет этих значений, оставляем None.
+        greeks = it.get("greeks") or {}
+        gamma_val = greeks.get("gamma")
+        try:
+            gamma_val = float(gamma_val) if gamma_val is not None else None
+        except Exception:
+            gamma_val = None
+        delta_val = greeks.get("delta")
+        try:
+            delta_val = float(delta_val) if delta_val is not None else None
+        except Exception:
+            delta_val = None
+
+        # Контрактный множитель: Polygon возвращает `shares_per_contract` в поле details.
+        # По умолчанию считаем 100, если параметр отсутствует или некорректен.
+        try:
+            spc = int(details.get("shares_per_contract") or 0)
+            if spc <= 0:
+                spc = 100
+        except Exception:
+            spc = 100
+
         rec = {
             "contractSymbol": details.get("ticker"),
             "strike": float(strike),
@@ -178,6 +202,11 @@ def _remap_to_yahoo_like(items: List[dict], S: Optional[float], ts_unix: Optiona
             "impliedVolatility": float(it.get("implied_volatility")) if it.get("implied_volatility") is not None else None,
             "lastPrice": float(last_trade.get("price") or last_trade.get("p")) if (last_trade.get("price") or last_trade.get("p")) else None,
             "expiration": exp_str,
+            # Передаём реальные греческие параметры (если есть)
+            "gamma": gamma_val,
+            "delta": delta_val,
+            # Также передаём размер контракта
+            "shares_per_contract": spc,
         }
         _push(exp_str, ctype, rec)
 
