@@ -10,9 +10,6 @@ from lib.provider_polygon import fetch_stock_history
 from lib.utils import choose_default_expiration, env_or_secret
 from lib.plotting import make_figure, _select_atm_window
 from lib.advanced_analysis import update_ao_summary, render_advanced_analysis_block
-import os, sys
-sys.path.append(os.path.join(os.path.dirname(__file__), 'lib'))
-from lib.ui_final_table import render_final_table
 
 # Update page title to reflect new Power Zone and Easy Reach metrics
 st.set_page_config(page_title="Net GEX / AG / Power Zone / Easy Reach", layout="wide")
@@ -140,54 +137,6 @@ except Exception as e:
     st.warning(f"Не удалось получить блок для выбранной даты: {e}")
 
 # Кнопка "Скачать сырой JSON"
-
-# --- Auto-hook: feed final-table UI with data from provider ---
-try:
-    # Compute/refresh raw_records+spot only if selection changed or not present
-    _exp_sig = tuple(sorted(selected_exps)) if isinstance(selected_exps, (list, tuple)) else ()
-    _need_rebuild = (
-        "raw_records" not in st.session_state or
-        st.session_state.get("_last_exp_sig") != _exp_sig or
-        st.session_state.get("_last_ticker") != ticker
-    )
-    if _need_rebuild:
-        _raw_records = []
-        for _exp in (selected_exps or []):
-            blk = blocks_by_date.get(_exp, {}) or {}
-            for _side, _key in (("C","calls"), ("P","puts")):
-                rows = blk.get(_key, []) or []
-                for r in rows:
-                    rec = {
-                        "side": "call" if _side=="C" else "put",
-                        "strike": r.get("strike"),
-                        "expiration": _exp,
-                        "open_interest": r.get("openInterest") if r.get("openInterest") is not None else r.get("open_interest"),
-                        "volume": r.get("volume"),
-                        "implied_volatility": r.get("impliedVolatility") if r.get("impliedVolatility") is not None else r.get("implied_volatility"),
-                        "delta": r.get("delta"),
-                        "gamma": r.get("gamma"),
-                        "vega": r.get("vega"),
-                        "contract_size": r.get("contractSize") if r.get("contractSize") is not None else r.get("contract_size") or 100,
-                    }
-                    _raw_records.append(rec)
-        if _raw_records:
-            st.session_state["raw_records"] = _raw_records
-            st.session_state["spot"] = float(S)
-            st.session_state["_last_exp_sig"] = _exp_sig
-            st.session_state["_last_ticker"] = ticker
-            # Try to precompute df_corr/windows for instant UI
-            try:
-                from lib.sanitize_window import SanitizerConfig, sanitize_and_window_pipeline
-                _res = sanitize_and_window_pipeline(_raw_records, S=float(S), cfg=SanitizerConfig())
-                st.session_state["df_corr"] = _res["df_corr"]
-                st.session_state["windows"] = _res["windows"]
-            except Exception as _pre_err:
-                # Non-fatal: UI can compute from raw on demand
-                pass
-except Exception as _auto_e:
-    # keep silent, do not break the app
-    pass
-# --- End auto-hook ---
 download_placeholder.download_button(
     "Download JSON",
     data=raw_bytes if raw_bytes is not None else json.dumps(raw_data, ensure_ascii=False, indent=2).encode("utf-8"),
@@ -418,70 +367,6 @@ try:
 except Exception:
     pass
 
-
-
-# === Таблица по страйкам (override из финальной таблицы, если доступна) ===
-_df_override = None
-try:
-    if ("df_corr" in st.session_state) and ("windows" in st.session_state):
-        from lib.final_table import build_final_tables_from_corr, FinalTableConfig
-        _tables = build_final_tables_from_corr(st.session_state["df_corr"], st.session_state["windows"], cfg=FinalTableConfig())
-        import numpy as _np
-        import pandas as _pd
-        _Ks_all = sorted({float(k) for _e in (selected_exps or []) if _e in _tables for k in _tables[_e]["K"].tolist()})
-        if _Ks_all:
-            _Ks = _np.array(_Ks_all, dtype=float)
-            # Инициализация аккумуляторов
-            put_oi = _np.zeros_like(_Ks, dtype=float)
-            call_oi = _np.zeros_like(_Ks, dtype=float)
-            net_gex = _np.zeros_like(_Ks, dtype=float)   # в K$
-            ag      = _np.zeros_like(_Ks, dtype=float)   # в K$
-            num_pz  = _np.zeros_like(_Ks, dtype=float)   # числители для w-avg
-            num_erU = _np.zeros_like(_Ks, dtype=float)
-            num_erD = _np.zeros_like(_Ks, dtype=float)
-            den_w   = _np.zeros_like(_Ks, dtype=float)
-            for _e in (selected_exps or []):
-                if _e not in _tables:
-                    continue
-                _t = _tables[_e][["K","call_oi","put_oi","AG_1pct","NetGEX_1pct","PZ","ER_Up","ER_Down"]].copy()
-                _t.rename(columns={"K":"Strike"}, inplace=True)
-                _t.set_index("Strike", inplace=True)
-                # reindex на общий K-лист
-                _t = _t.reindex(_Ks_all)
-                # OI суммы
-                call_oi += _np.nan_to_num(_t["call_oi"].values.astype(float))
-                put_oi  += _np.nan_to_num(_t["put_oi"].values.astype(float))
-                # NetGEX/AG — перевод в K$
-                net_gex += _np.nan_to_num((_t["NetGEX_1pct"].values.astype(float)) / 1000.0)
-                ag      += _np.nan_to_num((_t["AG_1pct"].values.astype(float)) / 1000.0)
-                # веса
-                w = _np.nan_to_num((_t["call_oi"].values.astype(float) + _t["put_oi"].values.astype(float)))
-                num_pz  += _np.nan_to_num(_t["PZ"].values.astype(float)) * w
-                num_erU += _np.nan_to_num(_t["ER_Up"].values.astype(float)) * w
-                num_erD += _np.nan_to_num(_t["ER_Down"].values.astype(float)) * w
-                den_w   += w
-            # финальная сборка
-            pz  = _np.divide(num_pz,  den_w, out=_np.zeros_like(num_pz),  where=den_w>0)
-            erU = _np.divide(num_erU, den_w, out=_np.zeros_like(num_erU), where=den_w>0)
-            erD = _np.divide(num_erD, den_w, out=_np.zeros_like(num_erD), where=den_w>0)
-            _df_override = _pd.DataFrame({
-                "Strike": _Ks,
-                "Put OI": put_oi,
-                "Call OI": call_oi,
-                "Put Volume": _np.zeros_like(_Ks, dtype=float),   # строго из финальной таблицы объёмы не берём
-                "Call Volume": _np.zeros_like(_Ks, dtype=float),
-                "Net Gex": net_gex,
-                "AG": ag,
-                "Power Zone": pz,
-                "ER Up": erU,
-                "ER Down": erD,
-            })
-except Exception as _ovr_err:
-    _df_override = None
-
-if _df_override is not None and len(_df_override):
-    df = _df_override
-else:
 # === Таблица по страйкам ===
 df = pd.DataFrame({
     "Strike": metrics.get("strikes", []),
@@ -715,15 +600,3 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
-
-# === Final Table Section (non-intrusive) ===
-try:
-    render_final_table()  # shows the window-strikes table with download buttons
-except Exception as _e:
-    # Keep the app running even if the section fails; log to Streamlit if available
-    try:
-        import streamlit as st
-        st.warning(f"Final table section error: {_e}")
-    except Exception:
-        pass
-# === End Final Table Section ===
