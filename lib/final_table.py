@@ -145,7 +145,7 @@ def build_final_tables_from_corr(
         net_tbl["call_vol"] = net_tbl["K"].map(call_vol_map).fillna(0.0)
         net_tbl["put_vol"]  = net_tbl["K"].map(put_vol_map).fillna(0.0)
 
-if net_tbl.empty:
+        if net_tbl.empty:
             results[exp] = net_tbl
             continue
 
@@ -177,7 +177,7 @@ if net_tbl.empty:
 
         # Упорядочим колонки
         cols = ["exp","K","S"] + (["F"] if "F" in net_tbl.columns else []) + \
-               ["call_oi","put_oi","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
+               ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
         if "AG_1pct_M" in net_tbl.columns:
             cols += ["AG_1pct_M","NetGEX_1pct_M"]
         cols += ["PZ","ER_Up","ER_Down"]
