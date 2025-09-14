@@ -1,126 +1,106 @@
 
-# -*- coding: utf-8 -*-
-"""
-ui_final_table.py — упрощённый UI-блок:
-Показывает финальную таблицу (окно страйков + NetGEX/AG + PZ/ER) и даёт кнопки скачивания.
-Источник данных выбирается автоматически:
-  1) df_corr + windows из st.session_state (если есть)
-  2) raw_records + spot из st.session_state (если есть)
-Если данных нет — выводит лаконичное уведомление.
-"""
-
 from __future__ import annotations
-
-import io
-from typing import Dict, Any
-
-import pandas as pd
 import streamlit as st
+import pandas as pd
+from typing import Dict, List, Optional
+from final_table import FinalTableConfig, build_final_tables_from_corr, process_from_raw
 
-from .final_table import (
-    FinalTableConfig,
-    process_from_raw,
-    build_final_tables_from_corr,
-)
+# Changes in this version:
+# 1) Independent controls for Final Table: you can pick a ticker & expiration inside this section,
+#    independent from the sidebar selection.
+# 2) A safe "Download raw provider table" button (CSV).
+# 3) Robust rendering even if new Greek columns are partially missing.
 
+def _get_provider_tables_by_exp(raw_records, spot, sanitizer_cfg=None, final_cfg=None) -> Dict[str, pd.DataFrame]:
+    try:
+        return process_from_raw(raw_records, float(spot), sanitizer_cfg=sanitizer_cfg, final_cfg=final_cfg)
+    except Exception as e:
+        st.warning(f"Не удалось собрать из raw_records: {e}")
+        return {}
 
-@st.cache_data(show_spinner=False)
-def _compute_from_raw_cached(raw_records, S: float, final_cfg: FinalTableConfig):
-    return process_from_raw(raw_records, S=S, final_cfg=final_cfg)
+def _get_tables_from_corr(df_corr, windows, final_cfg=None) -> Dict[str, pd.DataFrame]:
+    try:
+        scale = 1_000_000.0 if (final_cfg and final_cfg.scale_millions) else 1.0
+        return build_final_tables_from_corr(df_corr, windows, scale, final_cfg or FinalTableConfig())
+    except Exception as e:
+        st.warning(f"Не удалось собрать из df_corr/windows: {e}")
+        return {}
 
+def _render_raw_download(selected_exp: Optional[str]):
+    try:
+        from sanitize_window import build_raw_table, SanitizerConfig
+    except Exception:
+        return
+    if ("raw_records" not in st.session_state) or ("spot" not in st.session_state):
+        return
+    try:
+        df_raw = build_raw_table(st.session_state["raw_records"], S=float(st.session_state["spot"]), cfg=SanitizerConfig())
+        if selected_exp and ("exp" in df_raw.columns):
+            df_raw = df_raw[df_raw["exp"] == selected_exp]
+        st.download_button(
+            "Скачать исходную таблицу провайдера (CSV)",
+            data=df_raw.to_csv(index=False).encode("utf-8"),
+            file_name=f"provider_raw_{selected_exp or 'all'}.csv",
+            mime="text/csv"
+        )
+    except Exception as e:
+        st.warning(f"Не удалось подготовить исходную таблицу провайдера: {e}")
 
-@st.cache_data(show_spinner=False)
-def _build_from_corr_cached(df_corr: pd.DataFrame, windows: Dict[str, Any], final_cfg: FinalTableConfig):
-    return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
-
-
-def render_final_table(section_title: str = "Финальная таблица (окно, NetGEX/AG, PZ/ER)") -> None:
+def render_final_table(section_title: str = "Финальная таблица (окно, NetGEX/AG, PZ/ER)"):
     st.header(section_title)
 
-    # Настройки масштаба для *_M
-    scale_millions = st.number_input("Масштаб (млн $ на 1% движения)", value=1_000_000, min_value=1, step=100_000)
-    final_cfg = FinalTableConfig(scale_millions=scale_millions)
+    # Independent controls (ticker & expiration) for the table section
+    with st.expander("Настройки финальной таблицы (независимо от сайдбара)", expanded=False):
+        ticker_default = st.session_state.get("_table_ticker", st.session_state.get("_last_ticker", "SPY"))
+        ticker = st.text_input("Ticker (для финальной таблицы)", value=ticker_default, key="table_ticker_input")
+        st.session_state["_table_ticker"] = ticker
 
-    tables_by_exp = None
+        # Determine expirations list if available from df_corr or raw tables; fallback to a text input
+        expirations = []
+        if "df_corr" in st.session_state and "exp" in getattr(st.session_state["df_corr"], "columns", []):
+            expirations = sorted(st.session_state["df_corr"]["exp"].dropna().astype(str).unique().tolist())
+        elif "raw_records" in st.session_state:
+            try:
+                from sanitize_window import build_raw_table, SanitizerConfig
+                df_raw_all = build_raw_table(st.session_state["raw_records"], S=float(st.session_state.get("spot", 0.0)), cfg=SanitizerConfig())
+                if "exp" in df_raw_all.columns:
+                    expirations = sorted(df_raw_all["exp"].dropna().astype(str).unique().tolist())
+            except Exception:
+                pass
+        exp_selected = st.selectbox("Экспирация (для финальной таблицы)", options=expirations or ["—"], index=0)
 
-    # 1) Пытаемся использовать конвейер df_corr + windows (быстрее)
+    final_cfg = FinalTableConfig(scale_millions=True)
+
+    # Prefer df_corr/windows pipeline if present
+    tables: Dict[str, pd.DataFrame] = {}
     if ("df_corr" in st.session_state) and ("windows" in st.session_state):
-        try:
-            tables_by_exp = _build_from_corr_cached(st.session_state["df_corr"], st.session_state["windows"], final_cfg)
-        except Exception as e:
-            st.warning(f"Не удалось собрать из df_corr/windows: {e}")
+        tables = _get_tables_from_corr(st.session_state["df_corr"], st.session_state["windows"], final_cfg)
+    elif ("raw_records" in st.session_state) and ("spot" in st.session_state):
+        tables = _get_provider_tables_by_exp(st.session_state["raw_records"], st.session_state["spot"], final_cfg=final_cfg)
 
-    # 2) Фолбэк: из raw_records + spot
-    if not tables_by_exp and ("raw_records" in st.session_state) and ("spot" in st.session_state):
-        try:
-            tables_by_exp = _compute_from_raw_cached(st.session_state["raw_records"], float(st.session_state["spot"]), final_cfg)
-        except Exception as e:
-            st.warning(f"Не удалось собрать из raw_records: {e}")
-
-    if not tables_by_exp:
+    if not tables:
         st.info("Нет данных для финальной таблицы. Выберите экспирацию/получите сырые данные.")
         return
 
-    exps = list(tables_by_exp.keys())
-    if not exps:
-        st.info("Нет доступных экспираций для отображения.")
-        return
+    # choose selected table
+    tbl = None
+    if exp_selected in tables:
+        tbl = tables[exp_selected]
+    else:
+        # pick first available as fallback
+        exp_selected = list(tables.keys())[0]
+        tbl = tables[exp_selected]
 
-    exp = st.selectbox("Экспирация", exps, index=0)
-    df_show = tables_by_exp.get(exp)
-    if df_show is None or df_show.empty:
-        st.info("Таблица пуста.")
-        return
+    st.dataframe(tbl, use_container_width=True)
 
-    # Показ таблицы и кнопки скачать
-    st.dataframe(df_show, use_container_width=True, hide_index=True)
-
-    # CSV (включая call_vol/put_vol, если присутствуют в df_show)
-    csv_bytes = df_show.to_csv(index=False).encode("utf-8")
-    st.download_button("Скачать CSV", data=csv_bytes, file_name=f"final_table_{exp}.csv", mime="text/csv")
-
-    # Parquet (если pyarrow установлен)
+    # download buttons
+    st.download_button("Скачать CSV", data=tbl.to_csv(index=False).encode("utf-8"), file_name=f"final_table_{exp_selected}.csv", mime="text/csv")
     try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        buf = io.BytesIO()
-        table = pa.Table.from_pandas(df_show)
-        pq.write_table(table, buf)
-        st.download_button("Скачать Parquet", data=buf.getvalue(), file_name=f"final_table_{exp}.parquet", mime="application/octet-stream")
+        import pyarrow as pa  # noqa: F401
+        import pyarrow.parquet as pq  # noqa: F401
+        parquet_bytes = tbl.to_parquet(index=False)
+        st.download_button("Скачать Parquet", data=parquet_bytes, file_name=f"final_table_{exp_selected}.parquet", mime="application/octet-stream")
     except Exception:
         pass
 
-
-# === APPENDIX: add "download raw provider table" button ===
-# We don't modify the core render logic above; we only extend the UI by providing an extra button
-# to download the normalized provider table (built from raw_records).
-try:
-    import streamlit as st  # already used above
-    from sanitize_window import build_raw_table, SanitizerConfig
-
-    # We define a tiny helper that users of this module can call after rendering the table.
-    def render_provider_raw_download(exp_value: str | None = None):
-        if ("raw_records" in st.session_state) and ("spot" in st.session_state):
-            try:
-                df_raw = build_raw_table(
-                    st.session_state["raw_records"],
-                    S=float(st.session_state["spot"]),
-                    cfg=SanitizerConfig()
-                )
-                if exp_value and ("exp" in df_raw.columns):
-                    try:
-                        df_raw = df_raw[df_raw["exp"] == exp_value]
-                    except Exception:
-                        pass
-                raw_csv = df_raw.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Скачать исходную таблицу провайдера (CSV)",
-                    data=raw_csv,
-                    file_name=f"provider_raw_{exp_value or 'all'}.csv",
-                    mime="text/csv"
-                )
-            except Exception as e:
-                st.warning(f"Не удалось подготовить исходную таблицу провайдера: {e}")
-except Exception:
-    # If streamlit/sanitize_window is not available in import-time context, silently ignore.
-    pass
+    _render_raw_download(exp_selected)
