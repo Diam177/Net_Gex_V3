@@ -231,3 +231,88 @@ try:
 except Exception:
     pass
 # --- /ALWAYS SHOW SPOT ---
+
+# --- PIPELINE TABLES (intermediate) ---
+try:
+    _raw_records = st.session_state.get("raw_records")
+    _spot = st.session_state.get("spot_price")
+    if _raw_records and (_spot is not None):
+        @st.cache_data(show_spinner=False)
+        def _run_pipeline(records, S):
+            res = sanitize_and_window_pipeline(records, float(S))
+            try:
+                panels = build_window_panels(res["df_weights"], res["df_corr"], res["windows"])
+            except Exception:
+                panels = {}
+            res["panels"] = panels
+            return res
+
+        _res = _run_pipeline(_raw_records, _spot)
+
+        def _dl(df, name):
+            csv_bytes = df.to_csv(index=False).encode("utf-8")
+            st.download_button(f"CSV — {name}", data=csv_bytes, file_name=f"{name}.csv", mime="text/csv", key=f"csv_{name}")
+            try:
+                import pyarrow as pa, pyarrow.parquet as pq, io
+                buf = io.BytesIO()
+                pq.write_table(pa.Table.from_pandas(df), buf)
+                st.download_button(f"Parquet — {name}", data=buf.getvalue(), file_name=f"{name}.parquet", mime="application/octet-stream", key=f"pq_{name}")
+            except Exception:
+                pass
+
+        st.subheader("1) df_raw")
+        st.dataframe(_res["df_raw"], use_container_width=True)
+        _dl(_res["df_raw"], "df_raw")
+
+        st.subheader("2) df_marked")
+        st.dataframe(_res["df_marked"], use_container_width=True)
+        _dl(_res["df_marked"], "df_marked")
+
+        st.subheader("3) df_corr")
+        st.dataframe(_res["df_corr"], use_container_width=True)
+        _dl(_res["df_corr"], "df_corr")
+
+        st.subheader("4) df_weights")
+        st.dataframe(_res["df_weights"], use_container_width=True)
+        _dl(_res["df_weights"], "df_weights")
+
+        # windows → в таблицу (exp, idx, K)
+        import pandas as pd
+        try:
+            rows = []
+            g = _res["df_weights"].sort_values(["exp","K"]).reset_index(drop=True)
+            for exp, idxs in _res["windows"].items():
+                idxs = list(idxs) if hasattr(idxs, "tolist") else list(idxs)
+                for i in idxs:
+                    if 0 <= i < len(g):
+                        row = g.iloc[i]
+                        rows.append({"exp": exp, "idx": int(i), "K": float(row["K"])})
+            df_windows = pd.DataFrame(rows)
+        except Exception:
+            df_windows = pd.DataFrame()
+
+        st.subheader("5) windows (развёрнуто)")
+        if not df_windows.empty:
+            st.dataframe(df_windows, use_container_width=True)
+            _dl(df_windows, "windows")
+        else:
+            st.info("windows: нет данных (или не удалось построить таблицу из индексов).")
+
+        st.subheader("6) window_raw")
+        st.dataframe(_res["window_raw"], use_container_width=True)
+        _dl(_res["window_raw"], "window_raw")
+
+        st.subheader("7) window_corr")
+        st.dataframe(_res["window_corr"], use_container_width=True)
+        _dl(_res["window_corr"], "window_corr")
+
+        if isinstance(_res.get("panels"), dict) and _res["panels"]:
+            for exp, dfp in _res["panels"].items():
+                st.subheader(f"8) panel — {exp}")
+                st.dataframe(dfp, use_container_width=True)
+                _dl(dfp, f"panel_{exp}")
+    else:
+        st.info("Чтобы вывести промежуточные таблицы: в session_state должны быть raw_records и spot_price.")
+except Exception as _e:
+    st.warning(f"PIPELINE TABLES: {type(_e).__name__}: {_e}")
+# --- /PIPELINE TABLES ---
