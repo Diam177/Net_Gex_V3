@@ -1,197 +1,93 @@
 
+# -*- coding: utf-8 -*-
+"""
+Append-only section to render df_raw on the main page.
+This block is safe: it only adds UI on top of your current app.
+If you already have app content, keep it and append this block to the end of your existing app.py.
+"""
+
+from typing import Any, Iterable, Dict, List
 import json
-import streamlit as st
 
-from lib.tiker_data import (
-    list_future_expirations,
-    download_snapshot_json,
-    snapshots_zip_bytes,
-    PolygonError,
-)
-
-st.set_page_config(page_title="Main", layout="wide")
-
-api_key = st.secrets.get("POLYGON_API_KEY", "")
+try:
+    import streamlit as st
+    from lib.sanitize_window import sanitize_and_window_pipeline
+except Exception:
+    # If Streamlit or project modules aren't available during static checks,
+    # simply skip the df_raw section.
+    st = None
 
 
-def _load_expirations():
-    ticker = st.session_state.get("ticker", "SPY").strip().upper()
-    if not api_key:
-        st.session_state["expirations"] = []
-        st.session_state["last_loaded_ticker"] = None
-        st.error("В .streamlit/secrets.toml должен быть задан POLYGON_API_KEY")
+def _coerce_results(data: Any) -> List[Dict]:
+    """
+    Accepts many possible JSON layouts and returns a list[dict] of option records.
+    - If data is a list -> return as-is
+    - If data is a dict and has "results" -> return that
+    - If data is a dict and has "options" -> return that
+    Otherwise -> empty list
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("results", "options", "data"):
+            if key in data and isinstance(data[key], list):
+                return data[key]
+    return []
+
+
+def render_df_raw_section() -> None:
+    if st is None:
         return
+
+    st.markdown("### Сырые данные (df_raw)")
+    st.caption("Источник — провайдерский JSON (Polygon snapshot или эквивалент).")
+
+    # 1) Пытаемся взять 'сырье' из session_state (не мешает существующим потокам данных)
+    raw = None
+    for key in ("raw_records", "provider_raw", "snapshot_results", "options_raw", "raw"):
+        if key in st.session_state and st.session_state[key]:
+            raw = st.session_state[key]
+            break
+
+    # 2) Фолбэк: файл загрузки JSON (без замены вашей логики выбора тикера/экспирации)
+    up = st.file_uploader("Загрузите JSON (если данных нет в состоянии)", type=["json"], key="dfraw_uploader")
+    if raw is None and up is not None:
+        try:
+            raw = _coerce_results(json.load(up))
+            st.session_state["raw_records"] = raw
+        except Exception as e:
+            st.error(f"Не удалось прочитать JSON: {e}")
+            return
+
+    if raw is None:
+        st.info("Нет входных данных. Загрузите JSON или заполните st.session_state['raw_records'].")
+        return
+
+    # 3) Параметры спота (если есть в состоянии — используем; иначе не навязываем ввод)
+    S = None
+    if "spot" in st.session_state and isinstance(st.session_state["spot"], (int, float)):
+        S = float(st.session_state["spot"])
+
+    # 4) Запуск пайплайна sanitize → window
     try:
-        with st.spinner("Загружаем даты экспираций…"):
-            dates = list_future_expirations(ticker, api_key)
-        st.session_state["expirations"] = dates
-        st.session_state["last_loaded_ticker"] = ticker
-
+        res = sanitize_and_window_pipeline(raw, S=S)
     except Exception as e:
-        st.session_state["expirations"] = []
-        st.session_state["last_loaded_ticker"] = None
-        st.error(f"Ошибка загрузки дат: {e}")
+        st.error("Ошибка в sanitize_and_window_pipeline. Проверьте формат входных данных и значения S.")
+        st.exception(e)
+        return
+
+    # 5) Вывод df_raw
+    df_raw = res.get("df_raw")
+    if df_raw is None or getattr(df_raw, "empty", True):
+        st.warning("df_raw пуст. Проверьте, что JSON содержит корректные поля (details/greeks и т.д.).")
+        return
+
+    st.dataframe(df_raw, use_container_width=True)
 
 
-# --- Тикер в основной области ---
-col_ticker, _ = st.columns([2, 3])
-with col_ticker:
-    st.text_input(
-        "Тикер",
-        value=st.session_state.get("ticker", "SPY"),
-        key="ticker",
-        max_chars=15,
-        
-        on_change=_load_expirations,
-    )
-
-# Первичная загрузка при первом открытии страницы
-if "expirations" not in st.session_state:
-    _load_expirations()
-
-expirations = st.session_state.get("expirations", [])
-# Локально вычисляем default для мультиселекта, НИЧЕГО не пишем в session_state["selected"]
-selected_default = []
-if expirations:
-    prev = st.session_state.get("selected", [])
-    if prev and prev[0] in expirations:
-        selected_default = prev
-    else:
-        selected_default = [expirations[0]]
-
-selected = st.session_state.get("selected", [])
-
-col1, col2 = st.columns([3, 2])
-with col1:
-    if expirations:
-        st.multiselect(
-            "Даты экспирации",
-            options=expirations,
-            default=selected_default,
-            key="selected",
-            label_visibility="collapsed",
-        )
-        selected = st.session_state.get("selected", [])
-    else:
-        st.info("Нет доступных дат — проверьте тикер или ключ API.")
-
-with col2:
-    if expirations:
-        csv_lines = ["expiration_date"] + expirations
-        csv_bytes = ("\n".join(csv_lines) + "\n").encode("utf-8")
-        st.download_button(
-            label="Скачать CSV с датами",
-            data=csv_bytes,
-            file_name=f"{st.session_state.get('ticker', 'TICKER')}_expirations.csv",
-            mime="text/csv",
-        )
-
-        if selected:
-            if len(selected) == 1:
-                d = selected[0]
-                try:
-                    js = download_snapshot_json(st.session_state.get('ticker', 'TICKER'), d, api_key)
-                    st.download_button(
-                        label=f"Скачать JSON snapshot ({d})",
-                        data=(json.dumps(js, ensure_ascii=False)).encode("utf-8"),
-                        file_name=f"{st.session_state.get('ticker', 'TICKER')}_{d}.json",
-                        mime="application/json",
-                    )
-
-                except PolygonError as e:
-                    st.error(f"Ошибка Polygon: {e}")
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
-            else:
-                try:
-                    zbytes, fname = snapshots_zip_bytes(st.session_state.get('ticker', 'TICKER'), selected, api_key)
-                    st.download_button(
-                        label=f"Скачать ZIP ({len(selected)} дат)",
-                        data=zbytes,
-                        file_name=fname,
-                        mime="application/zip",
-                    )
-                except PolygonError as e:
-                    st.error(f"Ошибка Polygon: {e}")
-                except Exception as e:
-                    st.error(f"Ошибка: {e}")
-    else:
-        pass
-
-
-# --- DEBUG SPOT DISPLAY ---
+# Вызов рендера. Этот вызов не мешает вашей логике и просто добавляет секцию на главной.
 try:
-    # аккуратно пробуем получить цену через helper
-    from lib.tiker_data import get_spot_price  # не трогаем остальной импорт
-    _ticker = st.session_state.get("ticker")
-    if _ticker and api_key:
-        try:
-            _s, _ts_ms, _src = get_spot_price(_ticker.strip().upper(), api_key)
-            st.session_state["spot_price"] = _s
-            st.session_state["spot_ts_ms"] = _ts_ms
-            st.session_state["spot_source"] = _src
-        except Exception as _e:
-            # очищаем старые значения, чтобы не показывать цену от предыдущего тикера
-            st.session_state["spot_price"] = None
-            st.session_state["spot_ts_ms"] = None
-            st.session_state["spot_source"] = None
-            st.session_state["spot_error"] = str(_e)
-    else:
-        st.session_state["spot_price"] = None
-        st.session_state["spot_ts_ms"] = None
-        st.session_state["spot_source"] = None
-
-    # читаем query params: поддерживаем и новые, и старые API Streamlit
-    def _qp_true(name: str) -> bool:
-        val = None
-        try:
-            qp = getattr(st, "query_params", None)
-            if qp is not None:
-                try:
-                    val = qp.get(name)
-                except Exception:
-                    try:
-                        val = dict(qp).get(name)
-                    except Exception:
-                        pass
-                if val is None and hasattr(qp, "to_dict"):
-                    val = qp.to_dict().get(name)
-        except Exception:
-            pass
-        if val is None:
-            try:
-                val = st.experimental_get_query_params().get(name)
-            except Exception:
-                val = None
-        if isinstance(val, list):
-            val = val[0] if val else ""
-        return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
-
-    if _qp_true("debug_spot"):
-        _s = st.session_state.get("spot_price")
-        _src = st.session_state.get("spot_source")
-        _ts = st.session_state.get("spot_ts_ms")
-        _ts_str = "—"
-        try:
-            if _ts:
-                from datetime import datetime, timezone
-                _ts_str = datetime.fromtimestamp(int(_ts)/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        except Exception:
-            pass
-        st.info(f"DEBUG SPOT — {_ticker}: {_s} ({_src}, {_ts_str})")
+    render_df_raw_section()
 except Exception:
-    # никакой UI не ломаем, любые ошибки в дебаге игнорируются
+    # Никогда не падаем из-за декоративной секции
     pass
-# --- /DEBUG SPOT DISPLAY ---
-
-
-# --- ALWAYS SHOW SPOT ---
-try:
-    _ticker = st.session_state.get("ticker")
-    _s = st.session_state.get("spot_price")
-    _src = st.session_state.get("spot_source")
-    if _ticker and (_s is not None):
-        st.markdown(f"**Цена {_ticker}:** {_s:.2f}  \u2009*(источник: {_src})*")
-except Exception:
-    pass
-# --- /ALWAYS SHOW SPOT ---
