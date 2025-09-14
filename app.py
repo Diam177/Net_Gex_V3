@@ -185,6 +185,57 @@ if raw_records:
             st.warning("df_raw пуст. Проверьте формат данных.")
         else:
             st.dataframe(df_raw, use_container_width=True)
+            # --- Ниже показываем остальные массивы по степени создания ---
+            # 1) df_marked (df_raw + флаги аномалий)
+            df_marked = res.get("df_marked")
+            if df_marked is not None and not getattr(df_marked, "empty", True):
+                st.subheader("df_marked")
+                st.dataframe(df_marked, use_container_width=True, hide_index=True)
+
+            # 2) df_corr (восстановленные IV/Greeks)
+            df_corr = res.get("df_corr")
+            if df_corr is not None and not getattr(df_corr, "empty", True):
+                st.subheader("df_corr")
+                st.dataframe(df_corr, use_container_width=True, hide_index=True)
+
+            # 3) df_weights (веса окна по страйку)
+            df_weights = res.get("df_weights")
+            if df_weights is not None and not getattr(df_weights, "empty", True):
+                st.subheader("df_weights")
+                st.dataframe(df_weights, use_container_width=True, hide_index=True)
+
+            # 4) windows (выбранные страйки каждого окна) — преобразуем в таблицу
+            windows = res.get("windows")
+            if windows and isinstance(windows, dict) and df_weights is not None:
+                try:
+                    rows = []
+                    for exp, idx in windows.items():
+                        # df_weights на эту экспирацию, отсортируем по K как в select_windows
+                        g = df_weights[df_weights["exp"] == exp].sort_values("K").reset_index(drop=True)
+                        for i in list(idx):
+                            if 0 <= int(i) < len(g):
+                                rows.append({"exp": exp, "row_index": int(i), "K": float(g.loc[int(i), "K"]),
+                                             "w_blend": float(g.loc[int(i), "w_blend"])})
+                    import pandas as pd  # локальный импорт безопасен
+                    df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
+                    st.subheader("windows (табличный вид)")
+                    st.dataframe(df_windows, use_container_width=True, hide_index=True)
+                except Exception as _e:
+                    st.warning("Не удалось отобразить windows в табличном виде.")
+                    st.exception(_e)
+
+            # 5) window_raw (строки окна из исходных + флаги)
+            window_raw = res.get("window_raw")
+            if window_raw is not None and not getattr(window_raw, "empty", True):
+                st.subheader("window_raw")
+                st.dataframe(window_raw, use_container_width=True, hide_index=True)
+
+            # 6) window_corr (строки окна из исправленных данных)
+            window_corr = res.get("window_corr")
+            if window_corr is not None and not getattr(window_corr, "empty", True):
+                st.subheader("window_corr")
+                st.dataframe(window_corr, use_container_width=True, hide_index=True)
+
     except Exception as e:
         st.error("Ошибка пайплайна sanitize/window.")
         st.exception(e)
