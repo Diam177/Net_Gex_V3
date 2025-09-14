@@ -9,6 +9,9 @@ from lib.tiker_data import (
     PolygonError,
 )
 
+# для обработки raw-данных используем санитайзер
+from sanitize_window import build_raw_table, SanitizerConfig
+
 st.set_page_config(page_title="Main", layout="wide")
 
 api_key = st.secrets.get("POLYGON_API_KEY", "")
@@ -195,3 +198,57 @@ try:
 except Exception:
     pass
 # --- /ALWAYS SHOW SPOT ---
+
+# --- RAW TABLE DISPLAY ---
+# Позволяет пользователю сформировать и посмотреть таблицу df_raw (сырой входной набор)
+# для выбранной экспирации и скачать её в CSV. Использует sanitize_window.build_raw_table.
+try:
+    # Берём текущий тикер и выбранные даты
+    _ticker_raw = st.session_state.get("ticker", "").strip().upper()
+    _selected_raw = st.session_state.get("selected", [])
+    # Показ df_raw только при наличии ключа API, тикера и одной выбранной даты
+    if api_key and _ticker_raw and _selected_raw and len(_selected_raw) == 1:
+        exp_date_raw = _selected_raw[0]
+        with st.expander("Просмотр df_raw (сырой набор)", expanded=False):
+            if st.button("Получить df_raw", key="btn_df_raw"):
+                try:
+                    # загружаем снапшот через Polygon
+                    snapshot_js = download_snapshot_json(_ticker_raw, exp_date_raw, api_key)
+                    raw_records = snapshot_js.get("results") or []
+                    # оцениваем спот для расчёта времени до экспирации и смещения по страйкам
+                    import numpy as _np
+                    closes = []
+                    for r in raw_records:
+                        day_info = r.get("day") or {}
+                        c = day_info.get("close")
+                        if isinstance(c, (int, float)):
+                            closes.append(float(c))
+                    if closes:
+                        S_val = float(_np.nanmedian(closes))
+                    else:
+                        # fallback: используем spot_price из session_state или 0.0
+                        S_val = float(st.session_state.get("spot_price") or 0.0)
+                    cfg_raw = SanitizerConfig()
+                    df_raw = build_raw_table(raw_records, S=S_val, cfg=cfg_raw)
+                    st.session_state["df_raw"] = df_raw
+                except Exception as _err:
+                    st.session_state["df_raw"] = None
+                    st.error(f"Не удалось сформировать df_raw: {_err}")
+            df_raw_show = st.session_state.get("df_raw")
+            if df_raw_show is not None:
+                # отображаем таблицу
+                st.dataframe(df_raw_show, use_container_width=True, hide_index=True)
+                # кнопка для скачивания CSV
+                try:
+                    csv_bytes = df_raw_show.to_csv(index=False).encode("utf-8")
+                    st.download_button(
+                        label="Скачать CSV df_raw",
+                        data=csv_bytes,
+                        file_name=f"df_raw_{_ticker_raw}_{exp_date_raw}.csv",
+                        mime="text/csv",
+                    )
+                except Exception:
+                    pass
+except Exception:
+    pass
+# --- /RAW TABLE DISPLAY ---
