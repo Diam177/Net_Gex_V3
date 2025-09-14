@@ -3,6 +3,93 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
+
+# --- Signature-agnostic provider call helpers ---
+import os, inspect
+
+def _maybe_secret(name: str) -> str | None:
+    # Try env first
+    val = os.environ.get(name)
+    if val:
+        return val
+    # Try Streamlit secrets if available
+    try:
+        import streamlit as _st  # type: ignore
+        return _st.secrets.get(name)  # type: ignore
+    except Exception:
+        return None
+
+def _call_with_best_kwargs(func, base_kwargs: dict):
+    sig = inspect.signature(func)
+    allowed = {}
+    for k, v in base_kwargs.items():
+        if k in sig.parameters and v is not None:
+            allowed[k] = v
+    # If function expects no kwargs but positional args, map basics
+    if not allowed:
+        # Common positional: (ticker,), (ticker, )
+        params = list(sig.parameters.keys())
+        args = []
+        if params and params[0] in ("ticker", "symbol"):
+            args.append(base_kwargs.get("ticker") or base_kwargs.get("symbol"))
+        try:
+            return func(*args)
+        except Exception:
+            pass
+    return func(**allowed)
+
+def _provider_fetch_chain(ticker: str):
+    # Prefer polygon, fallback to generic provider
+    func = None
+    try:
+        from provider_polygon import fetch_option_chain as _f
+        func = _f
+    except Exception:
+        try:
+            from provider import fetch_option_chain as _f  # type: ignore
+            func = _f
+        except Exception:
+            raise RuntimeError("Не найден fetch_option_chain ни в provider_polygon, ни в provider.")
+    key = _maybe_secret("POLYGON_API_KEY") or _maybe_secret("RAPIDAPI_KEY")
+    host = _maybe_secret("RAPIDAPI_HOST")
+    base = {
+        "ticker": ticker,
+        "host": host,
+        "key": key,
+        "apiKey": key,
+        "api_key": key,
+        "expiry_unix": None,
+        "expiry": None,
+    }
+    return _call_with_best_kwargs(func, base)
+
+def _provider_fetch_ohlc(ticker: str, interval: str, limit: int):
+    func = None
+    try:
+        from provider_polygon import fetch_stock_history as _f
+        func = _f
+    except Exception:
+        try:
+            from provider import fetch_stock_history as _f  # type: ignore
+            func = _f
+        except Exception:
+            return None
+    key = _maybe_secret("POLYGON_API_KEY") or _maybe_secret("RAPIDAPI_KEY")
+    host = _maybe_secret("RAPIDAPI_HOST")
+    base = {
+        "ticker": ticker,
+        "host": host,
+        "key": key,
+        "apiKey": key,
+        "api_key": key,
+        "interval": interval,
+        "limit": int(limit),
+        "dividend": None,
+    }
+    try:
+        return _call_with_best_kwargs(func, base)
+    except Exception:
+        return None
 import pandas as pd
 
 # --- Data structures ---
