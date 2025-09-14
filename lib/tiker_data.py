@@ -310,7 +310,7 @@ def get_raw_by_exp(
 ) -> TikerRawResult:
     chain = _fetch_chain(ticker)
     spot, exps, raw_prepared = _parse_chain_with_compute(chain)
-if not exps:
+    if not exps:
         return TikerRawResult(ticker=ticker, spot=spot, expirations=[], selected=[], raw_by_exp={}, ohlc=None, day_high=None, day_low=None)
     if not selected_exps:
         default = _nearest_exp(exps)
