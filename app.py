@@ -198,21 +198,21 @@ except Exception:
 
 # --- RAW TABLE DISPLAY ---
 # Позволяет сформировать и просмотреть таблицу df_raw по выбранной экспирации
-# и скачать её в CSV. Использует динамический импорт sanitize_window, чтобы
-# избежать ModuleNotFoundError при загрузке приложения в контейнере.
+# и скачать её в CSV. Динамически загружает модуль sanitize_window по пути,
+# чтобы избежать ошибки ModuleNotFoundError при запуске Streamlit.
 try:
     _ticker_raw = st.session_state.get("ticker", "").strip().upper()
     _selected_raw = st.session_state.get("selected", [])
-    # Показываем раздел только если выбран ровно один срок экспирации и есть API‑ключ
+    # Показываем раздел, если выбран ровно один срок и есть API‑ключ
     if api_key and _ticker_raw and _selected_raw and len(_selected_raw) == 1:
         exp_date_raw = _selected_raw[0]
         with st.expander("Просмотр df_raw (сырые данные)", expanded=False):
             if st.button("Получить df_raw", key="btn_df_raw"):
                 try:
-                    # загружаем snapshot через Polygon API
+                    # загрузить snapshot по выбранной дате
                     snapshot_js = download_snapshot_json(_ticker_raw, exp_date_raw, api_key)
                     raw_records = snapshot_js.get("results") or []
-                    # вычисляем спот как медиану дневного close; fallback на spot_price
+                    # расчёт спота из дневных close; fallback на spot_price
                     import numpy as _np
                     closes = []
                     for rec in raw_records:
@@ -225,12 +225,19 @@ try:
                     else:
                         S_val = float(st.session_state.get("spot_price") or 0.0)
                     # динамический импорт sanitize_window
-                    import importlib, sys, os
+                    import importlib, os, sys, importlib.util
                     try:
                         sw = importlib.import_module("sanitize_window")
                     except ModuleNotFoundError:
-                        sys.path.append(os.path.dirname(__file__))
-                        sw = importlib.import_module("sanitize_window")
+                        try:
+                            sys.path.append(os.path.dirname(__file__))
+                            sw = importlib.import_module("sanitize_window")
+                        except ModuleNotFoundError:
+                            module_path = os.path.join(os.path.dirname(__file__), "sanitize_window.py")
+                            spec = importlib.util.spec_from_file_location("sanitize_window", module_path)
+                            sw = importlib.util.module_from_spec(spec)
+                            if spec.loader is not None:
+                                spec.loader.exec_module(sw)
                     build_raw_table = getattr(sw, "build_raw_table")
                     SanitizerConfig = getattr(sw, "SanitizerConfig")
                     cfg_raw = SanitizerConfig()
@@ -239,7 +246,7 @@ try:
                 except Exception as raw_err:
                     st.session_state["df_raw"] = None
                     st.error(f"Не удалось сформировать df_raw: {raw_err}")
-            # отображаем df_raw, если он присутствует в session_state
+            # отображение и скачивание df_raw
             _df_raw = st.session_state.get("df_raw")
             if _df_raw is not None:
                 st.dataframe(_df_raw, use_container_width=True, hide_index=True)
