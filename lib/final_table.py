@@ -175,9 +175,41 @@ def build_final_tables_from_corr(
         net_tbl["ER_Up"]   = net_tbl["K"].map(erup_map).fillna(0.0)
         net_tbl["ER_Down"] = net_tbl["K"].map(erdn_map).fillna(0.0)
 
+
+        # --- NEW: add IV & Greeks per strike (median across rows in df_corr) ---
+        try:
+            g_side = df_corr[(df_corr["exp"]==exp) & (df_corr["K"].isin(net_tbl["K"]))].copy()
+
+            # helper to build side aggregates
+            def _side_agg(df, side_label):
+                d = df[df["side"]==side_label].groupby("K", as_index=True).agg({
+                    "iv_corr": "median",
+                    "delta_corr": "median",
+                    "gamma_corr": "median",
+                    "vega_corr": "median",
+                    "theta_corr": "median",
+                }).rename(columns={
+                    "iv_corr": f"iv_{'call' if side_label=='C' else 'put'}",
+                    "delta_corr": f"delta_{'call' if side_label=='C' else 'put'}",
+                    "gamma_corr": f"gamma_{'call' if side_label=='C' else 'put'}",
+                    "vega_corr": f"vega_{'call' if side_label=='C' else 'put'}",
+                    "theta_corr": f"theta_{'call' if side_label=='C' else 'put'}",
+                })
+                return d
+
+            calls = _side_agg(g_side, "C")
+            puts  = _side_agg(g_side, "P")
+
+            # merge into net_tbl
+            net_tbl = net_tbl.merge(calls, left_on="K", right_index=True, how="left")
+            net_tbl = net_tbl.merge(puts,  left_on="K", right_index=True, how="left")
+        except Exception as _e:
+            # fail-safe: do nothing if something goes wrong
+            pass
+
         # Упорядочим колонки
         cols = ["exp","K","S"] + (["F"] if "F" in net_tbl.columns else []) + \
-               ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
+               ["call_oi","put_oi","call_vol","put_vol","iv_call","iv_put","delta_call","delta_put","gamma_call","gamma_put","vega_call","vega_put","theta_call","theta_put","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
         if "AG_1pct_M" in net_tbl.columns:
             cols += ["AG_1pct_M","NetGEX_1pct_M"]
         cols += ["PZ","ER_Up","ER_Down"]
