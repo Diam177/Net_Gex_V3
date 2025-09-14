@@ -196,70 +196,67 @@ except Exception:
     pass
 # --- /ALWAYS SHOW SPOT ---
 
+
 # --- RAW TABLE DISPLAY ---
-# Позволяет сформировать и просмотреть таблицу df_raw по выбранной экспирации
-# и скачать её в CSV. Динамически загружает модуль sanitize_window по пути,
-# чтобы избежать ошибки ModuleNotFoundError при запуске Streamlit.
+# Здесь реализуем отображение и скачивание первой таблицы df_raw из санитайзера.
+# Пользователь выбирает единственную дату экспирации и нажимает кнопку "Получить df_raw".
+# Приложение загружает JSON‑snapshot, корректно импортирует sanitize_window (из lib или из файла),
+# строит сырую таблицу и отображает её. Также доступна загрузка CSV.
 try:
-    _ticker_raw = st.session_state.get("ticker", "").strip().upper()
-    _selected_raw = st.session_state.get("selected", [])
-    # Показываем раздел, если выбран ровно один срок и есть API‑ключ
-    if api_key and _ticker_raw and _selected_raw and len(_selected_raw) == 1:
-        exp_date_raw = _selected_raw[0]
-        with st.expander("Просмотр df_raw (сырые данные)", expanded=False):
-            if st.button("Получить df_raw", key="btn_df_raw"):
+    # Показываем секцию только если выбран ровно один срок
+    if selected and len(selected) == 1:
+        expander = st.expander("Просмотр df_raw (сырые данные)")
+        with expander:
+            if st.button("Получить df_raw"):
                 try:
-                    # загрузить snapshot по выбранной дате
-                    snapshot_js = download_snapshot_json(_ticker_raw, exp_date_raw, api_key)
-                    raw_records = snapshot_js.get("results") or []
-                    # расчёт спота из дневных close; fallback на spot_price
-                    import numpy as _np
-                    closes = []
-                    for rec in raw_records:
-                        day_info = rec.get("day") or {}
-                        c = day_info.get("close")
-                        if isinstance(c, (int, float)):
-                            closes.append(float(c))
-                    if closes:
-                        S_val = float(_np.nanmedian(closes))
-                    else:
-                        S_val = float(st.session_state.get("spot_price") or 0.0)
-                    # динамический импорт sanitize_window
-                    import importlib, os, sys, importlib.util
+                    # Получаем snapshot JSON с рынка
+                    ticker = st.session_state.get("ticker", "SPY").strip().upper()
+                    expiry = selected[0]
+                    snap = download_snapshot_json(ticker, expiry, api_key)
+                    # Получаем спот‑цену
+                    from lib.tiker_data import get_spot_price
+                    s_price, _, _ = get_spot_price(ticker, api_key)
+                    # Динамически импортируем sanitize_window
+                    import importlib
+                    import importlib.util
+                    import os
+                    from pathlib import Path
+                    module = None
+                    # Сначала пытаемся импортировать как пакет lib.sanitize_window
                     try:
-                        sw = importlib.import_module("sanitize_window")
-                    except ModuleNotFoundError:
+                        module = importlib.import_module("lib.sanitize_window")
+                    except Exception:
                         try:
-                            sys.path.append(os.path.dirname(__file__))
-                            sw = importlib.import_module("sanitize_window")
-                        except ModuleNotFoundError:
-                            module_path = os.path.join(os.path.dirname(__file__), "sanitize_window.py")
-                            spec = importlib.util.spec_from_file_location("sanitize_window", module_path)
-                            sw = importlib.util.module_from_spec(spec)
-                            if spec.loader is not None:
-                                spec.loader.exec_module(sw)
-                    build_raw_table = getattr(sw, "build_raw_table")
-                    SanitizerConfig = getattr(sw, "SanitizerConfig")
-                    cfg_raw = SanitizerConfig()
-                    df_raw_val = build_raw_table(raw_records, S=S_val, cfg=cfg_raw)
-                    st.session_state["df_raw"] = df_raw_val
-                except Exception as raw_err:
-                    st.session_state["df_raw"] = None
-                    st.error(f"Не удалось сформировать df_raw: {raw_err}")
-            # отображение и скачивание df_raw
-            _df_raw = st.session_state.get("df_raw")
-            if _df_raw is not None:
-                st.dataframe(_df_raw, use_container_width=True, hide_index=True)
-                try:
-                    csv_bytes = _df_raw.to_csv(index=False).encode("utf-8")
+                            # затем пытаемся импортировать как sanitize_window на верхнем уровне
+                            module = importlib.import_module("sanitize_window")
+                        except Exception:
+                            # в противном случае ищем файл sanitize_window.py в директории приложения и подкаталоге lib
+                            current_dir = Path(__file__).resolve().parent
+                            candidates = [current_dir / "lib" / "sanitize_window.py", current_dir / "sanitize_window.py"]
+                            for cand in candidates:
+                                if cand.exists():
+                                    spec = importlib.util.spec_from_file_location("sanitize_window_dynamic", cand)
+                                    module = importlib.util.module_from_spec(spec)
+                                    spec.loader.exec_module(module)  # type: ignore
+                                    break
+                    if module is None:
+                        raise ModuleNotFoundError("sanitize_window module not found")
+                    build_raw_table = getattr(module, "build_raw_table")
+                    SanitizerConfig = getattr(module, "SanitizerConfig")
+                    # Формируем сырую таблицу
+                    df_raw = build_raw_table(snap, s_price)
+                    st.dataframe(df_raw)
+                    # Кнопка для скачивания CSV
+                    csv_bytes = df_raw.to_csv(index=False).encode("utf-8")
                     st.download_button(
-                        label="Скачать CSV df_raw",
+                        label="Скачать df_raw CSV",
                         data=csv_bytes,
-                        file_name=f"df_raw_{_ticker_raw}_{exp_date_raw}.csv",
+                        file_name=f"{ticker}_{expiry}_df_raw.csv",
                         mime="text/csv",
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    st.error(f"Не удалось сформировать df_raw: {e}")
 except Exception:
+    # При любых ошибках в секции df_raw UI сохраняем стабильность
     pass
 # --- /RAW TABLE DISPLAY ---
