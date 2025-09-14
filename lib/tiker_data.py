@@ -3,16 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
-
-# --- Signature-agnostic provider call helpers ---
+import pandas as pd
 import os, inspect
 
+# =====================
+# Signature-agnostic provider helpers
+# =====================
+
 def _maybe_secret(name: str) -> str | None:
-    # Try env first
-    val = os.environ.get(name)
-    if val:
-        return val
-    # Try Streamlit secrets if available
+    v = os.environ.get(name)
+    if v:
+        return v
     try:
         import streamlit as _st  # type: ignore
         return _st.secrets.get(name)  # type: ignore
@@ -25,21 +26,16 @@ def _call_with_best_kwargs(func, base_kwargs: dict):
     for k, v in base_kwargs.items():
         if k in sig.parameters and v is not None:
             allowed[k] = v
-    # If function expects no kwargs but positional args, map basics
-    if not allowed:
-        # Common positional: (ticker,), (ticker, )
-        params = list(sig.parameters.keys())
-        args = []
-        if params and params[0] in ("ticker", "symbol"):
-            args.append(base_kwargs.get("ticker") or base_kwargs.get("symbol"))
-        try:
-            return func(*args)
-        except Exception:
-            pass
-    return func(**allowed)
+    if allowed:
+        return func(**allowed)
+    # fallback: positional (ticker only)
+    params = list(sig.parameters.keys())
+    args = []
+    if params and params[0] in ("ticker","symbol"):
+        args.append(base_kwargs.get("ticker") or base_kwargs.get("symbol"))
+    return func(*args)
 
-def _provider_fetch_chain(ticker: str):
-    # Prefer polygon, fallback to generic provider
+def _provider_fetch_chain(ticker: str) -> dict:
     func = None
     try:
         from provider_polygon import fetch_option_chain as _f
@@ -49,7 +45,7 @@ def _provider_fetch_chain(ticker: str):
             from provider import fetch_option_chain as _f  # type: ignore
             func = _f
         except Exception:
-            raise RuntimeError("Не найден fetch_option_chain ни в provider_polygon, ни в provider.")
+            raise RuntimeError("fetch_option_chain not found in provider modules")
     key = _maybe_secret("POLYGON_API_KEY") or _maybe_secret("RAPIDAPI_KEY")
     host = _maybe_secret("RAPIDAPI_HOST")
     base = {
@@ -61,7 +57,15 @@ def _provider_fetch_chain(ticker: str):
         "expiry_unix": None,
         "expiry": None,
     }
-    return _call_with_best_kwargs(func, base)
+    try:
+        out = _call_with_best_kwargs(func, base)
+        return out or {}
+    except Exception:
+        # last resort try with only ticker
+        try:
+            return func(ticker=ticker)
+        except Exception:
+            return {}
 
 def _provider_fetch_ohlc(ticker: str, interval: str, limit: int):
     func = None
@@ -89,10 +93,14 @@ def _provider_fetch_ohlc(ticker: str, interval: str, limit: int):
     try:
         return _call_with_best_kwargs(func, base)
     except Exception:
-        return None
-import pandas as pd
+        try:
+            return func(ticker=ticker, interval=interval, limit=int(limit))
+        except Exception:
+            return None
 
-# --- Data structures ---
+# =====================
+# Data structures
+# =====================
 
 @dataclass
 class TikerRawResult:
@@ -101,48 +109,26 @@ class TikerRawResult:
     expirations: List[str]
     selected: List[str]
     raw_by_exp: Dict[str, List[dict]]
-    # Added for Key Levels chart:
-    ohlc: Optional[pd.DataFrame] = None   # columns: time, open, high, low, close, volume
+    ohlc: Optional[pd.DataFrame] = None
     day_high: Optional[float] = None
     day_low: Optional[float] = None
     ohlc_interval: str = "1m"
     ohlc_limit: int = 500
 
-# --- Provider helpers (pure, no Streamlit) ---
+# =====================
+# Helpers
+# =====================
 
 def _fetch_chain(ticker: str) -> dict:
-    # Primary provider abstraction in your repo:
-    try:
-        from provider_polygon import fetch_option_chain
-    except Exception:
-        # Fallback to generic provider if available
-        from provider import fetch_option_chain  # type: ignore
-    chain = fetch_option_chain(ticker=ticker, host=None, key=None, expiry_unix=None)
-    return chain or {}
+    return _provider_fetch_chain(ticker)
 
-def _fetch_ohlc(ticker: str, interval: str = "1m", limit: int = 500) -> List[dict] | dict | None:
-    # Try polygon-first, fallback to generic provider
-    try:
-        from provider_polygon import fetch_stock_history
-    except Exception:
-        try:
-            from provider import fetch_stock_history  # type: ignore
-        except Exception:
-            return None
-    try:
-        data = fetch_stock_history(ticker=ticker, host=None, key=None, interval=interval, limit=limit, dividend=None)
-        return data
-    except Exception:
-        return None
+def _fetch_ohlc(ticker: str, interval: str = "1m", limit: int = 500):
+    return _provider_fetch_ohlc(ticker, interval, limit)
 
 def _extract_spot_and_exps(chain: dict) -> Tuple[float, List[str]]:
     quote = chain.get("quote") or {}
-    spot = quote.get("regularMarketPrice", None)
-    if spot is None:
-        spot = quote.get("last", None)
-    if spot is None:
-        spot = 0.0
-    spot = float(spot)
+    spot = quote.get("regularMarketPrice", quote.get("last", 0.0))
+    spot = float(spot or 0.0)
 
     exps = chain.get("expirations") or chain.get("expirationDates") or []
     exps = [str(x) for x in exps]
@@ -197,13 +183,9 @@ def _split_raw_by_exp(chain: dict, selected_exps: List[str]) -> Dict[str, List[d
             out[e] = list(items)
     return out
 
-def _normalize_ohlc(payload: List[dict] | dict | None) -> Optional[pd.DataFrame]:
+def _normalize_ohlc(payload) -> Optional[pd.DataFrame]:
     if payload is None:
         return None
-    # Common shapes:
-    # 1) {"results":[{"t": epoch_ms, "o":..., "h":..., "l":..., "c":..., "v":...}, ...]}
-    # 2) [{"time": "...", "open":..., "high":..., "low":..., "close":..., "volume":...}, ...]
-    # 3) Flat list with o/h/l/c/v but different keys
     try:
         if isinstance(payload, dict) and "results" in payload:
             rows = payload["results"]
@@ -213,24 +195,18 @@ def _normalize_ohlc(payload: List[dict] | dict | None) -> Optional[pd.DataFrame]
             rows = payload["candles"]
         else:
             rows = []
-
         if not rows:
             return None
-
         df = pd.DataFrame(rows)
-        # Try to map columns to a standard schema
         colmap = {}
-        # Time
         if "time" in df.columns:
             colmap["time"] = "time"
         elif "t" in df.columns:
-            # polygon style epoch ms
             df["time"] = pd.to_datetime(df["t"], unit="ms")
             colmap["time"] = "time"
         elif "timestamp" in df.columns:
             df["time"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
             colmap["time"] = "time"
-        # Prices/volume
         if "open" in df.columns: colmap["open"] = "open"
         elif "o" in df.columns: colmap["o"] = "open"
         if "high" in df.columns: colmap["high"] = "high"
@@ -241,20 +217,15 @@ def _normalize_ohlc(payload: List[dict] | dict | None) -> Optional[pd.DataFrame]
         elif "c" in df.columns: colmap["c"] = "close"
         if "volume" in df.columns: colmap["volume"] = "volume"
         elif "v" in df.columns: colmap["v"] = "volume"
-
-        # Apply mapping
         df = df.rename(columns=colmap)
-        needed = ["time", "open", "high", "low", "close", "volume"]
+        needed = ["time","open","high","low","close","volume"]
         missing = [x for x in needed if x not in df.columns]
         if missing:
-            # If we at least have ohlc, fill volume = 0
-            if all(x in df.columns for x in ["time", "open", "high", "low", "close"]):
+            if all(x in df.columns for x in ["time","open","high","low","close"]):
                 df["volume"] = 0
             else:
                 return None
-
-        # Keep only necessary columns and sort by time
-        df = df[["time", "open", "high", "low", "close", "volume"]].copy()
+        df = df[["time","open","high","low","close","volume"]].copy()
         try:
             df["time"] = pd.to_datetime(df["time"])
         except Exception:
@@ -264,7 +235,9 @@ def _normalize_ohlc(payload: List[dict] | dict | None) -> Optional[pd.DataFrame]
     except Exception:
         return None
 
-# --- Public PURE API ---
+# =====================
+# Public PURE API
+# =====================
 
 def get_raw_by_exp(
     ticker: str,
@@ -273,18 +246,14 @@ def get_raw_by_exp(
     ohlc_interval: str = "1m",
     ohlc_limit: int = 500,
 ) -> TikerRawResult:
-    """Single source of truth for raw option data (per expiration) + optional OHLC for Key Levels chart."""
     chain = _fetch_chain(ticker)
     spot, exps = _extract_spot_and_exps(chain)
     if not exps:
         return TikerRawResult(ticker=ticker, spot=spot, expirations=[], selected=[], raw_by_exp={}, ohlc=None, day_high=None, day_low=None)
-
     if not selected_exps:
         default = _nearest_exp(exps)
         selected_exps = [default] if default else []
-
     raw_by_exp = _split_raw_by_exp(chain, selected_exps)
-
     ohlc_df = None
     day_hi = day_lo = None
     if need_ohlc:
@@ -296,7 +265,6 @@ def get_raw_by_exp(
                 day_lo = float(ohlc_df["low"].min())
             except Exception:
                 day_hi = day_lo = None
-
     return TikerRawResult(
         ticker=ticker,
         spot=spot,
@@ -310,31 +278,26 @@ def get_raw_by_exp(
         ohlc_limit=ohlc_limit,
     )
 
-# --- OPTIONAL UI helper (kept separate from pure API) ---
+# =====================
+# OPTIONAL UI helper
+# =====================
 
-def render_tiker_data_block(title: str = "Блок выбора тикера и даты экспирации (сырьё + свечи)") -> TikerRawResult:
-    import streamlit as st  # local import so pure API has no Streamlit dep
+def render_tiker_data_block(title: str = "Тикер/Экспирации (сырьё + свечи)") -> TikerRawResult:
+    import streamlit as st  # local import
     st.header(title)
     ticker_default = st.session_state.get("td2_ticker", "SPY")
     ticker = st.text_input("Ticker", value=ticker_default, key="td2_ticker_input")
     st.session_state["td2_ticker"] = ticker
-
-    # Controls for OHLC retrieval (interval/limit)
     with st.expander("Настройки свечей (для чарта Key Levels)", expanded=False):
         interval = st.selectbox("Интервал", options=["1m","2m","5m","15m","30m","1h","1d"], index=0)
         limit = st.number_input("Кол-во баров (limit)", min_value=50, max_value=5000, value=500, step=50)
-
     base = get_raw_by_exp(ticker, need_ohlc=True, ohlc_interval=interval, ohlc_limit=int(limit))
     if not base.expirations:
         st.warning("Провайдер не вернул список экспираций для данного тикера.")
         return base
-
     selected = st.multiselect("Дата(ы) экспирации", options=base.expirations, default=base.selected)
     base = get_raw_by_exp(ticker, selected_exps=selected, need_ohlc=True, ohlc_interval=interval, ohlc_limit=int(limit))
-
-    # Optional: show a small preview of candles
     if base.ohlc is not None and not base.ohlc.empty:
         st.caption(f"Свечи: {ticker} • {interval} • {len(base.ohlc)} баров. High={base.day_high}, Low={base.day_low}")
         st.dataframe(base.ohlc.tail(5), use_container_width=True)
-
     return base
