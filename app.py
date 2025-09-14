@@ -119,18 +119,61 @@ with col2:
         pass
 
 
-# --- BEGIN: spot fetch (safe, silent) -----------------------------------------
-# Не изменяет UI; сохраняет спот-цену в session_state для дальнейших расчётов.
+# --- DEBUG SPOT DISPLAY ---
 try:
-    api_key__ = st.secrets.get("POLYGON_API_KEY", "")
-    ticker__ = st.session_state.get("ticker")
-    if api_key__ and ticker__:
-        from lib.tiker_data import get_spot_price
-        _s, _ts, _src = get_spot_price(ticker__, api_key__)
-        st.session_state["spot_price"] = _s
-        st.session_state["spot_ts_ms"] = _ts
-        st.session_state["spot_source"] = _src
+    # аккуратно пробуем получить цену через helper
+    from lib.tiker_data import get_spot_price  # не трогаем остальной импорт
+    _ticker = st.session_state.get("ticker")
+    if _ticker and api_key:
+        try:
+            _s, _ts_ms, _src = get_spot_price(_ticker, api_key)
+            st.session_state["spot_price"] = _s
+            st.session_state["spot_ts_ms"] = _ts_ms
+            st.session_state["spot_source"] = _src
+        except Exception as _e:
+            st.session_state["spot_error"] = str(_e)
+
+    # читаем query params: поддерживаем и новые, и старые API Streamlit
+    def _qp_true(name: str) -> bool:
+        val = None
+        try:
+            qp = getattr(st, "query_params", None)
+            if qp is not None:
+                try:
+                    val = qp.get(name)
+                except Exception:
+                    # может быть dict-like
+                    try:
+                        val = dict(qp).get(name)
+                    except Exception:
+                        pass
+                # в некоторых версиях требуется to_dict()
+                if val is None and hasattr(qp, "to_dict"):
+                    val = qp.to_dict().get(name)
+        except Exception:
+            pass
+        if val is None:
+            try:
+                val = st.experimental_get_query_params().get(name)
+            except Exception:
+                val = None
+        # нормализуем
+        if isinstance(val, list):
+            val = val[0] if val else ""
+        return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
+
+    if _qp_true("debug_spot"):
+        _s = st.session_state.get("spot_price")
+        _src = st.session_state.get("spot_source")
+        _ts = st.session_state.get("spot_ts_ms")
+        _ts_str = "—"
+        try:
+            if _ts:
+                _ts_str = datetime.fromtimestamp(int(_ts)/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            pass
+        st.info(f"DEBUG SPOT — {_ticker}: {_s} ({_src}, {_ts_str})")
 except Exception:
-    # тихо игнорируем, чтобы не ломать текущий UI
+    # никакой UI не ломаем, любые ошибки в дебаге игнорируются
     pass
-# --- END: spot fetch ----------------------------------------------------------
+# --- /DEBUG SPOT DISPLAY ---
