@@ -57,31 +57,36 @@ def _safe_fetch_option_chain(ticker: str) -> dict:
 
 def _parse_chain_extract_spot_and_exps(chain: dict) -> Tuple[Optional[float], List[str]]:
     """
-    Достаёт spot и список экспираций прямо из chain['records'].
-    Ожидается формат, совместимый с provider_polygon.fetch_option_chain.
+    Достаёт spot и список экспираций из структуры Yahoo-like:
+    {"optionChain":{"result":[{"quote":{...}, "expirationDates":[...], "options":[{"expirationDate":unix, "calls":[...], "puts":[...]} ...]}], "error":None}}
     """
     if not isinstance(chain, dict):
         return None, []
-    recs = chain.get("records") or []
-
-    # spot: пробуем в заголовке, затем в первом контракте
-    spot = None
-    for key in ("spot", "underlyingPrice", "S"):
-        try:
-            if key in chain and chain[key] is not None:
-                spot = float(chain[key])
-                break
-        except Exception:
-            pass
-    if spot is None:
-        try:
-            if recs and recs[0].get("S") is not None:
-                spot = float(recs[0]["S"])
-        except Exception:
-            spot = None
-
-    # expirations: из самих контрактов
-    exps = sorted({r.get("expiration") for r in recs if r.get("expiration")})
+    oc = (chain.get("optionChain") or {}).get("result") or []
+    if not oc:
+        return None, []
+    root = oc[0] or {}
+    q = root.get("quote") or {}
+    spot = q.get("regularMarketPrice")
+    # Собираем даты из самих контрактов (строки YYYY-MM-DD)
+    exps_set = set()
+    for blk in (root.get("options") or []):
+        for rec in (blk.get("calls") or []):
+            e = rec.get("expiration")
+            if e: exps_set.add(str(e))
+        for rec in (blk.get("puts") or []):
+            e = rec.get("expiration")
+            if e: exps_set.add(str(e))
+    exps = sorted(exps_set)
+    # Fallback: если вдруг пусто — преобразуем unix в ISO
+    if not exps:
+        for ts in (root.get("expirationDates") or []):
+            try:
+                import datetime as _dt
+                exps.append(_dt.datetime.utcfromtimestamp(int(ts)).date().isoformat())
+            except Exception:
+                continue
+        exps = sorted(set(exps))
     return spot, exps
 
 
@@ -109,15 +114,29 @@ def _choose_default_expiration(exps: List[str]) -> Optional[str]:
 
 def _split_raw_by_exp(chain: dict, selected_exps: List[str]) -> Dict[str, List[dict]]:
     """
-    Группирует контракты по выбранным датам экспирации.
+    Из Yahoo-like структуры собираем плоский список по выбранным экспирациям.
+    Каждому контракту добавляем поле "type": "call"/"put".
     """
     ans: Dict[str, List[dict]] = {e: [] for e in (selected_exps or [])}
-    recs = (chain or {}).get("records") or []
+    oc = (chain.get("optionChain") or {}).get("result") or []
+    if not oc:
+        return ans
+    root = oc[0] or {}
     sels = set(selected_exps or [])
-    for r in recs:
-        e = r.get("expiration")
-        if e in sels:
-            ans[e].append(r)
+    for blk in (root.get("options") or []):
+        # Внутри blk["expirationDate"] может быть unix, но в контрактах есть строка expiration
+        for rec in (blk.get("calls") or []):
+            e = str(rec.get("expiration"))
+            if e in sels:
+                r = dict(rec)
+                r["type"] = "call"
+                ans[e].append(r)
+        for rec in (blk.get("puts") or []):
+            e = str(rec.get("expiration"))
+            if e in sels:
+                r = dict(rec)
+                r["type"] = "put"
+                ans[e].append(r)
     return ans
 
 
@@ -126,7 +145,8 @@ def _fetch_chain_polygon(ticker: str) -> dict:
     Единственная точка загрузки опционной цепочки из Polygon.
     """
     api_key = os.environ.get('POLYGON_API_KEY') or ''
-    return _prov.fetch_option_chain(ticker=ticker, host_unused=None, api_key=api_key, expiry_unix=None)
+    j, _ = _prov.fetch_option_chain(ticker=ticker, host_unused=None, api_key=api_key, expiry_unix=None)
+    return j
 
 
 def _fetch_ohlc_polygon(ticker: str, interval: str = "1m", limit: int = 500) -> dict:
@@ -134,7 +154,8 @@ def _fetch_ohlc_polygon(ticker: str, interval: str = "1m", limit: int = 500) -> 
     История свечей для Key Levels. Возвращает payload адаптера Polygon.
     """
     api_key = os.environ.get('POLYGON_API_KEY') or ''
-    return _prov.fetch_stock_history(ticker=ticker, host_unused=None, api_key=api_key, interval=interval, limit=limit, dividend=False, timeout=30)
+    j, _ = _prov.fetch_stock_history(ticker=ticker, host_unused=None, api_key=api_key, interval=interval, limit=limit, dividend=False, timeout=30)
+    return j
 
 
 # ---------------------------
