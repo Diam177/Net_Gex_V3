@@ -9,6 +9,8 @@ from lib.tiker_data import (
     PolygonError,
 )
 
+from lib.ui_final_table import render_final_table
+
 st.set_page_config(page_title="Main", layout="wide")
 
 api_key = st.secrets.get("POLYGON_API_KEY", "")
@@ -195,3 +197,10 @@ try:
 except Exception:
     pass
 # --- /ALWAYS SHOW SPOT ---
+
+# --- FINAL TABLE (main page) ---
+try:
+    render_final_table("Финальная таблица")
+except Exception:
+    pass
+# --- /FINAL TABLE ---
