@@ -1,166 +1,27 @@
 
 # -*- coding: utf-8 -*-
 """
-tiker_data.py — автономный блок выбора тикера и экспирации.
-Жёсткое требование: НЕ зависеть от внутренних модулей проекта, кроме lib/provider_polygon.py.
-Вся логика извлечения spot/expirations и сборки сырых записей — внутри этого файла.
+lib/tiker_data.py — селектор тикера/экспираций и подготовка raw_records/spot в st.session_state.
+Работает ТОЛЬКО с Polygon: использует provider_polygon.fetch_option_chain / fetch_stock_history,
+которые возвращают "yahoo-like" структуру.
 """
 
 from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
-import datetime as _dt
+from typing import List, Dict, Optional, Tuple
 import os
+from datetime import datetime
 
-# единственная внешняя зависимость — адаптер Polygon
-from lib import provider_polygon as _prov  # type: ignore
-import inspect
+import pandas as pd
+import streamlit as st
 
+# --- Provider imports (prefer relative, fallback absolute) ---
+try:
+    from .provider_polygon import fetch_option_chain, fetch_stock_history
+except Exception:
+    from provider_polygon import fetch_option_chain, fetch_stock_history  # type: ignore
 
-def _safe_fetch_option_chain(ticker: str) -> dict:
-    """
-    Вызывает provider_polygon.fetch_option_chain, независимо от того,
-    как у него названы параметры (ticker/symbol) и принимает ли он позиционный аргумент.
-    """
-    func = getattr(_prov, "fetch_option_chain", None)
-    if func is None:
-        raise RuntimeError("provider_polygon.fetch_option_chain не найден")
-
-    try:
-        sig = inspect.signature(func)
-    except Exception:
-        sig = None
-
-    # Попробуем по имени параметров
-    if sig is not None:
-        params = list(sig.parameters.keys())
-        try:
-            if "ticker" in params:
-                return func(ticker=ticker)
-            if "symbol" in params:
-                return func(symbol=ticker)
-        except TypeError:
-            pass  # попробуем позиционно
-
-    # Позиционный вызов на всякий случай
-    try:
-        return func(ticker)
-    except TypeError:
-        # Последний шанс: без аргументов (если провайдер сам читает st.session_state)
-        return func()
-
-
-# ---------------------------
-# Вспомогательные локальные утилиты
-# ---------------------------
-
-def _parse_chain_extract_spot_and_exps(chain: dict) -> Tuple[Optional[float], List[str]]:
-    """
-    Достаёт spot и список экспираций из структуры Yahoo-like:
-    {"optionChain":{"result":[{"quote":{...}, "expirationDates":[...], "options":[{"expirationDate":unix, "calls":[...], "puts":[...]} ...]}], "error":None}}
-    """
-    if not isinstance(chain, dict):
-        return None, []
-    oc = (chain.get("optionChain") or {}).get("result") or []
-    if not oc:
-        return None, []
-    root = oc[0] or {}
-    q = root.get("quote") or {}
-    spot = q.get("regularMarketPrice")
-    # Собираем даты из самих контрактов (строки YYYY-MM-DD)
-    exps_set = set()
-    for blk in (root.get("options") or []):
-        for rec in (blk.get("calls") or []):
-            e = rec.get("expiration")
-            if e: exps_set.add(str(e))
-        for rec in (blk.get("puts") or []):
-            e = rec.get("expiration")
-            if e: exps_set.add(str(e))
-    exps = sorted(exps_set)
-    # Fallback: если вдруг пусто — преобразуем unix в ISO
-    if not exps:
-        for ts in (root.get("expirationDates") or []):
-            try:
-                import datetime as _dt
-                exps.append(_dt.datetime.utcfromtimestamp(int(ts)).date().isoformat())
-            except Exception:
-                continue
-        exps = sorted(set(exps))
-    return spot, exps
-
-
-def _choose_default_expiration(exps: List[str]) -> Optional[str]:
-    """
-    Ближайшая дата >= сегодня. Если таких нет — последняя доступная.
-    """
-    if not exps:
-        return None
-    today = _dt.date.today()
-    parsed = []
-    for e in exps:
-        try:
-            parsed.append((_dt.date.fromisoformat(e), e))
-        except Exception:
-            continue
-    if not parsed:
-        return None
-    parsed.sort()
-    for d, raw in parsed:
-        if d >= today:
-            return raw
-    return parsed[-1][1]  # самая дальняя
-
-
-def _split_raw_by_exp(chain: dict, selected_exps: List[str]) -> Dict[str, List[dict]]:
-    """
-    Из Yahoo-like структуры собираем плоский список по выбранным экспирациям.
-    Каждому контракту добавляем поле "type": "call"/"put".
-    """
-    ans: Dict[str, List[dict]] = {e: [] for e in (selected_exps or [])}
-    oc = (chain.get("optionChain") or {}).get("result") or []
-    if not oc:
-        return ans
-    root = oc[0] or {}
-    sels = set(selected_exps or [])
-    for blk in (root.get("options") or []):
-        # Внутри blk["expirationDate"] может быть unix, но в контрактах есть строка expiration
-        for rec in (blk.get("calls") or []):
-            e = str(rec.get("expiration"))
-            if e in sels:
-                r = dict(rec)
-                r["type"] = "call"
-                ans[e].append(r)
-        for rec in (blk.get("puts") or []):
-            e = str(rec.get("expiration"))
-            if e in sels:
-                r = dict(rec)
-                r["type"] = "put"
-                ans[e].append(r)
-    return ans
-
-
-def _fetch_chain_polygon(ticker: str) -> dict:
-    """
-    Единственная точка загрузки опционной цепочки из Polygon.
-    """
-    api_key = os.environ.get('POLYGON_API_KEY') or ''
-    j, _ = _prov.fetch_option_chain(ticker=ticker, host_unused=None, api_key=api_key, expiry_unix=None)
-    return j
-
-
-def _fetch_ohlc_polygon(ticker: str, interval: str = "1m", limit: int = 500) -> dict:
-    """
-    История свечей для Key Levels. Возвращает payload адаптера Polygon.
-    """
-    api_key = os.environ.get('POLYGON_API_KEY') or ''
-    j, _ = _prov.fetch_stock_history(ticker=ticker, host_unused=None, api_key=api_key, interval=interval, limit=limit, dividend=False, timeout=30)
-    return j
-
-
-# ---------------------------
-# Публичный API
-# ---------------------------
+# ---------- Dataclasses ----------
 
 @dataclass
 class TikerRawResult:
@@ -169,124 +30,149 @@ class TikerRawResult:
     expirations: List[str]
     selected: List[str]
     raw_by_exp: Dict[str, List[dict]]
-    ohlc: Optional[dict] = None  # сырой payload от провайдера
+    ohlc: Optional[pd.DataFrame] = None
     day_high: Optional[float] = None
     day_low: Optional[float] = None
-    ohlc_interval: str = "1m"
-    ohlc_limit: int = 500
 
+# ---------- Helpers ----------
 
-def get_raw_by_exp(
-    ticker: str,
-    selected_exps: Optional[List[str]] = None,
-    need_ohlc: bool = False,
-    ohlc_interval: str = "1m",
-    ohlc_limit: int = 500,
-) -> TikerRawResult:
-    """
-    Тянет цепочку по тикеру, восстанавливает список экспираций из цепочки,
-    выбирает дефолт, формирует raw_by_exp по выбранным датам.
-    НЕТ зависимостей на другие модули (кроме provider_polygon).
-    """
-    chain = _fetch_chain_polygon(ticker)
-    spot, exps = _parse_chain_extract_spot_and_exps(chain)
-
-    if not exps:
-        return TikerRawResult(
-            ticker=ticker, spot=spot, expirations=[], selected=[],
-            raw_by_exp={}, ohlc=None, day_high=None, day_low=None,
-            ohlc_interval=ohlc_interval, ohlc_limit=ohlc_limit
-        )
-
-    if not selected_exps:
-        default = _choose_default_expiration(exps)
-        selected_exps = [default] if default else []
-
-    raw_by_exp = _split_raw_by_exp(chain, selected_exps or [])
-
-    ohlc_payload: Optional[dict] = None
-    day_hi = day_lo = None
-    if need_ohlc:
+def _fmt_date(val) -> str:
+    """to 'YYYY-MM-DD'"""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        # already label
+        if len(val) >= 8 and "-" in val:
+            return val.split("T")[0]
         try:
-            ohlc_payload = _fetch_ohlc_polygon(ticker, interval=ohlc_interval, limit=int(ohlc_limit))
-            # Попробуем вычислить High/Low без pandas
-            bars = (ohlc_payload or {}).get("results") or (ohlc_payload or {}).get("bars") or []
-            highs = []
-            lows = []
-            for b in bars:
-                h = b.get("high", b.get("h"))
-                l = b.get("low",  b.get("l"))
-                if h is not None:
-                    try: highs.append(float(h))
-                    except Exception: pass
-                if l is not None:
-                    try: lows.append(float(l))
-                    except Exception: pass
-            if highs and lows:
-                day_hi = max(highs)
-                day_lo = min(lows)
+            # numeric string
+            ts = int(val)
+            return datetime.utcfromtimestamp(ts).date().isoformat()
         except Exception:
-            pass
+            return val
+    try:
+        return datetime.utcfromtimestamp(int(val)).date().isoformat()
+    except Exception:
+        return str(val)
+
+def _extract_from_chain_yf(chain: dict) -> Tuple[Optional[float], List[str], Dict[str, List[dict]]]:
+    """
+    Ожидаем структуру:
+    {"optionChain":{"result":[{"quote":{...},"options":[{"expirationDate":unix,"calls":[...],"puts":[...]}...]}]}}
+    Возвращаем: spot, expirations(list[str]), raw_by_exp{exp:list[dict]}
+    Каждая запись дополняется полем "type": "call"/"put".
+    """
+    if not isinstance(chain, dict):
+        return None, [], {}
+    oc = (chain.get("optionChain") or {}).get("result") or []
+    if not oc:
+        return None, [], {}
+    root = oc[0] or {}
+    q = root.get("quote") or {}
+    spot = q.get("regularMarketPrice") or q.get("last") or q.get("price")
+    try:
+        spot = float(spot) if spot is not None else None
+    except Exception:
+        spot = None
+
+    raw_by_exp: Dict[str, List[dict]] = {}
+    expirations: List[str] = []
+
+    for blk in (root.get("options") or []):
+        # gather expiration label
+        label = None
+        # use contract string expiration if present
+        for rec in (blk.get("calls") or []) + (blk.get("puts") or []):
+            if isinstance(rec, dict) and rec.get("expiration"):
+                label = str(rec["expiration"])
+                break
+        if label is None:
+            label = _fmt_date(blk.get("expirationDate"))
+        label = _fmt_date(label)
+        if not label:
+            # skip if cannot determine
+            continue
+        expirations.append(label)
+        lst: List[dict] = raw_by_exp.setdefault(label, [])
+        for rec in (blk.get("calls") or []):
+            r = dict(rec); r["type"] = "call"; lst.append(r)
+        for rec in (blk.get("puts") or []):
+            r = dict(rec); r["type"] = "put"; lst.append(r)
+
+    expirations = sorted(set(expirations))
+    return spot, expirations, raw_by_exp
+
+def _get_api_key() -> Optional[str]:
+    for k in ("POLYGON_API_KEY", "RAPIDAPI_KEY"):
+        v = os.environ.get(k)
+        if v:
+            return v
+    return None
+
+# ---------- Public API ----------
+
+def get_raw_by_exp(ticker: str,
+                   selected_exps: Optional[List[str]] = None,
+                   need_ohlc: bool = True,
+                   ohlc_interval: str = "1m",
+                   ohlc_limit: int = 500) -> TikerRawResult:
+    """Скачивает цепочку и (опц.) свечи, разбивает контракты по датам экспирации."""
+    api_key = _get_api_key()
+    # fetch option chain (yahoo-like remapped)
+    chain_json, _ = fetch_option_chain(ticker=ticker, api_key=api_key, expiry_unix=None)  # type: ignore
+    spot, expirations, raw_by_exp = _extract_from_chain_yf(chain_json)
+
+    # default selection
+    if not selected_exps:
+        selected_exps = []
+        if expirations:
+            # ближайшая по дате
+            try:
+                parsed = [datetime.strptime(x, "%Y-%m-%d") for x in expirations]
+                selected_exps = [expirations[parsed.index(sorted(parsed)[0])]]
+            except Exception:
+                selected_exps = [expirations[0]]
+
+    df = None; day_hi = None; day_lo = None
+    if need_ohlc:
+        df, _ = fetch_stock_history(ticker=ticker, api_key=api_key, interval=ohlc_interval, limit=int(ohlc_limit), dividend=False, timeout=30)  # type: ignore
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            day_hi = float(df["high"].max()) if "high" in df.columns else None
+            day_lo = float(df["low"].min()) if "low" in df.columns else None
 
     return TikerRawResult(
-        ticker=ticker,
-        spot=spot,
-        expirations=exps,
-        selected=selected_exps or [],
-        raw_by_exp=raw_by_exp,
-        ohlc=ohlc_payload,
-        day_high=day_hi,
-        day_low=day_lo,
-        ohlc_interval=ohlc_interval,
-        ohlc_limit=ohlc_limit,
+        ticker=ticker, spot=spot, expirations=expirations,
+        selected=selected_exps, raw_by_exp=raw_by_exp,
+        ohlc=df, day_high=day_hi, day_low=day_lo
     )
 
-
-def render_tiker_data_block(st) -> None:
-    """
-    Рисует блок: Ticker + Expiration (одна) и кладёт выбор в session_state.
-    Не возвращает объект st и ничего не печатает, чтобы не было артефактов в UI.
-    """
+def render_tiker_data_block(stmod) -> None:
+    """UI-блок: выбор тикера/экспираций + запись данных в st.session_state"""
+    st = stmod
     st.markdown("**Ticker**")
-    ticker_default = st.session_state.get("_last_ticker", "SPY")
-    ticker = st.text_input("Ticker", value=ticker_default, key="td2_ticker_input")
-    st.session_state["td2_ticker"] = ticker
-
-    # Один запрос цепочки для построения списка экспираций
-    base = get_raw_by_exp(ticker, need_ohlc=True, ohlc_interval="1m", ohlc_limit=500)
+    ticker = st.text_input("Ticker", value=st.session_state.get("td_ticker", "SPY"), key="td_ticker")
+    # первичная загрузка — чтобы получить список дат
+    base = get_raw_by_exp(ticker, selected_exps=None, need_ohlc=True, ohlc_interval="1m", ohlc_limit=500)
 
     if not base.expirations:
-        st.warning("Не удалось получить список экспираций из цепочки (provider_polygon).")
+        st.warning("Провайдер не вернул список экспираций для данного тикера.")
         return
 
-    # Дефолтный выбор
-    default = _choose_default_expiration(base.expirations)
-    try:
-        default_idx = base.expirations.index(default) if default in base.expirations else 0
-    except Exception:
-        default_idx = 0
+    selected = st.selectbox("Экспирация", options=base.expirations, index=max(0, base.expirations.index(base.selected[0]) if base.selected else 0), key="td_exp_select")
+    # повторный вызов под выбранную дату
+    base = get_raw_by_exp(ticker, selected_exps=[selected], need_ohlc=True, ohlc_interval="1m", ohlc_limit=500)
 
-    exp = st.selectbox("Экспирация", options=base.expirations, index=default_idx, key="td2_exp_select")
-
-    # Обновим выбор уже целевым вызовом (raw_by_exp только по exp)
-    final = get_raw_by_exp(ticker, selected_exps=[exp], need_ohlc=True, ohlc_interval=base.ohlc_interval, ohlc_limit=base.ohlc_limit)
-
-    # Кладём в session_state — финальная таблица и другие блоки смогут работать без доп. импортов
-    st.session_state["raw_records"] = final.raw_by_exp.get(exp, [])
-    st.session_state["spot"] = final.spot
+    # ---- Запись в session_state для downstream-блоков ----
+    st.session_state["raw_records"] = base.raw_by_exp.get(selected, [])
+    st.session_state["spot"] = base.spot
+    st.session_state["_last_exp_sig"] = selected
     st.session_state["_last_ticker"] = ticker
-    st.session_state["_last_exp_sig"] = exp
-
-    # «Замок» для финальной таблицы (чтобы она не рисовала дублирующий селектор)
-    st.session_state["tiker_selected_exps"] = [exp]
+    st.session_state["tiker_selected_exps"] = [selected]
     st.session_state["exp_locked_by_tiker_data"] = True
 
-    # Небольшая справка
-    with st.expander("Инфо (данные для таблицы и Key Levels)", expanded=False):
-        st.caption(f"{ticker} @ spot={final.spot or '—'}; выбрана экспирация: {exp}")
-        if final.day_high is not None and final.day_low is not None:
-            st.caption(f"Свечи: интервал={final.ohlc_interval}, баров≈{final.ohlc_limit}, High={final.day_high}, Low={final.day_low}")
-        st.caption(f"raw_records[{exp}]: {len(st.session_state.get('raw_records', []))} контрактов")
-
-    # Ничего не возвращаем
-    return None
+    # Покажем мини-инфо
+    with st.expander("Инфо (данные для таблицы и Key Levels)"):
+        st.write(f"Ticker: **{ticker}**  •  Exp: **{selected}**")
+        st.write(f"Contracts: {len(st.session_state['raw_records'])}  •  Spot: {base.spot}")
+        if base.ohlc is not None and not base.ohlc.empty:
+            st.dataframe(base.ohlc.tail(5), use_container_width=True)
