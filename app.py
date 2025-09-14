@@ -114,9 +114,22 @@ with col2:
         default_idx = 0
         sel = st.selectbox("Дата экспирации", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
+
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
+
+
+
+# --- Режим экспираций: Single / Multi ---
+mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
+selected_exps = []
+weight_mode = "равные"
+if mode_exp == "Single":
+    selected_exps = [expiration] if expiration else []
+else:
+    selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=(expirations[:2] if expirations else []))
+    weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
 
 with col3:
     spot_manual = st.text_input("Spot (необязательно)", value=st.session_state.get("spot_manual",""))
@@ -184,6 +197,101 @@ if raw_records:
         if df_raw is None or getattr(df_raw, "empty", True):
             st.warning("df_raw пуст. Проверьте формат данных.")
         else:
+            
+            # --- Скачивание промежуточных таблиц ---
+            try:
+                import io, zipfile, pandas as pd, numpy as np
+                def _csv_bytes(df: "pd.DataFrame") -> bytes:
+                    buf = io.StringIO()
+                    df.to_csv(buf, index=False)
+                    return buf.getvalue().encode("utf-8")
+
+                if mode_exp == "Single":
+                    st.markdown("**Скачать промежуточные таблицы (Single):**")
+                    df_marked = res.get("df_marked")
+                    df_corr = res.get("df_corr")
+                    df_weights = res.get("df_weights")
+                    windows = res.get("windows")
+                    window_raw = res.get("window_raw")
+                    window_corr = res.get("window_corr")
+
+                    df_windows = None
+                    if windows and isinstance(windows, dict) and (df_weights is not None):
+                        try:
+                            rows = []
+                            for exp_key, idxs in windows.items():
+                                g = df_weights[df_weights["exp"] == exp_key].sort_values("K").reset_index(drop=True)
+                                for i in list(idxs):
+                                    i = int(i)
+                                    if 0 <= i < len(g):
+                                        rows.append({"exp": exp_key, "row_index": i, "K": float(g.loc[i, "K"]),
+                                                     "w_blend": float(g.loc[i, "w_blend"]) if "w_blend" in g.columns else np.nan})
+                            if rows:
+                                df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
+                        except Exception:
+                            df_windows = None
+
+                    if df_raw is not None and not getattr(df_raw, "empty", True):
+                        st.download_button("Скачать df_raw.csv", _csv_bytes(df_raw), file_name=f"{ticker}_{expiration}_df_raw.csv", mime="text/csv")
+                    if df_marked is not None and not getattr(df_marked, "empty", True):
+                        st.download_button("Скачать df_marked.csv", _csv_bytes(df_marked), file_name=f"{ticker}_{expiration}_df_marked.csv", mime="text/csv")
+                    if df_corr is not None and not getattr(df_corr, "empty", True):
+                        st.download_button("Скачать df_corr.csv", _csv_bytes(df_corr), file_name=f"{ticker}_{expiration}_df_corr.csv", mime="text/csv")
+                    if df_weights is not None and not getattr(df_weights, "empty", True):
+                        st.download_button("Скачать df_weights.csv", _csv_bytes(df_weights), file_name=f"{ticker}_{expiration}_df_weights.csv", mime="text/csv")
+                    if df_windows is not None and not getattr(df_windows, "empty", True):
+                        st.download_button("Скачать windows.csv", _csv_bytes(df_windows), file_name=f"{ticker}_{expiration}_windows.csv", mime="text/csv")
+                    if window_raw is not None and not getattr(window_raw, "empty", True):
+                        st.download_button("Скачать window_raw.csv", _csv_bytes(window_raw), file_name=f"{ticker}_{expiration}_window_raw.csv", mime="text/csv")
+                    if window_corr is not None and not getattr(window_corr, "empty", True):
+                        st.download_button("Скачать window_corr.csv", _csv_bytes(window_corr), file_name=f"{ticker}_{expiration}_window_corr.csv", mime="text/csv")
+
+                else:
+                    if selected_exps:
+                        zip_buf = io.BytesIO()
+                        with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                            for _exp in selected_exps:
+                                try:
+                                    js_e = download_snapshot_json(ticker, _exp, api_key)
+                                    recs_e = _coerce_results(js_e)
+                                    res_e = sanitize_and_window_pipeline(recs_e, S=S)
+                                    def _wcsv(name, df):
+                                        if df is None or getattr(df, "empty", True):
+                                            return
+                                        s = io.StringIO(); df.to_csv(s, index=False)
+                                        zf.writestr(f"{_exp}/{name}.csv", s.getvalue())
+                                    _wcsv("df_raw", res_e.get("df_raw"))
+                                    _wcsv("df_marked", res_e.get("df_marked"))
+                                    _wcsv("df_corr", res_e.get("df_corr"))
+                                    _wcsv("df_weights", res_e.get("df_weights"))
+                                    win_e = res_e.get("windows") or {}
+                                    dfe_w = res_e.get("df_weights")
+                                    dfw = None
+                                    if win_e and (dfe_w is not None):
+                                        rows = []
+                                        for ek, idxs in win_e.items():
+                                            g = dfe_w[dfe_w["exp"] == ek].sort_values("K").reset_index(drop=True)
+                                            for i in list(idxs):
+                                                i = int(i)
+                                                if 0 <= i < len(g):
+                                                    rows.append({"exp": ek, "row_index": i, "K": float(g.loc[i, "K"]),
+                                                                 "w_blend": float(g.loc[i, "w_blend"]) if "w_blend" in g.columns else np.nan})
+                                        if rows:
+                                            dfw = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
+                                    _wcsv("windows", dfw)
+                                    _wcsv("window_raw", res_e.get("window_raw"))
+                                    _wcsv("window_corr", res_e.get("window_corr"))
+                                except Exception:
+                                    pass
+                        st.download_button(
+                            "Скачать ZIP (все exp)",
+                            data=zip_buf.getvalue(),
+                            file_name=f"{ticker}_multi_intermediate_tables.zip",
+                            mime="application/zip"
+                        )
+            except Exception as _edl:
+                st.warning("Не удалось подготовить файлы для скачивания.")
+                st.exception(_edl)
             st.dataframe(df_raw, use_container_width=True)
     except Exception as e:
         st.error("Ошибка пайплайна sanitize/window.")
