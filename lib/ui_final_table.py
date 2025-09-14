@@ -89,3 +89,38 @@ def render_final_table(section_title: str = "Финальная таблица (
         st.download_button("Скачать Parquet", data=buf.getvalue(), file_name=f"final_table_{exp}.parquet", mime="application/octet-stream")
     except Exception:
         pass
+
+
+# === APPENDIX: add "download raw provider table" button ===
+# We don't modify the core render logic above; we only extend the UI by providing an extra button
+# to download the normalized provider table (built from raw_records).
+try:
+    import streamlit as st  # already used above
+    from sanitize_window import build_raw_table, SanitizerConfig
+
+    # We define a tiny helper that users of this module can call after rendering the table.
+    def render_provider_raw_download(exp_value: str | None = None):
+        if ("raw_records" in st.session_state) and ("spot" in st.session_state):
+            try:
+                df_raw = build_raw_table(
+                    st.session_state["raw_records"],
+                    S=float(st.session_state["spot"]),
+                    cfg=SanitizerConfig()
+                )
+                if exp_value and ("exp" in df_raw.columns):
+                    try:
+                        df_raw = df_raw[df_raw["exp"] == exp_value]
+                    except Exception:
+                        pass
+                raw_csv = df_raw.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "Скачать исходную таблицу провайдера (CSV)",
+                    data=raw_csv,
+                    file_name=f"provider_raw_{exp_value or 'all'}.csv",
+                    mime="text/csv"
+                )
+            except Exception as e:
+                st.warning(f"Не удалось подготовить исходную таблицу провайдера: {e}")
+except Exception:
+    # If streamlit/sanitize_window is not available in import-time context, silently ignore.
+    pass
