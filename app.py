@@ -117,3 +117,20 @@ with col2:
                     st.error(f"Ошибка: {e}")
     else:
         pass
+
+
+# --- BEGIN: spot fetch (safe, silent) -----------------------------------------
+# Не изменяет UI; сохраняет спот-цену в session_state для дальнейших расчётов.
+try:
+    api_key__ = st.secrets.get("POLYGON_API_KEY", "")
+    ticker__ = st.session_state.get("ticker")
+    if api_key__ and ticker__:
+        from lib.tiker_data import get_spot_price
+        _s, _ts, _src = get_spot_price(ticker__, api_key__)
+        st.session_state["spot_price"] = _s
+        st.session_state["spot_ts_ms"] = _ts
+        st.session_state["spot_source"] = _src
+except Exception:
+    # тихо игнорируем, чтобы не ломать текущий UI
+    pass
+# --- END: spot fetch ----------------------------------------------------------
