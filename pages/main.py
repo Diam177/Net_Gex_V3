@@ -10,7 +10,6 @@ from lib.tiker_data import (
 )
 
 st.set_page_config(page_title="Main", layout="wide")
-st.title("Main — Выбор тикера и дат экспирации")
 
 api_key = st.secrets.get("POLYGON_API_KEY", "")
 
@@ -27,6 +26,9 @@ def _load_expirations():
             dates = list_future_expirations(ticker, api_key)
         st.session_state["expirations"] = dates
         st.session_state["last_loaded_ticker"] = ticker
+        # авто-выбор ближайшей даты
+        if dates:
+            st.session_state["selected"] = [dates[0]]
         st.toast(f"Найдено дат: {len(dates)}", icon="✅")
     except Exception as e:
         st.session_state["expirations"] = []
@@ -34,7 +36,7 @@ def _load_expirations():
         st.error(f"Ошибка загрузки дат: {e}")
 
 
-# --- UI: тикер в основной области (не в сайдбаре) ---
+# --- Тикер в основной области ---
 col_ticker, _ = st.columns([2, 3])
 with col_ticker:
     st.text_input(
@@ -43,7 +45,7 @@ with col_ticker:
         key="ticker",
         max_chars=15,
         help="Например: SPY, AAPL, MSFT",
-        on_change=_load_expirations,  # авто-подгрузка при изменении
+        on_change=_load_expirations,
     )
 
 # Первичная загрузка при первом открытии страницы
@@ -55,14 +57,18 @@ selected = st.session_state.get("selected", [])
 
 col1, col2 = st.columns([3, 2])
 with col1:
-    st.subheader("Выбор дат")
+    # убран subheader "Выбор дат"
     if expirations:
-        selected = st.multiselect("Даты экспирации", options=expirations, default=selected, key="selected")
+        # если ранее выбранная дата отсутствует (тикер сменился), авто-выбор ближайшей
+        if not selected or selected[0] not in expirations:
+            selected = [expirations[0]]
+            st.session_state["selected"] = selected
+        st.multiselect("Даты экспирации", options=expirations, default=selected, key="selected")
     else:
         st.info("Нет доступных дат — проверьте тикер или ключ API.")
 
 with col2:
-    st.subheader("Скачивание")
+    # убран subheader "Скачивание"
     if expirations:
         # CSV с датами (без pandas)
         csv_lines = ["expiration_date"] + expirations
@@ -105,13 +111,3 @@ with col2:
                     st.error(f"Ошибка: {e}")
     else:
         st.caption("Нет дат для скачивания.")
-
-st.divider()
-st.markdown(
-    """
-    **Памятка:**  
-    1) Укажите `POLYGON_API_KEY` в `.streamlit/secrets.toml`.  
-    2) Введите тикер — даты загрузятся автоматически.  
-    3) Выберите дату(ы) и скачайте JSON/ZIP.
-    """
-)
