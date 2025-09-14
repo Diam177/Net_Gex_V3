@@ -157,6 +157,8 @@ def get_spot_price(ticker: str, api_key: str, *, now_utc: datetime | None = None
     """
     if not ticker:
         raise PolygonError("get_spot_price: empty ticker")
+    # normalize to Polygon's case-sensitive tickers
+    ticker = ticker.strip().upper()
     if now_utc is None:
         now_utc = datetime.now(timezone.utc)
 
