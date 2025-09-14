@@ -115,21 +115,19 @@ with col2:
         sel = st.selectbox("Дата экспирации", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
 
+        # --- Режим агрегации экспираций ---
+        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
+        selected_exps = []
+        weight_mode = "равные"
+        if mode_exp == "Single":
+            selected_exps = [expiration]
+        else:
+            selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
+            weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
+
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
-
-
-
-# --- Режим экспираций: Single / Multi ---
-mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
-selected_exps = []
-weight_mode = "равные"
-if mode_exp == "Single":
-    selected_exps = [expiration] if expiration else []
-else:
-    selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=(expirations[:2] if expirations else []))
-    weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
 
 with col3:
     spot_manual = st.text_input("Spot (необязательно)", value=st.session_state.get("spot_manual",""))
@@ -193,108 +191,220 @@ if S is None and raw_records:
 if raw_records:
     try:
         res = sanitize_and_window_pipeline(raw_records, S=S)
+
+        # --- TRUE MULTI-EXP PROCESSING: прогон по каждой выбранной экспирации и объединение ---
+        try:
+            if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
+                import pandas as pd
+                df_corr_multi_list = []
+                windows_multi = {}
+
+                for _exp in selected_exps:
+                    try:
+                        js_e = download_snapshot_json(ticker, _exp, api_key)
+                        recs_e = _coerce_results(js_e)
+                        res_e = sanitize_and_window_pipeline(recs_e, S=S)
+                        dfe = res_e.get("df_corr")
+                        if dfe is not None and not getattr(dfe, "empty", True):
+                            df_corr_multi_list.append(dfe)
+                        win_e = res_e.get("windows") or {}
+                        for k, v in win_e.items():
+                            windows_multi[k] = v
+                    except Exception as _exc:
+                        # мягко пропускаем проблемные экспирации, чтобы не ломать UI
+                        pass
+
+                if df_corr_multi_list:
+                    df_corr = pd.concat(df_corr_multi_list, ignore_index=True)
+                if windows_multi:
+                    windows = windows_multi
+        except Exception as _e_multi:
+            st.warning("Multi-exp: не удалось объединить серии.")
+            st.exception(_e_multi)
         df_raw = res.get("df_raw")
         if df_raw is None or getattr(df_raw, "empty", True):
             st.warning("df_raw пуст. Проверьте формат данных.")
         else:
-            
-            # --- Скачивание промежуточных таблиц ---
-            try:
-                import io, zipfile, pandas as pd, numpy as np
-                def _csv_bytes(df: "pd.DataFrame") -> bytes:
-                    buf = io.StringIO()
-                    df.to_csv(buf, index=False)
-                    return buf.getvalue().encode("utf-8")
-
-                if mode_exp == "Single":
-                    st.markdown("**Скачать промежуточные таблицы (Single):**")
-                    df_marked = res.get("df_marked")
-                    df_corr = res.get("df_corr")
-                    df_weights = res.get("df_weights")
-                    windows = res.get("windows")
-                    window_raw = res.get("window_raw")
-                    window_corr = res.get("window_corr")
-
-                    df_windows = None
-                    if windows and isinstance(windows, dict) and (df_weights is not None):
-                        try:
-                            rows = []
-                            for exp_key, idxs in windows.items():
-                                g = df_weights[df_weights["exp"] == exp_key].sort_values("K").reset_index(drop=True)
-                                for i in list(idxs):
-                                    i = int(i)
-                                    if 0 <= i < len(g):
-                                        rows.append({"exp": exp_key, "row_index": i, "K": float(g.loc[i, "K"]),
-                                                     "w_blend": float(g.loc[i, "w_blend"]) if "w_blend" in g.columns else np.nan})
-                            if rows:
-                                df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
-                        except Exception:
-                            df_windows = None
-
-                    if df_raw is not None and not getattr(df_raw, "empty", True):
-                        st.download_button("Скачать df_raw.csv", _csv_bytes(df_raw), file_name=f"{ticker}_{expiration}_df_raw.csv", mime="text/csv")
-                    if df_marked is not None and not getattr(df_marked, "empty", True):
-                        st.download_button("Скачать df_marked.csv", _csv_bytes(df_marked), file_name=f"{ticker}_{expiration}_df_marked.csv", mime="text/csv")
-                    if df_corr is not None and not getattr(df_corr, "empty", True):
-                        st.download_button("Скачать df_corr.csv", _csv_bytes(df_corr), file_name=f"{ticker}_{expiration}_df_corr.csv", mime="text/csv")
-                    if df_weights is not None and not getattr(df_weights, "empty", True):
-                        st.download_button("Скачать df_weights.csv", _csv_bytes(df_weights), file_name=f"{ticker}_{expiration}_df_weights.csv", mime="text/csv")
-                    if df_windows is not None and not getattr(df_windows, "empty", True):
-                        st.download_button("Скачать windows.csv", _csv_bytes(df_windows), file_name=f"{ticker}_{expiration}_windows.csv", mime="text/csv")
-                    if window_raw is not None and not getattr(window_raw, "empty", True):
-                        st.download_button("Скачать window_raw.csv", _csv_bytes(window_raw), file_name=f"{ticker}_{expiration}_window_raw.csv", mime="text/csv")
-                    if window_corr is not None and not getattr(window_corr, "empty", True):
-                        st.download_button("Скачать window_corr.csv", _csv_bytes(window_corr), file_name=f"{ticker}_{expiration}_window_corr.csv", mime="text/csv")
-
-                else:
-                    if selected_exps:
-                        zip_buf = io.BytesIO()
-                        with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                            for _exp in selected_exps:
-                                try:
-                                    js_e = download_snapshot_json(ticker, _exp, api_key)
-                                    recs_e = _coerce_results(js_e)
-                                    res_e = sanitize_and_window_pipeline(recs_e, S=S)
-                                    def _wcsv(name, df):
-                                        if df is None or getattr(df, "empty", True):
-                                            return
-                                        s = io.StringIO(); df.to_csv(s, index=False)
-                                        zf.writestr(f"{_exp}/{name}.csv", s.getvalue())
-                                    _wcsv("df_raw", res_e.get("df_raw"))
-                                    _wcsv("df_marked", res_e.get("df_marked"))
-                                    _wcsv("df_corr", res_e.get("df_corr"))
-                                    _wcsv("df_weights", res_e.get("df_weights"))
-                                    win_e = res_e.get("windows") or {}
-                                    dfe_w = res_e.get("df_weights")
-                                    dfw = None
-                                    if win_e and (dfe_w is not None):
-                                        rows = []
-                                        for ek, idxs in win_e.items():
-                                            g = dfe_w[dfe_w["exp"] == ek].sort_values("K").reset_index(drop=True)
-                                            for i in list(idxs):
-                                                i = int(i)
-                                                if 0 <= i < len(g):
-                                                    rows.append({"exp": ek, "row_index": i, "K": float(g.loc[i, "K"]),
-                                                                 "w_blend": float(g.loc[i, "w_blend"]) if "w_blend" in g.columns else np.nan})
-                                        if rows:
-                                            dfw = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
-                                    _wcsv("windows", dfw)
-                                    _wcsv("window_raw", res_e.get("window_raw"))
-                                    _wcsv("window_corr", res_e.get("window_corr"))
-                                except Exception:
-                                    pass
-                        st.download_button(
-                            "Скачать ZIP (все exp)",
-                            data=zip_buf.getvalue(),
-                            file_name=f"{ticker}_multi_intermediate_tables.zip",
-                            mime="application/zip"
-                        )
-            except Exception as _edl:
-                st.warning("Не удалось подготовить файлы для скачивания.")
-                st.exception(_edl)
             st.dataframe(df_raw, use_container_width=True)
+            # --- Ниже показываем остальные массивы по степени создания ---
+            # 1) df_marked (df_raw + флаги аномалий)
+            df_marked = res.get("df_marked")
+            if df_marked is not None and not getattr(df_marked, "empty", True):
+                st.subheader("df_marked")
+                st.dataframe(df_marked, use_container_width=True, hide_index=True)
+
+            # 2) df_corr (восстановленные IV/Greeks)
+            df_corr = res.get("df_corr")
+            if df_corr is not None and not getattr(df_corr, "empty", True):
+                st.subheader("df_corr")
+                st.dataframe(df_corr, use_container_width=True, hide_index=True)
+
+            # 3) df_weights (веса окна по страйку)
+            df_weights = res.get("df_weights")
+            if df_weights is not None and not getattr(df_weights, "empty", True):
+                st.subheader("df_weights")
+                st.dataframe(df_weights, use_container_width=True, hide_index=True)
+
+            # 4) windows (выбранные страйки каждого окна) — преобразуем в таблицу
+            windows = res.get("windows")
+            if windows and isinstance(windows, dict) and df_weights is not None:
+                try:
+                    rows = []
+                    for exp, idx in windows.items():
+                        # df_weights на эту экспирацию, отсортируем по K как в select_windows
+                        g = df_weights[df_weights["exp"] == exp].sort_values("K").reset_index(drop=True)
+                        for i in list(idx):
+                            if 0 <= int(i) < len(g):
+                                rows.append({"exp": exp, "row_index": int(i), "K": float(g.loc[int(i), "K"]),
+                                             "w_blend": float(g.loc[int(i), "w_blend"])})
+                    import pandas as pd  # локальный импорт безопасен
+                    df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
+                    st.subheader("windows (табличный вид)")
+                    st.dataframe(df_windows, use_container_width=True, hide_index=True)
+                except Exception as _e:
+                    st.warning("Не удалось отобразить windows в табличном виде.")
+                    st.exception(_e)
+
+            # 5) window_raw (строки окна из исходных + флаги)
+            window_raw = res.get("window_raw")
+            if window_raw is not None and not getattr(window_raw, "empty", True):
+                st.subheader("window_raw")
+                st.dataframe(window_raw, use_container_width=True, hide_index=True)
+
+            # 6) window_corr (строки окна из исправленных данных)
+            window_corr = res.get("window_corr")
+            if window_corr is not None and not getattr(window_corr, "empty", True):
+                st.subheader("window_corr")
+                st.dataframe(window_corr, use_container_width=True, hide_index=True)
+
+            
+            # 7) Финальная таблица (по df_corr + windows)
+            try:
+                from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
+                from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
+                from lib.power_zone_er import compute_power_zone_and_er
+                import numpy as np
+                import pandas as pd
+                import math
+
+                final_cfg = FinalTableConfig()
+                scale_val = getattr(final_cfg, "scale_millions", 1_000_000)
+
+                if df_corr is not None and windows:
+
+                    # --- MULTI режим: взвешенная сумма по нескольким экспирациям ---
+                    if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
+                        # 1) веса по T
+                        exp_list = [e for e in selected_exps if e in df_corr["exp"].unique().tolist()]
+                        if not exp_list:
+                            raise ValueError("Нет выбранных экспираций для режима Multi.")
+                        t_map = {}
+                        for e in exp_list:
+                            T_vals = df_corr.loc[df_corr["exp"]==e, "T"].dropna().values
+                            T_med = float(np.nanmedian(T_vals)) if T_vals.size else float("nan")
+                            if not (math.isfinite(T_med) and T_med>0):
+                                T_med = 1.0/252.0  # защита от T→0/NaN
+                            t_map[e] = T_med
+                        w_raw = {}
+                        for e in exp_list:
+                            if weight_mode == "1/T":
+                                w_raw[e] = 1.0 / max(t_map[e], 1.0/252.0)
+                            elif weight_mode == "1/√T":
+                                w_raw[e] = 1.0 / math.sqrt(max(t_map[e], 1.0/252.0))
+                            else:
+                                w_raw[e] = 1.0
+                        w_sum = sum(w_raw.values()) or 1.0
+                        weights = {e: w_raw[e]/w_sum for e in exp_list}
+
+                        # 2) NetGEX/AG профили по каждой экспирации
+                        per_exp = {}
+                        for e in exp_list:
+                            nt = compute_netgex_ag_per_expiry(df_corr, e, windows=windows, cfg=NetGEXAGConfig(scale=scale_val, aggregate="none"))
+                            per_exp[e] = nt[["K","AG_1pct","NetGEX_1pct"] + ([c for c in ["S","F"] if c in nt.columns])].copy()
+
+                        # 3) единая сетка K (union)
+                        K_union = sorted(set().union(*[set(df["K"].astype(float).tolist()) for df in per_exp.values()]))
+                        base = pd.DataFrame({"K": K_union})
+                        # медианные S/F по сериям
+                        S_med = float(np.nanmedian([float(np.nanmedian(nt["S"])) for nt in per_exp.values() if "S" in nt.columns])) if per_exp else float("nan")
+                        base["S"] = S_med
+                        if any("F" in nt.columns for nt in per_exp.values()):
+                            F_vals = []
+                            for nt in per_exp.values():
+                                if "F" in nt.columns and nt["F"].notna().any():
+                                    F_vals.append(float(np.nanmedian(nt["F"])))
+                            base["F"] = float(np.nanmedian(F_vals)) if F_vals else np.nan
+
+                        base["AG_1pct"] = 0.0
+                        base["NetGEX_1pct"] = 0.0
+
+                        for e, nt in per_exp.items():
+                            m = nt.groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
+                            base = base.merge(m, left_on="K", right_index=True, how="left", suffixes=("","_add")).fillna(0.0)
+                            base["AG_1pct"] += weights[e] * base.pop("AG_1pct_add")
+                            base["NetGEX_1pct"] += weights[e] * base.pop("NetGEX_1pct_add")
+
+                        # 4) call_oi / put_oi (простая сумма по сериям)
+                        g = df_corr[df_corr["exp"].isin(exp_list)].copy()
+                        agg_oi = g.groupby(["K","side"], as_index=False)["oi"].sum()
+                        piv_oi = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
+                        base["call_oi"] = piv_oi.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+                        base["put_oi"]  = piv_oi.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+
+                        # 5) масштаб в млн $
+                        if scale_val and scale_val>0:
+                            base["AG_1pct_M"] = base["AG_1pct"] / scale_val
+                            base["NetGEX_1pct_M"] = base["NetGEX_1pct"] / scale_val
+
+                        # 6) PZ/ER по списку контекстов с весами
+                        all_ctx = []
+                        for e in exp_list:
+                            ctx_map = _series_ctx_from_corr(df_corr, e)
+                            if e in ctx_map:
+                                ctx = dict(ctx_map[e])  # копия
+                                # домножим "формообразующие" ряды
+                                if "gamma_abs_share" in ctx and "gamma_net_share" in ctx:
+                                    ctx["gamma_abs_share"] = (np.array(ctx["gamma_abs_share"], dtype=float) * weights[e])
+                                    ctx["gamma_net_share"] = (np.array(ctx["gamma_net_share"], dtype=float) * weights[e])
+                                all_ctx.append(ctx)
+
+                        strikes_eval = base["K"].astype(float).tolist()
+                        pz, er_up, er_down = compute_power_zone_and_er(
+                            S=S_med,
+                            strikes_eval=strikes_eval,
+                            all_series_ctx=all_ctx,
+                            day_high=getattr(final_cfg, "day_high", None),
+                            day_low=getattr(final_cfg, "day_low", None),
+                        )
+                        # маппинг на таблицу
+                        base["PZ"] = pd.Series(pz, index=base.index).astype(float)
+                        base["ER_Up"] = pd.Series(er_up, index=base.index).astype(float)
+                        base["ER_Down"] = pd.Series(er_down, index=base.index).astype(float)
+
+                        # порядок колонок
+                        cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","AG_1pct","NetGEX_1pct"]
+                        if "AG_1pct_M" in base.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
+                        cols += ["PZ","ER_Up","ER_Down"]
+                        df_final_multi = base[cols].sort_values("K").reset_index(drop=True)
+
+                        st.subheader("Финальная таблица · SUM(" + ", ".join(exp_list) + f") · веса={weight_mode}")
+                        st.dataframe(df_final_multi, use_container_width=True, hide_index=True)
+
+                    else:
+                        # --- SINGLE режим: как было ---
+                        final_tables = build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
+                        exps = list(final_tables.keys())
+                        if exps:
+                            exp_to_show = expiration if 'expiration' in locals() and expiration in final_tables else exps[0]
+                            df_final = final_tables.get(exp_to_show)
+                            if df_final is not None and not getattr(df_final, "empty", True):
+                                st.subheader(f"Финальная таблица · {exp_to_show}")
+                                st.dataframe(df_final, use_container_width=True, hide_index=True)
+                            else:
+                                st.info("Финальная таблица пуста для выбранной экспирации.")
+            except Exception as _e:
+                st.error("Ошибка построения финальной таблицы.")
+                st.exception(_e)
     except Exception as e:
-        st.error("Ошибка пайплайна sanitize/window.")
-        st.exception(e)
-else:
-    st.info("Задайте тикер и экспирацию, чтобы загрузить snapshot и посмотреть df_raw.")
+            st.error("Ошибка пайплайна sanitize/window.")
+            st.exception(e)
