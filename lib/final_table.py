@@ -26,11 +26,11 @@ from lib.sanitize_window import (
     SanitizerConfig,
     sanitize_and_window_pipeline,
 )
-from netgex_ag import (
+from lib.netgex_ag import (
     NetGEXAGConfig,
     compute_netgex_ag_per_expiry,
 )
-from power_zone_er import compute_power_zone_and_er
+from lib.power_zone_er import compute_power_zone_and_er
 
 
 # --------- конфиг ---------
