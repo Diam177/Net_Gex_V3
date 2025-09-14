@@ -662,29 +662,37 @@ except Exception:
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
 
 
-# --- TIKER DATA BLOCK (independent source) ---
-try:
-    import streamlit as st  # safe import (likely already imported above)
-except Exception:
-    import streamlit as st
-try:
-    from lib.tiker_data import render_tiker_data_block
-except Exception:
-    try:
-        from tiker_data import render_tiker_data_block  # flat layout fallback
-    except Exception:
-        render_tiker_data_block = None  # type: ignore
-try:
-    from lib.sanitize_window import sanitize_from_tiker_data, SanitizerConfig
-except Exception:
-    from sanitize_window import sanitize_from_tiker_data, SanitizerConfig  # type: ignore
 
-if render_tiker_data_block is not None:
+# --- TIKER DATA BLOCK (independent source) ---
+import importlib
+import streamlit as st
+def _lazy_imports():
+    td_block = None
+    sanitize_entry = None
+    SanitizerCfg = None
+    # tiker_data block
+    try:
+        td_mod = importlib.import_module("lib.tiker_data")
+        td_block = getattr(td_mod, "render_tiker_data_block", None)
+    except Exception:
+        pass
+    # sanitize entry
+    try:
+        sw_mod = importlib.import_module("lib.sanitize_window")
+        sanitize_entry = getattr(sw_mod, "sanitize_from_tiker_data", None)
+        SanitizerCfg = getattr(sw_mod, "SanitizerConfig", None)
+    except Exception:
+        pass
+    return td_block, sanitize_entry, SanitizerCfg
+
+td_block, sanitize_entry, SanitizerCfg = _lazy_imports()
+if td_block is not None and sanitize_entry is not None and SanitizerCfg is not None:
     with st.container():
+
         st.subheader("Тикер/Экспирации (источник сырых данных: tiker_data.py)")
-        td = render_tiker_data_block("Тикер/Экспирации (сырьё + свечи)")
+        td = td_block("Тикер/Экспирации (сырьё + свечи)")
         if getattr(td, "selected", None):
-            spot, all_exps, bundles = sanitize_from_tiker_data(td.ticker, selected_exps=td.selected, cfg=SanitizerConfig())
+            spot, all_exps, bundles = sanitize_entry(td.ticker, selected_exps=td.selected, cfg=SanitizerCfg())
             # Persist for downstream modules
             st.session_state["spot"] = spot
             exp0 = td.selected[0]
