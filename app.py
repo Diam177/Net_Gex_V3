@@ -114,6 +114,17 @@ with col2:
         default_idx = 0
         sel = st.selectbox("Дата экспирации", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
+
+        # --- Режим агрегации экспираций ---
+        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
+        selected_exps = []
+        weight_mode = "равные"
+        if mode_exp == "Single":
+            selected_exps = [expiration]
+        else:
+            selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
+            weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
+
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
@@ -236,21 +247,131 @@ if raw_records:
                 st.subheader("window_corr")
                 st.dataframe(window_corr, use_container_width=True, hide_index=True)
 
-            # 7) Финальная таблица (NetGEX/AG + PZ/ER) для выбранной экспирации
+            
+            # 7) Финальная таблица (по df_corr + windows)
             try:
+                from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
+                from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
+                from lib.power_zone_er import compute_power_zone_and_er
+                import numpy as np
+                import pandas as pd
+                import math
 
-                from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                final_cfg = FinalTableConfig()
+                scale_val = getattr(final_cfg, "scale_millions", 1_000_000)
+
                 if df_corr is not None and windows:
-                    final_tables = build_final_tables_from_corr(df_corr, windows)
-                    exps = list(final_tables.keys())
-                    if exps:
-                        exp_to_show = expiration if 'expiration' in locals() and expiration in final_tables else exps[0]
-                        df_final = final_tables.get(exp_to_show)
-                        if df_final is not None and not getattr(df_final, "empty", True):
-                            st.subheader(f"Финальная таблица · {exp_to_show}")
-                            st.dataframe(df_final, use_container_width=True, hide_index=True)
-                        else:
-                            st.info("Финальная таблица пуста для выбранной экспирации.")
+
+                    # --- MULTI режим: взвешенная сумма по нескольким экспирациям ---
+                    if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
+                        # 1) веса по T
+                        exp_list = [e for e in selected_exps if e in df_corr["exp"].unique().tolist()]
+                        if not exp_list:
+                            raise ValueError("Нет выбранных экспираций для режима Multi.")
+                        t_map = {}
+                        for e in exp_list:
+                            T_vals = df_corr.loc[df_corr["exp"]==e, "T"].dropna().values
+                            T_med = float(np.nanmedian(T_vals)) if T_vals.size else float("nan")
+                            if not (math.isfinite(T_med) and T_med>0):
+                                T_med = 1.0/252.0  # защита от T→0/NaN
+                            t_map[e] = T_med
+                        w_raw = {}
+                        for e in exp_list:
+                            if weight_mode == "1/T":
+                                w_raw[e] = 1.0 / max(t_map[e], 1.0/252.0)
+                            elif weight_mode == "1/√T":
+                                w_raw[e] = 1.0 / math.sqrt(max(t_map[e], 1.0/252.0))
+                            else:
+                                w_raw[e] = 1.0
+                        w_sum = sum(w_raw.values()) or 1.0
+                        weights = {e: w_raw[e]/w_sum for e in exp_list}
+
+                        # 2) NetGEX/AG профили по каждой экспирации
+                        per_exp = {}
+                        for e in exp_list:
+                            nt = compute_netgex_ag_per_expiry(df_corr, e, windows=windows, cfg=NetGEXAGConfig(scale=scale_val, aggregate="none"))
+                            per_exp[e] = nt[["K","AG_1pct","NetGEX_1pct"] + ([c for c in ["S","F"] if c in nt.columns])].copy()
+
+                        # 3) единая сетка K (union)
+                        K_union = sorted(set().union(*[set(df["K"].astype(float).tolist()) for df in per_exp.values()]))
+                        base = pd.DataFrame({"K": K_union})
+                        # медианные S/F по сериям
+                        S_med = float(np.nanmedian([float(np.nanmedian(nt["S"])) for nt in per_exp.values() if "S" in nt.columns])) if per_exp else float("nan")
+                        base["S"] = S_med
+                        if any("F" in nt.columns for nt in per_exp.values()):
+                            F_vals = []
+                            for nt in per_exp.values():
+                                if "F" in nt.columns and nt["F"].notna().any():
+                                    F_vals.append(float(np.nanmedian(nt["F"])))
+                            base["F"] = float(np.nanmedian(F_vals)) if F_vals else np.nan
+
+                        base["AG_1pct"] = 0.0
+                        base["NetGEX_1pct"] = 0.0
+
+                        for e, nt in per_exp.items():
+                            m = nt.groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
+                            base = base.merge(m, left_on="K", right_index=True, how="left", suffixes=("","_add")).fillna(0.0)
+                            base["AG_1pct"] += weights[e] * base.pop("AG_1pct_add")
+                            base["NetGEX_1pct"] += weights[e] * base.pop("NetGEX_1pct_add")
+
+                        # 4) call_oi / put_oi (простая сумма по сериям)
+                        g = df_corr[df_corr["exp"].isin(exp_list)].copy()
+                        agg_oi = g.groupby(["K","side"], as_index=False)["oi"].sum()
+                        piv_oi = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
+                        base["call_oi"] = piv_oi.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+                        base["put_oi"]  = piv_oi.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+
+                        # 5) масштаб в млн $
+                        if scale_val and scale_val>0:
+                            base["AG_1pct_M"] = base["AG_1pct"] / scale_val
+                            base["NetGEX_1pct_M"] = base["NetGEX_1pct"] / scale_val
+
+                        # 6) PZ/ER по списку контекстов с весами
+                        all_ctx = []
+                        for e in exp_list:
+                            ctx_map = _series_ctx_from_corr(df_corr, e)
+                            if e in ctx_map:
+                                ctx = dict(ctx_map[e])  # копия
+                                # домножим "формообразующие" ряды
+                                if "gamma_abs_share" in ctx and "gamma_net_share" in ctx:
+                                    ctx["gamma_abs_share"] = (np.array(ctx["gamma_abs_share"], dtype=float) * weights[e])
+                                    ctx["gamma_net_share"] = (np.array(ctx["gamma_net_share"], dtype=float) * weights[e])
+                                all_ctx.append(ctx)
+
+                        strikes_eval = base["K"].astype(float).tolist()
+                        pz, er_up, er_down = compute_power_zone_and_er(
+                            S=S_med,
+                            strikes_eval=strikes_eval,
+                            all_series_ctx=all_ctx,
+                            day_high=getattr(final_cfg, "day_high", None),
+                            day_low=getattr(final_cfg, "day_low", None),
+                        )
+                        # маппинг на таблицу
+                        base["PZ"] = pd.Series(pz, index=base.index).astype(float)
+                        base["ER_Up"] = pd.Series(er_up, index=base.index).astype(float)
+                        base["ER_Down"] = pd.Series(er_down, index=base.index).astype(float)
+
+                        # порядок колонок
+                        cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","AG_1pct","NetGEX_1pct"]
+                        if "AG_1pct_M" in base.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
+                        cols += ["PZ","ER_Up","ER_Down"]
+                        df_final_multi = base[cols].sort_values("K").reset_index(drop=True)
+
+                        st.subheader("Финальная таблица · SUM(" + ", ".join(exp_list) + f") · веса={weight_mode}")
+                        st.dataframe(df_final_multi, use_container_width=True, hide_index=True)
+
+                    else:
+                        # --- SINGLE режим: как было ---
+                        final_tables = build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
+                        exps = list(final_tables.keys())
+                        if exps:
+                            exp_to_show = expiration if 'expiration' in locals() and expiration in final_tables else exps[0]
+                            df_final = final_tables.get(exp_to_show)
+                            if df_final is not None and not getattr(df_final, "empty", True):
+                                st.subheader(f"Финальная таблица · {exp_to_show}")
+                                st.dataframe(df_final, use_container_width=True, hide_index=True)
+                            else:
+                                st.info("Финальная таблица пуста для выбранной экспирации.")
             except Exception as _e:
                 st.error("Ошибка построения финальной таблицы.")
                 st.exception(_e)
