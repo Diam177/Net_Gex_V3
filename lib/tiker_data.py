@@ -1,305 +1,122 @@
 
+# -*- coding: utf-8 -*-
+"""
+tiker_data.py — автономный блок выбора тикера и экспирации.
+Жёсткое требование: НЕ зависеть от внутренних модулей проекта, кроме lib/provider_polygon.py.
+Вся логика извлечения spot/expirations и сборки сырых записей — внутри этого файла.
+"""
+
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
-import pandas as pd
-import os, inspect
+import datetime as _dt
 
-# =====================
-# Signature-agnostic provider helpers
-# =====================
+# единственная внешняя зависимость — адаптер Polygon
+from lib import provider_polygon as _prov  # type: ignore
 
-def _maybe_secret(name: str) -> str | None:
-    v = os.environ.get(name)
-    if v:
-        return v
-    try:
-        import streamlit as _st  # type: ignore
-        return _st.secrets.get(name)  # type: ignore
-    except Exception:
+
+# ---------------------------
+# Вспомогательные локальные утилиты
+# ---------------------------
+
+def _parse_chain_extract_spot_and_exps(chain: dict) -> Tuple[Optional[float], List[str]]:
+    """
+    Достаёт spot и список экспираций прямо из chain['records'].
+    Ожидается формат, совместимый с provider_polygon.fetch_option_chain.
+    """
+    if not isinstance(chain, dict):
+        return None, []
+    recs = chain.get("records") or []
+
+    # spot: пробуем в заголовке, затем в первом контракте
+    spot = None
+    for key in ("spot", "underlyingPrice", "S"):
+        try:
+            if key in chain and chain[key] is not None:
+                spot = float(chain[key])
+                break
+        except Exception:
+            pass
+    if spot is None:
+        try:
+            if recs and recs[0].get("S") is not None:
+                spot = float(recs[0]["S"])
+        except Exception:
+            spot = None
+
+    # expirations: из самих контрактов
+    exps = sorted({r.get("expiration") for r in recs if r.get("expiration")})
+    return spot, exps
+
+
+def _choose_default_expiration(exps: List[str]) -> Optional[str]:
+    """
+    Ближайшая дата >= сегодня. Если таких нет — последняя доступная.
+    """
+    if not exps:
         return None
-
-def _call_with_best_kwargs(func, base_kwargs: dict):
-    sig = inspect.signature(func)
-    allowed = {}
-    for k, v in base_kwargs.items():
-        if k in sig.parameters and v is not None:
-            allowed[k] = v
-    if allowed:
-        return func(**allowed)
-    # fallback: positional (ticker only)
-    params = list(sig.parameters.keys())
-    args = []
-    if params and params[0] in ("ticker","symbol"):
-        args.append(base_kwargs.get("ticker") or base_kwargs.get("symbol"))
-    return func(*args)
-
-def _provider_fetch_chain(ticker: str) -> dict:
-    func = None
-    try:
-        from provider_polygon import fetch_option_chain as _f
-        func = _f
-    except Exception:
+    today = _dt.date.today()
+    parsed = []
+    for e in exps:
         try:
-            from provider import fetch_option_chain as _f  # type: ignore
-            func = _f
+            parsed.append((_dt.date.fromisoformat(e), e))
         except Exception:
-            raise RuntimeError("fetch_option_chain not found in provider modules")
-    key = _maybe_secret("POLYGON_API_KEY") or _maybe_secret("RAPIDAPI_KEY")
-    host = _maybe_secret("RAPIDAPI_HOST")
-    base = {
-        "ticker": ticker,
-        "host": host,
-        "key": key,
-        "apiKey": key,
-        "api_key": key,
-        "expiry_unix": None,
-        "expiry": None,
-    }
-    try:
-        out = _call_with_best_kwargs(func, base)
-        return out or {}
-    except Exception:
-        # last resort try with only ticker
-        try:
-            return func(ticker=ticker)
-        except Exception:
-            return {}
+            continue
+    if not parsed:
+        return None
+    parsed.sort()
+    for d, raw in parsed:
+        if d >= today:
+            return raw
+    return parsed[-1][1]  # самая дальняя
 
-def _provider_fetch_ohlc(ticker: str, interval: str, limit: int):
-    func = None
-    try:
-        from provider_polygon import fetch_stock_history as _f
-        func = _f
-    except Exception:
-        try:
-            from provider import fetch_stock_history as _f  # type: ignore
-            func = _f
-        except Exception:
-            return None
-    key = _maybe_secret("POLYGON_API_KEY") or _maybe_secret("RAPIDAPI_KEY")
-    host = _maybe_secret("RAPIDAPI_HOST")
-    base = {
-        "ticker": ticker,
-        "host": host,
-        "key": key,
-        "apiKey": key,
-        "api_key": key,
-        "interval": interval,
-        "limit": int(limit),
-        "dividend": None,
-    }
-    try:
-        return _call_with_best_kwargs(func, base)
-    except Exception:
-        try:
-            return func(ticker=ticker, interval=interval, limit=int(limit))
-        except Exception:
-            return None
 
-# =====================
-# Data structures
-# =====================
+def _split_raw_by_exp(chain: dict, selected_exps: List[str]) -> Dict[str, List[dict]]:
+    """
+    Группирует контракты по выбранным датам экспирации.
+    """
+    ans: Dict[str, List[dict]] = {e: [] for e in (selected_exps or [])}
+    recs = (chain or {}).get("records") or []
+    sels = set(selected_exps or [])
+    for r in recs:
+        e = r.get("expiration")
+        if e in sels:
+            ans[e].append(r)
+    return ans
+
+
+def _fetch_chain_polygon(ticker: str) -> dict:
+    """
+    Единственная точка загрузки опционной цепочки из Polygon.
+    """
+    return _prov.fetch_option_chain(ticker=ticker)
+
+
+def _fetch_ohlc_polygon(ticker: str, interval: str = "1m", limit: int = 500) -> dict:
+    """
+    История свечей для Key Levels. Возвращает payload адаптера Polygon.
+    """
+    return _prov.fetch_stock_history(ticker=ticker, interval=interval, limit=limit)
+
+
+# ---------------------------
+# Публичный API
+# ---------------------------
 
 @dataclass
 class TikerRawResult:
     ticker: str
-    spot: float
+    spot: Optional[float]
     expirations: List[str]
     selected: List[str]
     raw_by_exp: Dict[str, List[dict]]
-    ohlc: Optional[pd.DataFrame] = None
+    ohlc: Optional[dict] = None  # сырой payload от провайдера
     day_high: Optional[float] = None
     day_low: Optional[float] = None
     ohlc_interval: str = "1m"
     ohlc_limit: int = 500
 
-# =====================
-# Helpers
-# =====================
-
-def _fetch_chain(ticker: str) -> dict:
-    return _provider_fetch_chain(ticker)
-
-def _fetch_ohlc(ticker: str, interval: str = "1m", limit: int = 500):
-    return _provider_fetch_ohlc(ticker, interval, limit)
-
-def _extract_spot_and_exps(chain: dict) -> Tuple[float, List[str]]:
-    quote = chain.get("quote") or {}
-    spot = quote.get("regularMarketPrice", quote.get("last", 0.0))
-    spot = float(spot or 0.0)
-
-    exps = chain.get("expirations") or chain.get("expirationDates") or []
-    exps = [str(x) for x in exps]
-    exps = sorted(set(exps))
-    return spot, exps
-
-def _nearest_exp(expirations: List[str], today: Optional[str] = None) -> Optional[str]:
-    if not expirations:
-        return None
-    try:
-        today_dt = datetime.strptime(today, "%Y-%m-%d") if today else datetime.utcnow()
-        parsed = []
-        for e in expirations:
-            try:
-                parsed.append((e, datetime.strptime(e[:10], "%Y-%m-%d")))
-            except Exception:
-                continue
-        if not parsed:
-            return expirations[0]
-        future = [e for e, d in parsed if d >= today_dt]
-        if future:
-            return sorted(future, key=lambda x: datetime.strptime(x, "%Y-%m-%d"))[0]
-        return sorted([e for e, _ in parsed], key=lambda x: datetime.strptime(x, "%Y-%m-%d"))[0]
-    except Exception:
-        return expirations[0]
-
-def _record_matches_exp(rec: dict, exp: str) -> bool:
-    for k in ("exp","expiration","expirationDate","expiry","expDate"):
-        v = rec.get(k)
-        if v is None:
-            continue
-        if str(v).startswith(exp):
-            return True
-    d = rec.get("details") or {}
-    for k in ("exp","expiration","expirationDate"):
-        v = d.get(k)
-        if v and str(v).startswith(exp):
-            return True
-    return False
-
-def _split_raw_by_exp(chain: dict, selected_exps: List[str]) -> Dict[str, List[dict]]:
-    items = chain.get("options") or chain.get("records") or []
-    if not items:
-        return {e: [] for e in selected_exps}
-    out: Dict[str, List[dict]] = {e: [] for e in selected_exps}
-    for rec in items:
-        for e in selected_exps:
-            if _record_matches_exp(rec, e):
-                out[e].append(rec)
-    for e in selected_exps:
-        if not out[e]:
-            out[e] = list(items)
-    return out
-
-
-
-def _fmt_date(ts):
-    try:
-        return datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d")
-    except Exception:
-        try:
-            return datetime.utcfromtimestamp(int(str(ts)[:10])).strftime("%Y-%m-%d")
-        except Exception:
-            return str(ts)
-
-def _parse_chain_with_compute(chain_obj) -> Tuple[float, List[str], Dict[str, List[dict]]]:
-    """Use lib.compute.extract_core_from_chain if available to robustly parse expirations and per-exp records."""
-    # If provider returned (data, content), take data
-    if isinstance(chain_obj, (list, tuple)) and len(chain_obj) >= 1:
-        chain_obj = chain_obj[0]
-
-    extractor = None
-    for modname in ("lib.compute", "compute"):
-        try:
-            mod = __import__(modname, fromlist=["extract_core_from_chain"])
-            extractor = getattr(mod, "extract_core_from_chain", None)
-            if extractor:
-                break
-        except Exception:
-            continue
-    if extractor is None:
-        # fallback to simple dict-based extraction (old path)
-        spot, exps = _extract_spot_and_exps(chain_obj if isinstance(chain_obj, dict) else {})
-        return spot, exps, {}
-
-    try:
-        quote, t0, S, expirations, blocks_by_date = extractor(chain_obj)
-    except Exception:
-        # fallback
-        spot, exps = _extract_spot_and_exps(chain_obj if isinstance(chain_obj, dict) else {})
-        return spot, exps, {}
-
-    # expirations may be unix timestamps; normalize to 'YYYY-MM-DD' strings
-    exp_labels = [_fmt_date(e) for e in expirations]
-    # Build raw_by_exp: map each exp label to list of raw records
-    raw_map: Dict[str, List[dict]] = {}
-    for k, v in (blocks_by_date or {}).items():
-        lbl = _fmt_date(k)
-        try:
-            # v may be dict with 'options' or already a list
-            if isinstance(v, dict) and "options" in v:
-                recs = v["options"]
-            elif isinstance(v, list):
-                recs = v
-            else:
-                # some providers nest deeper
-                recs = list(v.values())[0] if isinstance(v, dict) and v else []
-        except Exception:
-            recs = []
-        raw_map[lbl] = recs
-    # Ensure keys for all expirations exist
-    for lbl in exp_labels:
-        raw_map.setdefault(lbl, [])
-    return float(S or 0.0), exp_labels, raw_map
-
-
-def _normalize_ohlc(payload) -> Optional[pd.DataFrame]:
-    if payload is None:
-        return None
-    try:
-        if isinstance(payload, dict) and "results" in payload:
-            rows = payload["results"]
-        elif isinstance(payload, list):
-            rows = payload
-        elif isinstance(payload, dict) and "candles" in payload:
-            rows = payload["candles"]
-        else:
-            rows = []
-        if not rows:
-            return None
-        df = pd.DataFrame(rows)
-        colmap = {}
-        if "time" in df.columns:
-            colmap["time"] = "time"
-        elif "t" in df.columns:
-            df["time"] = pd.to_datetime(df["t"], unit="ms")
-            colmap["time"] = "time"
-        elif "timestamp" in df.columns:
-            df["time"] = pd.to_datetime(df["timestamp"], unit="ms", errors="coerce")
-            colmap["time"] = "time"
-        if "open" in df.columns: colmap["open"] = "open"
-        elif "o" in df.columns: colmap["o"] = "open"
-        if "high" in df.columns: colmap["high"] = "high"
-        elif "h" in df.columns: colmap["h"] = "high"
-        if "low" in df.columns: colmap["low"] = "low"
-        elif "l" in df.columns: colmap["l"] = "low"
-        if "close" in df.columns: colmap["close"] = "close"
-        elif "c" in df.columns: colmap["c"] = "close"
-        if "volume" in df.columns: colmap["volume"] = "volume"
-        elif "v" in df.columns: colmap["v"] = "volume"
-        df = df.rename(columns=colmap)
-        needed = ["time","open","high","low","close","volume"]
-        missing = [x for x in needed if x not in df.columns]
-        if missing:
-            if all(x in df.columns for x in ["time","open","high","low","close"]):
-                df["volume"] = 0
-            else:
-                return None
-        df = df[["time","open","high","low","close","volume"]].copy()
-        try:
-            df["time"] = pd.to_datetime(df["time"])
-        except Exception:
-            pass
-        df = df.sort_values("time").reset_index(drop=True)
-        return df
-    except Exception:
-        return None
-
-# =====================
-# Public PURE API
-# =====================
 
 def get_raw_by_exp(
     ticker: str,
@@ -308,58 +125,110 @@ def get_raw_by_exp(
     ohlc_interval: str = "1m",
     ohlc_limit: int = 500,
 ) -> TikerRawResult:
-    chain = _fetch_chain(ticker)
-    spot, exps, raw_prepared = _parse_chain_with_compute(chain)
+    """
+    Тянет цепочку по тикеру, восстанавливает список экспираций из цепочки,
+    выбирает дефолт, формирует raw_by_exp по выбранным датам.
+    НЕТ зависимостей на другие модули (кроме provider_polygon).
+    """
+    chain = _fetch_chain_polygon(ticker)
+    spot, exps = _parse_chain_extract_spot_and_exps(chain)
+
     if not exps:
-        return TikerRawResult(ticker=ticker, spot=spot, expirations=[], selected=[], raw_by_exp={}, ohlc=None, day_high=None, day_low=None)
+        return TikerRawResult(
+            ticker=ticker, spot=spot, expirations=[], selected=[],
+            raw_by_exp={}, ohlc=None, day_high=None, day_low=None,
+            ohlc_interval=ohlc_interval, ohlc_limit=ohlc_limit
+        )
+
     if not selected_exps:
-        default = _nearest_exp(exps)
+        default = _choose_default_expiration(exps)
         selected_exps = [default] if default else []
-    raw_by_exp = raw_prepared if raw_prepared else _split_raw_by_exp(chain if isinstance(chain, dict) else {}, selected_exps)
-    ohlc_df = None
+
+    raw_by_exp = _split_raw_by_exp(chain, selected_exps or [])
+
+    ohlc_payload: Optional[dict] = None
     day_hi = day_lo = None
     if need_ohlc:
-        payload = _fetch_ohlc(ticker, interval=ohlc_interval, limit=ohlc_limit)
-        ohlc_df = _normalize_ohlc(payload)
-        if ohlc_df is not None and not ohlc_df.empty:
-            try:
-                day_hi = float(ohlc_df["high"].max())
-                day_lo = float(ohlc_df["low"].min())
-            except Exception:
-                day_hi = day_lo = None
+        try:
+            ohlc_payload = _fetch_ohlc_polygon(ticker, interval=ohlc_interval, limit=int(ohlc_limit))
+            # Попробуем вычислить High/Low без pandas
+            bars = (ohlc_payload or {}).get("results") or (ohlc_payload or {}).get("bars") or []
+            highs = []
+            lows = []
+            for b in bars:
+                h = b.get("high", b.get("h"))
+                l = b.get("low",  b.get("l"))
+                if h is not None:
+                    try: highs.append(float(h))
+                    except Exception: pass
+                if l is not None:
+                    try: lows.append(float(l))
+                    except Exception: pass
+            if highs and lows:
+                day_hi = max(highs)
+                day_lo = min(lows)
+        except Exception:
+            pass
+
     return TikerRawResult(
         ticker=ticker,
         spot=spot,
         expirations=exps,
-        selected=selected_exps,
+        selected=selected_exps or [],
         raw_by_exp=raw_by_exp,
-        ohlc=ohlc_df,
+        ohlc=ohlc_payload,
         day_high=day_hi,
         day_low=day_lo,
         ohlc_interval=ohlc_interval,
         ohlc_limit=ohlc_limit,
     )
 
-# =====================
-# OPTIONAL UI helper
-# =====================
 
-def render_tiker_data_block(title: str = "Тикер/Экспирации (сырьё + свечи)") -> TikerRawResult:
-    import streamlit as st  # local import
-    st.header(title)
-    ticker_default = st.session_state.get("td2_ticker", "SPY")
+def render_tiker_data_block(st) -> None:
+    """
+    Рисует блок: Ticker + Expiration (одна) и кладёт выбор в session_state.
+    Не возвращает объект st и ничего не печатает, чтобы не было артефактов в UI.
+    """
+    st.markdown("**Ticker**")
+    ticker_default = st.session_state.get("_last_ticker", "SPY")
     ticker = st.text_input("Ticker", value=ticker_default, key="td2_ticker_input")
     st.session_state["td2_ticker"] = ticker
-    with st.expander("Настройки свечей (для чарта Key Levels)", expanded=False):
-        interval = st.selectbox("Интервал", options=["1m","2m","5m","15m","30m","1h","1d"], index=0)
-        limit = st.number_input("Кол-во баров (limit)", min_value=50, max_value=5000, value=500, step=50)
-    base = get_raw_by_exp(ticker, need_ohlc=True, ohlc_interval=interval, ohlc_limit=int(limit))
+
+    # Один запрос цепочки для построения списка экспираций
+    base = get_raw_by_exp(ticker, need_ohlc=True, ohlc_interval="1m", ohlc_limit=500)
+
     if not base.expirations:
-        st.warning("Провайдер не вернул список экспираций для данного тикера.")
-        return base
-    selected = st.multiselect("Дата(ы) экспирации", options=base.expirations, default=base.selected)
-    base = get_raw_by_exp(ticker, selected_exps=selected, need_ohlc=True, ohlc_interval=interval, ohlc_limit=int(limit))
-    if base.ohlc is not None and not base.ohlc.empty:
-        st.caption(f"Свечи: {ticker} • {interval} • {len(base.ohlc)} баров. High={base.day_high}, Low={base.day_low}")
-        st.dataframe(base.ohlc.tail(5), use_container_width=True)
-    return base
+        st.warning("Не удалось получить список экспираций из цепочки (provider_polygon).")
+        return
+
+    # Дефолтный выбор
+    default = _choose_default_expiration(base.expirations)
+    try:
+        default_idx = base.expirations.index(default) if default in base.expirations else 0
+    except Exception:
+        default_idx = 0
+
+    exp = st.selectbox("Экспирация", options=base.expirations, index=default_idx, key="td2_exp_select")
+
+    # Обновим выбор уже целевым вызовом (raw_by_exp только по exp)
+    final = get_raw_by_exp(ticker, selected_exps=[exp], need_ohlc=True, ohlc_interval=base.ohlc_interval, ohlc_limit=base.ohlc_limit)
+
+    # Кладём в session_state — финальная таблица и другие блоки смогут работать без доп. импортов
+    st.session_state["raw_records"] = final.raw_by_exp.get(exp, [])
+    st.session_state["spot"] = final.spot
+    st.session_state["_last_ticker"] = ticker
+    st.session_state["_last_exp_sig"] = exp
+
+    # «Замок» для финальной таблицы (чтобы она не рисовала дублирующий селектор)
+    st.session_state["tiker_selected_exps"] = [exp]
+    st.session_state["exp_locked_by_tiker_data"] = True
+
+    # Небольшая справка
+    with st.expander("Инфо (данные для таблицы и Key Levels)", expanded=False):
+        st.caption(f"{ticker} @ spot={final.spot or '—'}; выбрана экспирация: {exp}")
+        if final.day_high is not None and final.day_low is not None:
+            st.caption(f"Свечи: интервал={final.ohlc_interval}, баров≈{final.ohlc_limit}, High={final.day_high}, Low={final.day_low}")
+        st.caption(f"raw_records[{exp}]: {len(st.session_state.get('raw_records', []))} контрактов")
+
+    # Ничего не возвращаем
+    return None
