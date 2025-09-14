@@ -126,12 +126,20 @@ try:
     _ticker = st.session_state.get("ticker")
     if _ticker and api_key:
         try:
-            _s, _ts_ms, _src = get_spot_price(_ticker, api_key)
+            _s, _ts_ms, _src = get_spot_price(_ticker.strip().upper(), api_key)
             st.session_state["spot_price"] = _s
             st.session_state["spot_ts_ms"] = _ts_ms
             st.session_state["spot_source"] = _src
         except Exception as _e:
+            # очищаем старые значения, чтобы не показывать цену от предыдущего тикера
+            st.session_state["spot_price"] = None
+            st.session_state["spot_ts_ms"] = None
+            st.session_state["spot_source"] = None
             st.session_state["spot_error"] = str(_e)
+    else:
+        st.session_state["spot_price"] = None
+        st.session_state["spot_ts_ms"] = None
+        st.session_state["spot_source"] = None
 
     # читаем query params: поддерживаем и новые, и старые API Streamlit
     def _qp_true(name: str) -> bool:
@@ -142,12 +150,10 @@ try:
                 try:
                     val = qp.get(name)
                 except Exception:
-                    # может быть dict-like
                     try:
                         val = dict(qp).get(name)
                     except Exception:
                         pass
-                # в некоторых версиях требуется to_dict()
                 if val is None and hasattr(qp, "to_dict"):
                     val = qp.to_dict().get(name)
         except Exception:
@@ -157,7 +163,6 @@ try:
                 val = st.experimental_get_query_params().get(name)
             except Exception:
                 val = None
-        # нормализуем
         if isinstance(val, list):
             val = val[0] if val else ""
         return str(val).strip().lower() in ("1", "true", "yes", "y", "on")
@@ -169,6 +174,7 @@ try:
         _ts_str = "—"
         try:
             if _ts:
+                from datetime import datetime, timezone
                 _ts_str = datetime.fromtimestamp(int(_ts)/1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         except Exception:
             pass
