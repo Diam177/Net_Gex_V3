@@ -177,3 +177,15 @@ except Exception:
     # никакой UI не ломаем, любые ошибки в дебаге игнорируются
     pass
 # --- /DEBUG SPOT DISPLAY ---
+
+
+# --- ALWAYS SHOW SPOT ---
+try:
+    _ticker = st.session_state.get("ticker")
+    _s = st.session_state.get("spot_price")
+    _src = st.session_state.get("spot_source")
+    if _ticker and (_s is not None):
+        st.markdown(f"**Цена {_ticker}:** {_s:.2f}  \u2009*(источник: {_src})*")
+except Exception:
+    pass
+# --- /ALWAYS SHOW SPOT ---
