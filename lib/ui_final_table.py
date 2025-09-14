@@ -150,10 +150,34 @@ def render_final_table(*args, section_title: str = "Финальная табл�
             except Exception as e:
                 st.warning(f"Сборка таблицы из df_corr/windows не удалась: {e}")
 
+        
         # Вариант B: из raw_records + S
         if df_show is None and raw_records is not None and S is not None and callable(process_from_raw):
             try:
-                df_show = process_from_raw(raw_records, S=S, final_cfg=final_cfg) if final_cfg is not None else process_from_raw(raw_records, S=S)
+                # Пытаемся несколько сигнатур (в разных версиях проекта имя параметра отличается)
+                result = None
+                try:
+                    result = process_from_raw(raw_records, S=S, exp=exp, final_cfg=final_cfg) if final_cfg is not None else process_from_raw(raw_records, S=S, exp=exp)
+                except TypeError:
+                    try:
+                        result = process_from_raw(raw_records, S=S, expiration=exp, final_cfg=final_cfg) if final_cfg is not None else process_from_raw(raw_records, S=S, expiration=exp)
+                    except TypeError:
+                        try:
+                            result = process_from_raw(raw_records, S=S, final_cfg=final_cfg) if final_cfg is not None else process_from_raw(raw_records, S=S)
+                        except TypeError:
+                            try:
+                                result = process_from_raw(raw_records, S, exp)  # positional fallback
+                            except Exception:
+                                result = None
+
+                # Нормализуем результат
+                if result is not None:
+                    if isinstance(result, tuple) and len(result) >= 1:
+                        result = result[0]
+                    if isinstance(result, dict):
+                        df_show = result.get(exp) or next(iter(result.values()), None)
+                    else:
+                        df_show = result
             except Exception as e:
                 st.error(f"Ошибка расчёта таблицы из raw_records/S: {e}")
                 return
@@ -161,6 +185,7 @@ def render_final_table(*args, section_title: str = "Финальная табл�
         if df_show is None:
             st.info("Нет данных для построения таблицы.")
             continue
+
 
         # Отображение
         try:
