@@ -134,6 +134,24 @@ def _get_first(d: Dict, keys: List[str], default=None):
     return default
 
 
+def _get_nested(d: dict, keys: list[str], default=None,
+                blocks: tuple[str, ...] = ("details", "greeks", "day", "underlying_asset")):
+    """Ищет значение сначала на верхнем уровне, затем во вложенных блоках.
+    - keys: порядок приоритетов ключей (первый найденный непустой возвращается)
+    - blocks: имена вложенных словарей, характерных для snapshot-провайдеров (Polygon).
+    """
+    v = _get_first(d, keys, default=None)
+    if v is not None:
+        return v
+    for b in blocks:
+        sub = d.get(b, {})
+        if isinstance(sub, dict):
+            vv = _get_first(sub, keys, default=None)
+            if vv is not None:
+                return vv
+    return default
+
+
 # -----------------------
 # 1) СЫРАЯ ТАБЛИЦА
 # -----------------------
@@ -156,15 +174,15 @@ def build_raw_table(
 
     rows = []
     for r in raw:
-        side_raw = str(_get_first(r, ["side", "option_type", "type"], "")).lower()
+        side_raw = str(_get_nested(r, ["side", "option_type", "contract_type", "type"], "")).lower()
         side = "C" if side_raw.startswith("c") else ("P" if side_raw.startswith("p") else None)
 
-        K = _get_first(r, ["strike", "k", "strike_price", "strikePrice"])
+        K = _get_nested(r, ["strike", "k", "strike_price", "strikePrice"])
         if K is None:
             # иногда строка символа содержит strike, но это лишнее
             continue
 
-        exp_raw = _get_first(r, ["expiration", "expiration_date", "expiry", "expDate", "t"])
+        exp_raw = _get_nested(r, ["expiration", "expiration_date", "expiry", "expDate", "t"])
         if isinstance(exp_raw, (int, float)) and exp_raw > 10_000:
             # unix ts
             exp_ts = float(exp_raw)
@@ -180,14 +198,14 @@ def build_raw_table(
                 except Exception:
                     exp_ts = None
 
-        oi = _get_first(r, ["open_interest", "openInterest", "oi"], 0) or 0
-        vol = _get_first(r, ["volume", "vol"], 0) or 0
-        iv  = _get_first(r, ["implied_volatility", "impliedVolatility", "iv"], None)
-        dlt = _get_first(r, ["delta", "dlt"], None)
-        gmm = _get_first(r, ["gamma", "gmm"], None)
-        vga = _get_first(r, ["vega", "vga"], None)
+        oi = _get_nested(r, ["open_interest", "openInterest", "oi"], 0) or 0
+        vol = _get_nested(r, ["volume", "vol"], 0) or 0
+        iv  = _get_nested(r, ["implied_volatility", "impliedVolatility", "iv"], None)
+        dlt = _get_nested(r, ["delta", "dlt"], None)
+        gmm = _get_nested(r, ["gamma", "gmm"], None)
+        vga = _get_nested(r, ["vega", "vga"], None)
 
-        mult = _get_first(r, ["shares_per_contract", "contract_size", "contractMultiplier"], None)
+        mult = _get_nested(r, ["shares_per_contract", "contract_size", "contractMultiplier"], None)
         if mult is None:
             mult = shares_per_contract if shares_per_contract is not None else cfg.contract_mult_default
 
