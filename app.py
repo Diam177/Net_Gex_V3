@@ -628,40 +628,7 @@ except Exception:
 # === Key Levels chart ===
 render_key_levels_section(ticker, None, POLYGON_API_KEY)
 
-# === Финальная таблица (окно, NetGEX/AG, PZ/ER) ===
-try:
-    render_final_table()
-except Exception as _e:
-    try:
-        import streamlit as st
-        st.warning(f"Final table section error: {_e}")
-    except Exception:
-        pass
-
-# === Advanced Options Market Analysis block ===
-
-# Pre-compute simple intraday VWAP series from minute candles
-_vwap_series = None
-try:
-    candles_json, _ = fetch_stock_history(ticker, None, POLYGON_API_KEY, interval=str(st.session_state.get("kl_interval","1m")), limit=int(st.session_state.get("kl_limit",640)))
-    recs = candles_json.get("candles", []) if isinstance(candles_json, dict) else []
-    if recs:
-        sums_pv, sums_v = 0.0, 0.0
-        _vwap_series = []
-        for r in recs:
-            h = float(r.get("high", 0.0)); l = float(r.get("low", 0.0)); c = float(r.get("close", 0.0))
-            v = float(r.get("volume", 0.0))
-            tp = (h + l + c) / 3.0
-            sums_pv += tp * v
-            sums_v  += v
-            if sums_v > 0:
-                _vwap_series.append(sums_pv / sums_v)
-except Exception:
-    _vwap_series = None
-
-render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
-
-
+# (removed) Финальная таблица перенесена на страницу Main
 # --- TIKER DATA BLOCK (independent source) ---
 # This block renders UI to select ticker & expirations and feeds raw data strictly via tiker_data.py.
 import importlib
@@ -690,39 +657,4 @@ def _lazy_imports():
 
 td_block, get_raw, sanitize_entry, SanitizerCfg = _lazy_imports()
 
-with st.container():
-    st.subheader("Тикер/Экспирации (источник сырых данных: tiker_data.py)")
-    td = None
-    if td_block is not None:
-        td = td_block("Тикер/Экспирации (сырьё + свечи)")
-    else:
-        # Minimal fallback if UI helper not importable
-        ticker_default = st.session_state.get("td2_ticker", "SPY")
-        ticker = st.text_input("Ticker", value=ticker_default, key="td2_ticker_input_fallback")
-        st.session_state["td2_ticker"] = ticker
-        if get_raw is not None:
-            core = get_raw(ticker, need_ohlc=True)
-            default = core.selected or []
-            selected = st.multiselect("Дата(ы) экспирации", options=core.expirations, default=default)
-            td = get_raw(ticker, selected_exps=selected, need_ohlc=True)
-        else:
-            st.warning("tiker_data.get_raw_by_exp не найден. Поместите tiker_data.py в lib/.")
-
-    if td is not None and getattr(td, "selected", None):
-        if sanitize_entry is not None and SanitizerCfg is not None:
-            spot, all_exps, bundles = sanitize_entry(td.ticker, selected_exps=td.selected, cfg=SanitizerCfg())
-            st.session_state["spot"] = spot
-            exp0 = td.selected[0]
-            bun = bundles.get(exp0)
-            if bun:
-                st.session_state["df_corr"] = bun.df_corr
-                win = bun.windows if isinstance(bun.windows, dict) else {}
-                st.session_state["windows"] = {exp0: win.get(exp0, [])}
-                st.session_state["_last_ticker"] = td.ticker
-                st.session_state["_last_exp_sig"] = exp0
-                if getattr(td, "ohlc", None) is not None:
-                    st.session_state["ohlc_df"] = td.ohlc
-                    st.session_state["day_high"] = td.day_high
-                    st.session_state["day_low"] = td.day_low
-        else:
-            st.info("Сырые данные готовы, но санитайзер не импортирован.")
+# (removed) Блок Tiker/Экспирации перенесён на страницу Main
