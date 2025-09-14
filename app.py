@@ -234,6 +234,9 @@ except Exception:
 
 # --- PIPELINE TABLES (intermediate) ---
 try:
+    # страховочный импорт на случай, если верхний импорт не прогрузился
+    if 'sanitize_and_window_pipeline' not in globals():
+        from lib.sanitize_window import sanitize_and_window_pipeline, build_window_panels
     _raw_records = st.session_state.get("raw_records")
     _spot = st.session_state.get("spot_price")
     if _raw_records and (_spot is not None):
