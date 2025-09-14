@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import datetime as _dt
+import os
 
 # единственная внешняя зависимость — адаптер Polygon
 from lib import provider_polygon as _prov  # type: ignore
@@ -124,14 +125,16 @@ def _fetch_chain_polygon(ticker: str) -> dict:
     """
     Единственная точка загрузки опционной цепочки из Polygon.
     """
-    return _safe_fetch_option_chain(ticker)
+    api_key = os.environ.get('POLYGON_API_KEY') or ''
+    return _prov.fetch_option_chain(ticker=ticker, host_unused=None, api_key=api_key, expiry_unix=None)
 
 
 def _fetch_ohlc_polygon(ticker: str, interval: str = "1m", limit: int = 500) -> dict:
     """
     История свечей для Key Levels. Возвращает payload адаптера Polygon.
     """
-    return _prov.fetch_stock_history(ticker=ticker, interval=interval, limit=limit)
+    api_key = os.environ.get('POLYGON_API_KEY') or ''
+    return _prov.fetch_stock_history(ticker=ticker, host_unused=None, api_key=api_key, interval=interval, limit=limit, dividend=False, timeout=30)
 
 
 # ---------------------------
