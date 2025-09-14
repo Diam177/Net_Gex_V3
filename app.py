@@ -12,7 +12,7 @@ from lib.tiker_data import (
 st.set_page_config(page_title="Main", layout="wide")
 
 # Пайплайн подготовки данных
-from sanitize_window import sanitize_and_window_pipeline, build_window_panels
+from lib.sanitize_window import sanitize_and_window_pipeline, build_window_panels
 import pandas as pd
 import io
 
