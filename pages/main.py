@@ -26,9 +26,6 @@ def _load_expirations():
             dates = list_future_expirations(ticker, api_key)
         st.session_state["expirations"] = dates
         st.session_state["last_loaded_ticker"] = ticker
-        # авто-выбор ближайшей даты
-        if dates:
-            st.session_state["selected"] = [dates[0]]
         st.toast(f"Найдено дат: {len(dates)}", icon="✅")
     except Exception as e:
         st.session_state["expirations"] = []
@@ -53,24 +50,33 @@ if "expirations" not in st.session_state:
     _load_expirations()
 
 expirations = st.session_state.get("expirations", [])
+# Локально вычисляем default для мультиселекта, НИЧЕГО не пишем в session_state["selected"]
+selected_default = []
+if expirations:
+    prev = st.session_state.get("selected", [])
+    if prev and prev[0] in expirations:
+        selected_default = prev
+    else:
+        selected_default = [expirations[0]]
+
 selected = st.session_state.get("selected", [])
 
 col1, col2 = st.columns([3, 2])
 with col1:
-    # убран subheader "Выбор дат"
     if expirations:
-        # если ранее выбранная дата отсутствует (тикер сменился), авто-выбор ближайшей
-        if not selected or selected[0] not in expirations:
-            selected = [expirations[0]]
-            st.session_state["selected"] = selected
-        st.multiselect("Даты экспирации", options=expirations, default=selected, key="selected")
+        st.multiselect(
+            "Даты экспирации",
+            options=expirations,
+            default=selected_default,
+            key="selected",
+            label_visibility="collapsed",
+        )
+        selected = st.session_state.get("selected", [])
     else:
         st.info("Нет доступных дат — проверьте тикер или ключ API.")
 
 with col2:
-    # убран subheader "Скачивание"
     if expirations:
-        # CSV с датами (без pandas)
         csv_lines = ["expiration_date"] + expirations
         csv_bytes = ("\n".join(csv_lines) + "\n").encode("utf-8")
         st.download_button(
