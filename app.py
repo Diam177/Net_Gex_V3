@@ -191,6 +191,36 @@ if S is None and raw_records:
 if raw_records:
     try:
         res = sanitize_and_window_pipeline(raw_records, S=S)
+
+        # --- TRUE MULTI-EXP PROCESSING: прогон по каждой выбранной экспирации и объединение ---
+        try:
+            if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
+                import pandas as pd
+                df_corr_multi_list = []
+                windows_multi = {}
+
+                for _exp in selected_exps:
+                    try:
+                        js_e = download_snapshot_json(ticker, _exp, api_key)
+                        recs_e = _coerce_results(js_e)
+                        res_e = sanitize_and_window_pipeline(recs_e, S=S)
+                        dfe = res_e.get("df_corr")
+                        if dfe is not None and not getattr(dfe, "empty", True):
+                            df_corr_multi_list.append(dfe)
+                        win_e = res_e.get("windows") or {}
+                        for k, v in win_e.items():
+                            windows_multi[k] = v
+                    except Exception as _exc:
+                        # мягко пропускаем проблемные экспирации, чтобы не ломать UI
+                        pass
+
+                if df_corr_multi_list:
+                    df_corr = pd.concat(df_corr_multi_list, ignore_index=True)
+                if windows_multi:
+                    windows = windows_multi
+        except Exception as _e_multi:
+            st.warning("Multi-exp: не удалось объединить серии.")
+            st.exception(_e_multi)
         df_raw = res.get("df_raw")
         if df_raw is None or getattr(df_raw, "empty", True):
             st.warning("df_raw пуст. Проверьте формат данных.")
