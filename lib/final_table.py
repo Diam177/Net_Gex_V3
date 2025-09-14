@@ -1,206 +1,172 @@
 
 # -*- coding: utf-8 -*-
 """
-final_table.py — единая сборка финальной таблицы по страйкам окна:
-- Берёт "исправленные" данные и окна (sanitize_window.py)
-- Считает Net GEX / AG (netgex_ag.py)
-- Считает Power Zone / ER Up / ER Down (power_zone_er.py)
-- Собирает одну финальную таблицу по каждому expiry: [exp, K, S, F, call_oi, put_oi,
-  dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct, AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down]
+ui_final_table.py — UI для финальной таблицы.
 
-Предусмотрены два варианта входа:
-1) process_from_raw(raw_records, S, ...) — полный цикл "сырые -> финальные таблицы"
-2) build_final_tables_from_corr(df_corr, windows, ...) — если у вас уже есть df_corr и окна
+Особенности:
+- НЕ дублирует выбор экспирации, если он уже сделан в блоке tiker_data (флаг exp_locked_by_tiker_data).
+- Источник данных:
+    (A) df_corr + windows из st.session_state, если есть
+    (B) иначе raw_records + spot из st.session_state
+- Сами расчёты выполняют функции из lib.final_table (если доступны).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
+import io
+import streamlit as st
 
-import numpy as np
-import pandas as pd
-
-# Внешние модули пайплайна (должны быть в PYTHONPATH или рядом)
-from sanitize_window import (
-    SanitizerConfig,
-    sanitize_and_window_pipeline,
-)
-from netgex_ag import (
-    NetGEXAGConfig,
-    compute_netgex_ag_per_expiry,
-)
-from power_zone_er import compute_power_zone_and_er
+# Попробуем подхватить pandas (для красивого отображения); если нет — обойдёмся
+try:
+    import pandas as pd  # type: ignore
+except Exception:  # pragma: no cover
+    pd = None  # type: ignore
 
 
-# --------- конфиг ---------
-
-@dataclass
-class FinalTableConfig:
-    # Масштаб для млн $ в колонках *_M (используется в netgex_ag)
-    scale_millions: float = 1e6
-    # Параметры для Power Zone / ER (оставляем значения по умолчанию из power_zone_er)
-    day_high: Optional[float] = None
-    day_low: Optional[float] = None
-
-
-# --------- helpers ---------
-
-def _window_strikes(df_corr: pd.DataFrame, exp: str, windows: Dict[str, np.ndarray]) -> np.ndarray:
-    Ks = np.array(sorted(df_corr.loc[df_corr["exp"] == exp, "K"].unique()), dtype=float)
-    idx = np.array(windows.get(exp, []), dtype=int)
-    if Ks.size == 0:
-        return Ks
-    if idx.size == 0 or idx.max() >= Ks.size or idx.min() < 0:
-        return Ks
-    return Ks[idx]
-
-
-def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
+def _import_final_table_module():
     """
-    Конструирует all_series_ctx-словарь для power_zone_er из df_corr по конкретной экспирации.
-    Возвращает dict с одним ключом exp -> контекст (совместимо с compute_power_zone_and_er).
+    Ленивая загрузка вычислительных функций. Ничего не импортируем на уровне модуля,
+    чтобы файл был безопасен при отсутствующих зависимостях.
     """
-    g = df_corr[df_corr["exp"] == exp].copy()
-    if g.empty:
-        return {}
-
-    # Страйки и сортировка
-    Ks = np.array(sorted(g["K"].unique()), dtype=float)
-    # OI / Volume по сторонам
-    agg_oi = g.groupby(["K", "side"], as_index=False)["oi"].sum()
-    agg_vol = g.groupby(["K", "side"], as_index=False)["vol"].sum()
-    pivot_oi = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
-    pivot_vol = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
-    call_oi = {float(k): float(v) for k, v in pivot_oi.get("C", pd.Series(dtype=float)).items()}
-    put_oi  = {float(k): float(v) for k, v in pivot_oi.get("P", pd.Series(dtype=float)).items()}
-    call_vol= {float(k): float(v) for k, v in pivot_vol.get("C", pd.Series(dtype=float)).items()}
-    put_vol = {float(k): float(v) for k, v in pivot_vol.get("P", pd.Series(dtype=float)).items()}
-
-    # IV по сторонам (исправленная)
-    iv_call = g[g["side"]=="C"].groupby("K")["iv_corr"].median().to_dict()
-    iv_put  = g[g["side"]=="P"].groupby("K")["iv_corr"].median().to_dict()
-
-    # Dollar gamma на 1% * OI по сторонам (из df_corr) — построим для формы профиля
-    g["dg1pct_row"] = np.where(
-        np.isfinite(g["gamma_corr"]) & (g["gamma_corr"] > 0) &
-        np.isfinite(g["S"]) & np.isfinite(g["mult"]) &
-        np.isfinite(g["oi"]) & (g["oi"] > 0),
-        g["gamma_corr"].to_numpy() * (g["S"].to_numpy()**2) * 0.01 * g["mult"].to_numpy() * g["oi"].to_numpy(),
-        0.0
-    )
-    agg_dg = g.groupby(["K","side"], as_index=False)["dg1pct_row"].sum()
-    p_dg = agg_dg.pivot_table(index="K", columns="side", values="dg1pct_row", aggfunc="sum").fillna(0.0)
-    dg_call = p_dg.get("C", pd.Series(dtype=float)).reindex(Ks, fill_value=0.0).to_numpy()
-    dg_put  = p_dg.get("P", pd.Series(dtype=float)).reindex(Ks, fill_value=0.0).to_numpy()
-
-    # gamma_abs_share / gamma_net_share — возьмём форму профилей от долларовой гаммы:
-    # Важно: compute_power_zone_and_er далее нормализует эти ряды, поэтому абсолютный масштаб не критичен.
-    gamma_abs_share = (dg_call + dg_put)  # прокси AG-профиля
-    gamma_net_share = (dg_call - dg_put)  # прокси NetGEX-профиля
-
-    # Время до экспирации (медиана T)
-    T_med = float(np.nanmedian(g["T"].values)) if len(g) else 0.0
-
-    ctx = {
-        "strikes": Ks.tolist(),
-        "gamma_abs_share": gamma_abs_share,
-        "gamma_net_share": gamma_net_share,
-        "call_oi": call_oi,
-        "put_oi": put_oi,
-        "call_vol": call_vol,
-        "put_vol": put_vol,
-        "iv_call": iv_call,
-        "iv_put": iv_put,
-        "T": T_med,
-    }
-    return {exp: ctx}
+    import importlib
+    ft = importlib.import_module("lib.final_table")
+    FinalTableConfig = getattr(ft, "FinalTableConfig", None)
+    build_from_corr = getattr(ft, "build_final_tables_from_corr", None)
+    process_from_raw = getattr(ft, "process_from_raw", None)
+    return FinalTableConfig, build_from_corr, process_from_raw
 
 
-def build_final_tables_from_corr(
-    df_corr: pd.DataFrame,
-    windows: Dict[str, np.ndarray],
-    cfg: FinalTableConfig = FinalTableConfig(),
-) -> Dict[str, pd.DataFrame]:
+def _choose_exps_for_table() -> List[str]:
     """
-    Собирает финальные таблицы по каждой экспирации:
-    exp, K, S, F, call_oi, put_oi, dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct,
-    AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down
+    Возвращает список экспираций, которые следует отрисовать в таблице.
+    Если tiker_data «заблокировал» выбор — берём его.
+    Иначе пробуем извлечь из df_corr или raw_records.
     """
-    results: Dict[str, pd.DataFrame] = {}
+    if st.session_state.get("exp_locked_by_tiker_data"):
+        exps = st.session_state.get("tiker_selected_exps") or []
+        return list(exps)
 
-    # Пройдём по экспирациям, для каждой построим таблицу NetGEX/AG и добавим PZ/ER
-    for exp in sorted(df_corr["exp"].dropna().unique()):
-        # 1) таблица NetGEX/AG по окну
-        net_tbl = compute_netgex_ag_per_expiry(
-            df_corr, exp, windows=windows,
-            cfg=NetGEXAGConfig(scale=cfg.scale_millions, aggregate="none")
-        )
-        # 1.b) добавим объёмы по сторонам из df_corr
-        g_exp = df_corr[df_corr["exp"] == exp].copy()
-        agg_vol = g_exp.groupby(["K","side"], as_index=False)["vol"].sum()
-        pv = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
-        call_vol_map = {float(k): float(v) for k, v in pv.get("C", pd.Series(dtype=float)).items()}
-        put_vol_map  = {float(k): float(v) for k, v in pv.get("P", pd.Series(dtype=float)).items()}
-        net_tbl["call_vol"] = net_tbl["K"].map(call_vol_map).fillna(0.0)
-        net_tbl["put_vol"]  = net_tbl["K"].map(put_vol_map).fillna(0.0)
+    # извлечь из df_corr/windows
+    df_corr = st.session_state.get("df_corr")
+    if df_corr is not None and pd is not None:
+        try:
+            if "expiration" in df_corr.columns:
+                exps = sorted(list(map(str, pd.unique(df_corr["expiration"]))))
+                if exps:
+                    return exps[:1]  # по умолчанию — первая (чтобы не дублировать логику сайдбара)
+        except Exception:
+            pass
 
-        if net_tbl.empty:
-            results[exp] = net_tbl
+    # извлечь из raw_records
+    raw_records = st.session_state.get("raw_records") or []
+    if isinstance(raw_records, list) and raw_records:
+        try:
+            exps = sorted({str(r.get("expiration")) for r in raw_records if r.get("expiration")})
+            if exps:
+                return exps[:1]
+        except Exception:
+            pass
+
+    # если совсем ничего
+    return []
+
+
+def _download_buttons(df_show, exp: str):
+    csv_bytes = None
+    try:
+        csv_bytes = df_show.to_csv(index=False).encode("utf-8")
+    except Exception:
+        pass
+
+    if csv_bytes:
+        st.download_button("Скачать CSV", data=csv_bytes, file_name=f"final_table_{exp}.csv", mime="text/csv")
+
+    # Parquet — по возможности
+    try:
+        import pyarrow as pa  # type: ignore
+        import pyarrow.parquet as pq  # type: ignore
+        buf = io.BytesIO()
+        table = pa.Table.from_pandas(df_show)
+        pq.write_table(table, buf)
+        st.download_button("Скачать Parquet", data=buf.getvalue(), file_name=f"final_table_{exp}.parquet",
+                           mime="application/octet-stream")
+    except Exception:
+        pass
+
+
+def render_final_table(*args, section_title: str = "Финальная таблица") -> None:
+    """
+    Поддерживает вызов как render_final_table(st), так и render_final_table().
+    Аргумент st игнорируем — модуль сам импортирует streamlit как st.
+    """
+    st.header(section_title)
+
+    # Пояснение про «замок» экспираций из tiker_data
+    if st.session_state.get("exp_locked_by_tiker_data"):
+        chosen = st.session_state.get("tiker_selected_exps") or []
+        st.caption("Экспирация задана в блоке Ticker/Expiration: " + (", ".join(chosen) if chosen else "—"))
+
+    # Импорт вычислительных функций (если нет — покажем ошибку)
+    try:
+        FinalTableConfig, build_from_corr, process_from_raw = _import_final_table_module()
+    except Exception as e:
+        st.error(f"Не удалось импортировать lib.final_table: {e}")
+        return
+
+    # Конфигурация: используем конструктор по умолчанию, если доступен
+    final_cfg = None
+    try:
+        if FinalTableConfig is not None:
+            final_cfg = FinalTableConfig()  # без аргументов, чтобы не ломать совместимость
+    except Exception:
+        final_cfg = None
+
+    # Выбор экспираций для отображения
+    exps_to_show = _choose_exps_for_table()
+    if not exps_to_show:
+        st.info("Нет выбранной экспирации. Задайте её в блоке Ticker/Expiration.")
+        return
+
+    # Источники данных
+    df_corr = st.session_state.get("df_corr")
+    windows = st.session_state.get("windows")
+    raw_records = st.session_state.get("raw_records")
+    S = st.session_state.get("spot")
+
+    for exp in exps_to_show:
+        st.subheader(f"Экспирация: {exp}")
+        df_show = None
+
+        # Вариант A: из df_corr + windows
+        if df_corr is not None and windows is not None and callable(build_from_corr):
+            try:
+                result = build_from_corr(df_corr, windows, cfg=final_cfg) if final_cfg is not None else build_from_corr(df_corr, windows)
+                # Ожидаем, что результат — dict {exp: DataFrame} или DataFrame
+                if isinstance(result, dict):
+                    df_show = result.get(exp)
+                else:
+                    df_show = result
+            except Exception as e:
+                st.warning(f"Сборка таблицы из df_corr/windows не удалась: {e}")
+
+        # Вариант B: из raw_records + S
+        if df_show is None and raw_records is not None and S is not None and callable(process_from_raw):
+            try:
+                df_show = process_from_raw(raw_records, S=S, final_cfg=final_cfg) if final_cfg is not None else process_from_raw(raw_records, S=S)
+            except Exception as e:
+                st.error(f"Ошибка расчёта таблицы из raw_records/S: {e}")
+                return
+
+        if df_show is None:
+            st.info("Нет данных для построения таблицы.")
             continue
 
-        # 2) strikes окна и контекст для PZ/ER
-        strikes_eval = _window_strikes(df_corr, exp, windows)
-        series_ctx_map = _series_ctx_from_corr(df_corr, exp)
-        if exp not in series_ctx_map:
-            # если не удалось собрать контекст — вернём без PZ/ER
-            net_tbl["PZ"] = 0.0; net_tbl["ER_Up"] = 0.0; net_tbl["ER_Down"] = 0.0
-            results[exp] = net_tbl
-            continue
+        # Отображение
+        try:
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
+        except Exception:
+            # если не DataFrame — просто покажем как есть
+            st.write(df_show)
 
-        # 3) PZ/ER по формуле проекта
-        pz, er_up, er_down = compute_power_zone_and_er(
-            S=float(np.nanmedian(df_corr.loc[df_corr["exp"]==exp, "S"].values)),
-            strikes_eval=strikes_eval,
-            all_series_ctx=[series_ctx_map[exp]],
-            day_high=cfg.day_high,
-            day_low=cfg.day_low,
-        )
-
-        # 4) привязка PZ/ER к таблице по K
-        pz_map   = {float(k): float(v) for k, v in zip(strikes_eval, pz)}
-        erup_map = {float(k): float(v) for k, v in zip(strikes_eval, er_up)}
-        erdn_map = {float(k): float(v) for k, v in zip(strikes_eval, er_down)}
-        net_tbl["PZ"]      = net_tbl["K"].map(pz_map).fillna(0.0)
-        net_tbl["ER_Up"]   = net_tbl["K"].map(erup_map).fillna(0.0)
-        net_tbl["ER_Down"] = net_tbl["K"].map(erdn_map).fillna(0.0)
-
-        # Упорядочим колонки
-        cols = ["exp","K","S"] + (["F"] if "F" in net_tbl.columns else []) + \
-               ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
-        if "AG_1pct_M" in net_tbl.columns:
-            cols += ["AG_1pct_M","NetGEX_1pct_M"]
-        cols += ["PZ","ER_Up","ER_Down"]
-        net_tbl = net_tbl[cols].sort_values("K").reset_index(drop=True)
-
-        results[exp] = net_tbl
-
-    return results
-
-
-def process_from_raw(
-    raw_records: List[dict],
-    S: float,
-    sanitizer_cfg: Optional[dict] = None,
-    final_cfg: FinalTableConfig = FinalTableConfig(),
-) -> Dict[str, pd.DataFrame]:
-    """
-    Полный цикл: сырые записи -> санитайз -> окна -> NetGEX/AG -> PZ/ER -> финальные таблицы.
-    Возвращает словарь {exp: DataFrame}.
-    """
-    sanitizer_cfg = sanitizer_cfg or {}
-    s_cfg = SanitizerConfig(**sanitizer_cfg)
-    res = sanitize_and_window_pipeline(raw_records, S=S, cfg=s_cfg)
-    df_corr = res["df_corr"]; windows = res["windows"]
-
-    return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
+        _download_buttons(df_show, exp)
