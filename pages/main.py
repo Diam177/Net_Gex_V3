@@ -116,3 +116,4 @@ with col2:
                 except Exception as e:
                     st.error(f"Ошибка: {e}")
     else:
+        pass
