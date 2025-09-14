@@ -166,5 +166,4 @@ with col2:
             )
     else:
         st.info("Выберите хотя бы одну дату для выгрузки JSON.")
-
-st.caption("Источник данных: Polygon v3. Авторизация — Bearer token из Streamlit Secrets (POLYGON_API_KEY).")
+).")
