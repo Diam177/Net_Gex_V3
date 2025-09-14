@@ -247,31 +247,13 @@ if raw_records:
                         exp_to_show = expiration if 'expiration' in locals() and expiration in final_tables else exps[0]
                         df_final = final_tables.get(exp_to_show)
                         if df_final is not None and not getattr(df_final, "empty", True):
-                            st.subheader("Final Table")
+                            st.subheader(f"Финальная таблица · {exp_to_show}")
                             st.dataframe(df_final, use_container_width=True, hide_index=True)
                         else:
                             st.info("Финальная таблица пуста для выбранной экспирации.")
             except Exception as _e:
                 st.error("Ошибка построения финальной таблицы.")
                 st.exception(_e)
-                    # 7) Финальная таблица (по df_corr + windows)
-            try:
-                from lib.final_table import build_final_tables_from_corr, FinalTableConfig
-                df_corr = res.get("df_corr")
-                windows = res.get("windows")
-                if df_corr is not None and windows is not None:
-                    final_tables = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
-                    for exp, df_final in final_tables.items():
-                        if df_final is not None and not getattr(df_final, "empty", True):
-                            st.subheader(f"Финальная таблица · {exp}")
-                            st.dataframe(df_final, use_container_width=True, hide_index=True)
-            except Exception as e:
-                st.error("Ошибка при построении финальной таблицы")
-                st.exception(e)
-
-
     except Exception as e:
-        st.error("Ошибка пайплайна sanitize/window.")
-        st.exception(e)
-else:
-    st.info("Задайте тикер и экспирацию, чтобы загрузить snapshot и посмотреть df_raw.")
+            st.error("Ошибка пайплайна sanitize/window.")
+            st.exception(e)
