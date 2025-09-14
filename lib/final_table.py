@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 # Внешние модули пайплайна (должны быть в PYTHONPATH или рядом)
-from sanitize_window import (
+from lib.sanitize_window import (
     SanitizerConfig,
     sanitize_and_window_pipeline,
 )
