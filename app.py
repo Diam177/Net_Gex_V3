@@ -660,3 +660,44 @@ except Exception:
     _vwap_series = None
 
 render_advanced_analysis_block(vwap_series=_vwap_series, fallback_ticker=ticker)
+
+
+# --- TIKER DATA BLOCK (independent source) ---
+try:
+    import streamlit as st  # safe import (likely already imported above)
+except Exception:
+    import streamlit as st
+try:
+    from lib.tiker_data import render_tiker_data_block
+except Exception:
+    try:
+        from tiker_data import render_tiker_data_block  # flat layout fallback
+    except Exception:
+        render_tiker_data_block = None  # type: ignore
+try:
+    from lib.sanitize_window import sanitize_from_tiker_data, SanitizerConfig
+except Exception:
+    from sanitize_window import sanitize_from_tiker_data, SanitizerConfig  # type: ignore
+
+if render_tiker_data_block is not None:
+    with st.container():
+        st.subheader("Тикер/Экспирации (источник сырых данных: tiker_data.py)")
+        td = render_tiker_data_block("Тикер/Экспирации (сырьё + свечи)")
+        if getattr(td, "selected", None):
+            spot, all_exps, bundles = sanitize_from_tiker_data(td.ticker, selected_exps=td.selected, cfg=SanitizerConfig())
+            # Persist for downstream modules
+            st.session_state["spot"] = spot
+            exp0 = td.selected[0]
+            bun = bundles.get(exp0)
+            if bun:
+                st.session_state["df_corr"] = bun.df_corr
+                # windows expected as dict[exp] -> [K]
+                win = bun.windows if isinstance(bun.windows, dict) else {}
+                st.session_state["windows"] = {exp0: win.get(exp0, [])}
+                st.session_state["_last_ticker"] = td.ticker
+                st.session_state["_last_exp_sig"] = exp0
+                # OHLC for Key Levels (optional use by intraday_chart)
+                if getattr(td, "ohlc", None) is not None:
+                    st.session_state["ohlc_df"] = td.ohlc
+                    st.session_state["day_high"] = td.day_high
+                    st.session_state["day_low"] = td.day_low
