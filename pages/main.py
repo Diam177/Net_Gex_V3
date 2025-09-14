@@ -26,7 +26,7 @@ def _load_expirations():
             dates = list_future_expirations(ticker, api_key)
         st.session_state["expirations"] = dates
         st.session_state["last_loaded_ticker"] = ticker
-        st.toast(f"Найдено дат: {len(dates)}", icon="✅")
+
     except Exception as e:
         st.session_state["expirations"] = []
         st.session_state["last_loaded_ticker"] = None
@@ -37,11 +37,11 @@ def _load_expirations():
 col_ticker, _ = st.columns([2, 3])
 with col_ticker:
     st.text_input(
-        "Тикер базового актива",
+        "Тикер",
         value=st.session_state.get("ticker", "SPY"),
         key="ticker",
         max_chars=15,
-        help="Например: SPY, AAPL, MSFT",
+        
         on_change=_load_expirations,
     )
 
@@ -97,7 +97,7 @@ with col2:
                         file_name=f"{st.session_state.get('ticker', 'TICKER')}_{d}.json",
                         mime="application/json",
                     )
-                    st.caption(f"Всего опционов: {js.get('results_count', 0)}")
+
                 except PolygonError as e:
                     st.error(f"Ошибка Polygon: {e}")
                 except Exception as e:
@@ -116,4 +116,3 @@ with col2:
                 except Exception as e:
                     st.error(f"Ошибка: {e}")
     else:
-        st.caption("Нет дат для скачивания.")
