@@ -1,80 +1,91 @@
 
+# -*- coding: utf-8 -*-
+"""
+ui_final_table.py — упрощённый UI-блок:
+Показывает финальную таблицу (окно страйков + NetGEX/AG + PZ/ER) и даёт кнопки скачивания.
+Источник данных выбирается автоматически:
+  1) df_corr + windows из st.session_state (если есть)
+  2) raw_records + spot из st.session_state (если есть)
+Если данных нет — выводит лаконичное уведомление.
+"""
+
 from __future__ import annotations
-import streamlit as st
+
+import io
+from typing import Dict, Any
+
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
-from final_table import FinalTableConfig, process_from_raw
+import streamlit as st
 
-# This UI block is COMPLETELY INDEPENDENT from the sidebar.
-# It loads expirations and raw option chain DIRECTLY from the provider (provider_polygon),
-# builds the final table for the chosen expiration, and exposes CSV/Parquet + "raw provider" CSV.
+from .final_table import (
+    FinalTableConfig,
+    process_from_raw,
+    build_final_tables_from_corr,
+)
 
-def _fetch_provider_chain_and_expirations(ticker: str) -> Tuple[list, float, List[str]]:
-    """Return (raw_records, spot, expirations) directly from provider."""
-    from provider_polygon import fetch_option_chain  # provider abstraction already in project
-    chain = fetch_option_chain(ticker=ticker, host=None, key=None, expiry_unix=None)
-    raw_records = chain.get("options") or chain.get("records") or []
-    # spot price
-    quote = chain.get("quote") or {}
-    spot = float(quote.get("regularMarketPrice") or quote.get("last") or 0.0)
-    # expirations list (strings like 'YYYY-MM-DD')
-    expirations = chain.get("expirations") or chain.get("expirationDates") or []
-    expirations = [str(x) for x in expirations]
-    expirations = sorted(set(expirations))
-    return raw_records, spot, expirations
 
-def render_final_table(section_title: str = "Финальная таблица (окно, NetGEX/AG, PZ/ER)"):
+@st.cache_data(show_spinner=False)
+def _compute_from_raw_cached(raw_records, S: float, final_cfg: FinalTableConfig):
+    return process_from_raw(raw_records, S=S, final_cfg=final_cfg)
+
+
+@st.cache_data(show_spinner=False)
+def _build_from_corr_cached(df_corr: pd.DataFrame, windows: Dict[str, Any], final_cfg: FinalTableConfig):
+    return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
+
+
+def render_final_table(section_title: str = "Финальная таблица (окно, NetGEX/AG, PZ/ER)") -> None:
     st.header(section_title)
 
-    with st.expander("Настройки финальной таблицы (полностью независимы от сайдбара)", expanded=True):
-        ticker = st.text_input("Ticker", value=st.session_state.get("_table_ticker", "SPY"))
-        if ticker != st.session_state.get("_table_ticker"):
-            st.session_state["_table_ticker"] = ticker
-            st.session_state["_table_exp"] = None  # reset exp on ticker change
+    # Настройки масштаба для *_M
+    scale_millions = st.number_input("Масштаб (млн $ на 1% движения)", value=1_000_000, min_value=1, step=100_000)
+    final_cfg = FinalTableConfig(scale_millions=scale_millions)
 
-        # Pull expirations directly from provider
-        raw_records, spot, expirations = _fetch_provider_chain_and_expirations(ticker)
-        if not expirations:
-            st.warning("Провайдер не вернул список экспираций.")
-            return
+    tables_by_exp = None
 
-        default_exp = st.session_state.get("_table_exp") or expirations[0]
-        exp_selected = st.selectbox("Экспирация", options=expirations, index=max(0, expirations.index(default_exp) if default_exp in expirations else 0))
-        st.session_state["_table_exp"] = exp_selected
+    # 1) Пытаемся использовать конвейер df_corr + windows (быстрее)
+    if ("df_corr" in st.session_state) and ("windows" in st.session_state):
+        try:
+            tables_by_exp = _build_from_corr_cached(st.session_state["df_corr"], st.session_state["windows"], final_cfg)
+        except Exception as e:
+            st.warning(f"Не удалось собрать из df_corr/windows: {e}")
 
-    if not raw_records or not spot:
-        st.info("Нет сырых данных от провайдера или не определена текущая цена.")
+    # 2) Фолбэк: из raw_records + spot
+    if not tables_by_exp and ("raw_records" in st.session_state) and ("spot" in st.session_state):
+        try:
+            tables_by_exp = _compute_from_raw_cached(st.session_state["raw_records"], float(st.session_state["spot"]), final_cfg)
+        except Exception as e:
+            st.warning(f"Не удалось собрать из raw_records: {e}")
+
+    if not tables_by_exp:
+        st.info("Нет данных для финальной таблицы. Выберите экспирацию/получите сырые данные.")
         return
 
-    # Build final tables using ONLY provider data (independent of sidebar/session df_corr)
-    cfg = FinalTableConfig(scale_millions=True)
-    tables = process_from_raw(raw_records, spot, final_cfg=cfg)
-    if not tables:
-        st.info("Не удалось собрать таблицу по данным провайдера.")
+    exps = list(tables_by_exp.keys())
+    if not exps:
+        st.info("Нет доступных экспираций для отображения.")
         return
 
-    # Use selected expiration (fallback to first available if needed)
-    table = tables.get(exp_selected) or tables[list(tables.keys())[0]]
-    st.dataframe(table, use_container_width=True)
+    exp = st.selectbox("Экспирация", exps, index=0)
+    df_show = tables_by_exp.get(exp)
+    if df_show is None or df_show.empty:
+        st.info("Таблица пуста.")
+        return
 
-    st.download_button("Скачать CSV", data=table.to_csv(index=False).encode("utf-8"),
-                       file_name=f"final_table_{ticker}_{exp_selected}.csv", mime="text/csv")
+    # Показ таблицы и кнопки скачать
+    st.dataframe(df_show, use_container_width=True, hide_index=True)
 
+    # CSV (включая call_vol/put_vol, если присутствуют в df_show)
+    csv_bytes = df_show.to_csv(index=False).encode("utf-8")
+    st.download_button("Скачать CSV", data=csv_bytes, file_name=f"final_table_{exp}.csv", mime="text/csv")
+
+    # Parquet (если pyarrow установлен)
     try:
-        parquet_bytes = table.to_parquet(index=False)
-        st.download_button("Скачать Parquet", data=parquet_bytes,
-                           file_name=f"final_table_{ticker}_{exp_selected}.parquet", mime="application/octet-stream")
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        buf = io.BytesIO()
+        table = pa.Table.from_pandas(df_show)
+        pq.write_table(table, buf)
+        st.download_button("Скачать Parquet", data=buf.getvalue(), file_name=f"final_table_{exp}.parquet", mime="application/octet-stream")
     except Exception:
         pass
-
-    # Raw provider CSV (for the same expiration) using sanitize_window.build_raw_table
-    try:
-        from sanitize_window import build_raw_table, SanitizerConfig
-        df_raw = build_raw_table(raw_records, S=float(spot), cfg=SanitizerConfig())
-        if "exp" in df_raw.columns:
-            df_raw = df_raw[df_raw["exp"] == exp_selected]
-        st.download_button("Скачать исходную таблицу провайдера (CSV)",
-                           data=df_raw.to_csv(index=False).encode("utf-8"),
-                           file_name=f"provider_raw_{ticker}_{exp_selected}.csv", mime="text/csv")
-    except Exception as e:
-        st.warning(f"Не удалось подготовить исходную таблицу провайдера: {e}")
