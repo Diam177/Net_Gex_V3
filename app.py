@@ -111,4 +111,145 @@ nearest = choose_nearest(expirations)
 selected_expirations = st.multiselect("Выберите даты экспирации", options=expirations, default=[nearest])
 st.session_state["selected_expirations"] = selected_expirations
 
+
+# --- Скачивание файлов ---------------------------------------------------------
+import io, csv, json, zipfile
+
+def _to_csv_bytes(exp_list, ticker_val):
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["ticker", "expiration_date"])
+    for d in exp_list:
+        writer.writerow([ticker_val, d])
+    return buf.getvalue().encode("utf-8")
+
+def fetch_raw_chain_json(api_key: str, underlying: str, expiration_date: str) -> dict:
+    # Используем snapshot options по базовому активу
+    url = f"{POLY_BASE}/v3/snapshot/options/{underlying.upper()}"
+    params = {
+        "expiration_date": expiration_date,
+        "order": "asc",
+        "limit": 1000,
+        "sort": "ticker",
+    }
+    resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+col_dl1, col_dl2 = st.columns([1,1])
+
+with col_dl1:
+    exp_bytes = _to_csv_bytes(expirations, ticker)
+    st.download_button(
+        label="Скачать даты экспираций (CSV)",
+        data=exp_bytes,
+        file_name=f"{ticker}_expirations.csv",
+        mime="text/csv",
+    )
+
+with col_dl2:
+    if selected_expirations:
+        if len(selected_expirations) == 1:
+            exp = selected_expirations[0]
+            try:
+                js = fetch_raw_chain_json(api_key, ticker, exp)
+                st.download_button(
+                    label=f"Скачать JSON по {exp}",
+                    data=json.dumps(js, ensure_ascii=False, indent=2).encode("utf-8"),
+                    file_name=f"{ticker}_{exp}_polygon_raw.json",
+                    mime="application/json",
+                )
+            except Exception as e:
+                st.error(f"Ошибка при получении JSON: {e}")
+        else:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as z:
+                for exp in selected_expirations:
+                    try:
+                        js = fetch_raw_chain_json(api_key, ticker, exp)
+                        z.writestr(f"{ticker}_{exp}_polygon_raw.json",
+                                   json.dumps(js, ensure_ascii=False, indent=2))
+                    except Exception as e:
+                        z.writestr(f"ERROR_{ticker}_{exp}.txt", str(e))
+            zip_buf.seek(0)
+            st.download_button(
+                label=f"Скачать JSON по {len(selected_expirations)} датам (ZIP)",
+                data=zip_buf.getvalue(),
+                file_name=f"{ticker}_polygon_raw_multi.zip",
+                mime="application/zip",
+            )
+    else:
+        st.info("Выберите хотя бы одну дату для выгрузки JSON.")
+
+
+# --- Скачивание файлов ---------------------------------------------------------
+import io, csv, json, zipfile
+
+def _to_csv_bytes(exp_list):
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["ticker", "expiration_date"])
+    for d in exp_list:
+        writer.writerow([ticker, d])
+    return buf.getvalue().encode("utf-8")
+
+def fetch_raw_chain_json(api_key: str, underlying: str, expiration_date: str) -> dict:
+    url = f"{POLY_BASE}/v3/snapshot/options/{underlying.upper()}"
+    params = {
+        "expiration_date": expiration_date,
+        "order": "asc",
+        "limit": 1000,
+        "sort": "ticker",
+    }
+    resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+col1, col2 = st.columns([1,1])
+
+with col1:
+    exp_bytes = _to_csv_bytes(expirations)
+    st.download_button(
+        label="Скачать даты экспираций (CSV)",
+        data=exp_bytes,
+        file_name=f"{ticker}_expirations.csv",
+        mime="text/csv",
+    )
+
+with col2:
+    if selected_expirations:
+        if len(selected_expirations) == 1:
+            exp = selected_expirations[0]
+            try:
+                data = fetch_raw_chain_json(api_key, ticker, exp)
+                json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+                st.download_button(
+                    label=f"Скачать JSON по экспирации {exp}",
+                    data=json_bytes,
+                    file_name=f"{ticker}_{exp}_polygon_raw.json",
+                    mime="application/json",
+                )
+            except Exception as e:
+                st.error(f"Ошибка при получении JSON: {e}")
+        else:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as z:
+                for exp in selected_expirations:
+                    try:
+                        data = fetch_raw_chain_json(api_key, ticker, exp)
+                        content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+                        z.writestr(f"{ticker}_{exp}_polygon_raw.json", content)
+                    except Exception as e:
+                        z.writestr(f"ERROR_{ticker}_{exp}.txt", str(e))
+            zip_buf.seek(0)
+            st.download_button(
+                label=f"Скачать JSON по {len(selected_expirations)} экспирациям (ZIP)",
+                data=zip_buf.getvalue(),
+                file_name=f"{ticker}_polygon_raw_multi.zip",
+                mime="application/zip",
+            )
+    else:
+        st.info("Выберите хотя бы одну дату экспирации, чтобы скачать JSON.")
+
+
 st.caption("Источник данных: Polygon v3. Авторизация — Bearer token из Streamlit Secrets (POLYGON_API_KEY).")
