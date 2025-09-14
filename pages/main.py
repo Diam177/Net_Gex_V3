@@ -1,7 +1,7 @@
 import json
 import streamlit as st
 
-from lib.Tiker_data import (
+from lib.tiker_data import (
     list_future_expirations,
     download_snapshot_json,
     snapshots_zip_bytes,
