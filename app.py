@@ -59,16 +59,14 @@ def choose_nearest(expirations: List[str]) -> Optional[str]:
             return e
     return expirations[0]
 
-# ============== UI =================
+# ================= UI =================
 
 api_key = st.secrets.get("POLYGON_API_KEY", None)
 if not api_key:
     st.error("POLYGON_API_KEY отсутствует в Secrets.")
     st.stop()
 
-ticker = st.text_input("Тикер", value="SPY", key="ticker_input").strip().upper()
-if not ticker:
-    ticker = "SPY"
+ticker = st.text_input("Тикер", value="SPY").strip().upper() or "SPY"
 
 with st.spinner(f"Запрашиваю даты экспираций для {ticker}..."):
     try:
@@ -82,7 +80,6 @@ if not expirations:
     st.stop()
 
 st.session_state['expirations_list'] = list(expirations)
-
 nearest = choose_nearest(expirations) or expirations[0]
 selected_expirations = st.multiselect("Выберите даты экспирации", options=expirations, default=[nearest])
 st.session_state['selected_ticker'] = ticker
@@ -99,29 +96,28 @@ def _to_csv_bytes(exp_list, ticker_val):
     return buf.getvalue().encode("utf-8")
 
 def fetch_raw_chain_json(api_key: str, underlying: str, expiration_date: str) -> dict:
-    url = f"{POLY_BASE}/v3/snapshot/options/{underlying.upper()}"
-    # Основной вариант
-    params = {"expiration_date": expiration_date, "order": "asc", "limit": 1000, "sort": "ticker"}
-    resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
-    if resp.status_code == 400:
-        # упрощённые параметры
-        params = {"expiration_date": expiration_date}
-        resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
-    if resp.status_code == 400:
-        # без фильтра по дате и потом фильтруем
-        params = {"order": "asc", "limit": 1000, "sort": "ticker"}
-        resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
+    base_url = f"{POLY_BASE}/v3/snapshot/options/{underlying.upper()}"
+    # лимит 250 (максимум для endpoint), пагинация по cursor
+    params = {"expiration_date": expiration_date, "order": "asc", "limit": 250, "sort": "ticker"}
+    results = []
+    safety_pages = 40
+    while safety_pages > 0:
+        resp = requests.get(base_url, headers=_poly_headers(api_key), params=params, timeout=30)
+        if resp.status_code == 400 and "Limit" in resp.text:
+            params.pop("limit", None)
+            resp = requests.get(base_url, headers=_poly_headers(api_key), params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        try:
-            results = data.get("results", [])
-            filtered = [r for r in results if str(r.get("expiration_date", ""))[:10] == expiration_date]
-            data["results"] = filtered
-            return data
-        except Exception:
-            return data
-    resp.raise_for_status()
-    return resp.json()
+        results.extend(data.get("results", []))
+        next_url = data.get("next_url") or data.get("next")
+        if not next_url:
+            break
+        cursor_token = next_url.split("cursor=")[-1] if isinstance(next_url, str) and "cursor=" in next_url else None
+        if not cursor_token:
+            break
+        params = {"cursor": cursor_token}
+        safety_pages -= 1
+    return {"results": results, "status": "OK"}
 
 col1, col2 = st.columns([1,1])
 
