@@ -37,10 +37,8 @@ def _coerce_results(data: Any) -> List[Dict]:
 def _infer_spot_from_snapshot(raw: List[Dict]) -> float | None:
     """
     Fallback-оценка S из снимка опционов:
-    - Берём страйки и |delta| близкие к 0.5 (окно 0.4..0.6)
-    - Взвешиваем по 1 / (| |delta|-0.5 | + 1e-6)
+    - Берём страйки и |delta| близкие к 0.5 (окно 0.2..0.8, вес 1/| |delta|-0.5 |)
     """
-    import math
     num = 0.0
     den = 0.0
 
@@ -65,9 +63,8 @@ def _infer_spot_from_snapshot(raw: List[Dict]) -> float | None:
             K = float(K); dlt = float(dlt)
         except Exception:
             continue
-        w = 1.0 / (abs(abs(dlt) - 0.5) + 1e-6)
-        # фильтр разумных дельт: 0.2 .. 0.8
         if 0.2 <= abs(dlt) <= 0.8 and K > 0:
+            w = 1.0 / (abs(abs(dlt) - 0.5) + 1e-6)
             num += w * K
             den += w
     if den > 0:
@@ -87,6 +84,7 @@ def _get_api_key() -> str | None:
 
 
 # --- UI: Controls -------------------------------------------------------------
+st.sidebar.markdown("### Действия")
 st.markdown("## Главная · Выбор тикера/экспирации и просмотр df_raw")
 
 api_key = _get_api_key()
@@ -139,6 +137,23 @@ if ticker and expiration:
         st.error(f"Ошибка Polygon: {e}")
     except Exception as e:
         st.error(f"Ошибка при загрузке snapshot JSON: {e}")
+
+# --- Sidebar: download raw provider JSON -------------------------------------
+if snapshot_js:
+    try:
+        raw_bytes = json.dumps(snapshot_js, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        fname = f"{ticker}_{expiration}.json"
+        st.sidebar.download_button(
+            label="Скачать сырой JSON (Polygon)",
+            data=raw_bytes,
+            file_name=fname,
+            mime="application/json",
+            use_container_width=True,
+        )
+    except Exception as e:
+        st.sidebar.error(f"Не удалось подготовить JSON к скачиванию: {e}")
+else:
+    st.sidebar.info("Выберите тикер и дату экспирации, чтобы загрузить snapshot и скачать JSON.")
 
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
