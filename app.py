@@ -141,6 +141,7 @@ col_dl1, col_dl2 = st.columns([1,1])
 with col_dl1:
     exp_bytes = _to_csv_bytes(expirations, ticker)
     st.download_button(
+        key="dl_exp_csv",
         label="Скачать даты экспираций (CSV)",
         data=exp_bytes,
         file_name=f"{ticker}_expirations.csv",
@@ -173,6 +174,7 @@ with col_dl2:
                         z.writestr(f"ERROR_{ticker}_{exp}.txt", str(e))
             zip_buf.seek(0)
             st.download_button(
+                key="dl_json_zip",
                 label=f"Скачать JSON по {len(selected_expirations)} датам (ZIP)",
                 data=zip_buf.getvalue(),
                 file_name=f"{ticker}_polygon_raw_multi.zip",
@@ -195,21 +197,37 @@ def _to_csv_bytes(exp_list):
 
 def fetch_raw_chain_json(api_key: str, underlying: str, expiration_date: str) -> dict:
     url = f"{POLY_BASE}/v3/snapshot/options/{underlying.upper()}"
-    params = {
-        "expiration_date": expiration_date,
-        "order": "asc",
-        "limit": 1000,
-        "sort": "ticker",
-    }
+    # 1) Основной вариант по твоему образцу
+    params = {"expiration_date": expiration_date, "order": "asc", "limit": 1000, "sort": "ticker"}
     resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
+    if resp.status_code == 400:
+        # 2) Упростим параметры — иногда strict-сортировка/limit дают 400 у отдельных тикеров
+        params = {"expiration_date": expiration_date}
+        resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
+    if resp.status_code == 400:
+        # 3) Последняя попытка: без фильтра по дате, дальше отфильтруем на клиенте
+        params = {"order": "asc", "limit": 1000, "sort": "ticker"}
+        resp = requests.get(url, headers=_poly_headers(api_key), params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        # отфильтруем по expiration_date в results, если структура содержит поле
+        try:
+            results = data.get("results", [])
+            filtered = [r for r in results if str(r.get("expiration_date", ""))[:10] == expiration_date]
+            data["results"] = filtered
+            return data
+        except Exception:
+            return data
     resp.raise_for_status()
     return resp.json()
+
 
 col1, col2 = st.columns([1,1])
 
 with col1:
     exp_bytes = _to_csv_bytes(expirations)
     st.download_button(
+        key="dl_exp_csv",
         label="Скачать даты экспираций (CSV)",
         data=exp_bytes,
         file_name=f"{ticker}_expirations.csv",
