@@ -14,6 +14,40 @@ import datetime as _dt
 
 # единственная внешняя зависимость — адаптер Polygon
 from lib import provider_polygon as _prov  # type: ignore
+import inspect
+
+
+def _safe_fetch_option_chain(ticker: str) -> dict:
+    """
+    Вызывает provider_polygon.fetch_option_chain, независимо от того,
+    как у него названы параметры (ticker/symbol) и принимает ли он позиционный аргумент.
+    """
+    func = getattr(_prov, "fetch_option_chain", None)
+    if func is None:
+        raise RuntimeError("provider_polygon.fetch_option_chain не найден")
+
+    try:
+        sig = inspect.signature(func)
+    except Exception:
+        sig = None
+
+    # Попробуем по имени параметров
+    if sig is not None:
+        params = list(sig.parameters.keys())
+        try:
+            if "ticker" in params:
+                return func(ticker=ticker)
+            if "symbol" in params:
+                return func(symbol=ticker)
+        except TypeError:
+            pass  # попробуем позиционно
+
+    # Позиционный вызов на всякий случай
+    try:
+        return func(ticker)
+    except TypeError:
+        # Последний шанс: без аргументов (если провайдер сам читает st.session_state)
+        return func()
 
 
 # ---------------------------
@@ -90,7 +124,7 @@ def _fetch_chain_polygon(ticker: str) -> dict:
     """
     Единственная точка загрузки опционной цепочки из Polygon.
     """
-    return _prov.fetch_option_chain(ticker=ticker)
+    return _safe_fetch_option_chain(ticker)
 
 
 def _fetch_ohlc_polygon(ticker: str, interval: str = "1m", limit: int = 500) -> dict:
