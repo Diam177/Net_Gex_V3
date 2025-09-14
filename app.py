@@ -76,24 +76,16 @@ def choose_nearest(expirations: List[str]) -> Optional[str]:
     return expirations[0]  # fallback
 
 # --- UI -----------------------------------------------------------------------
-
-st.title("Выбор тикера и даты экспирации (Polygon)")
-
 # Read API key from Streamlit Secrets
 api_key = st.secrets.get("POLYGON_API_KEY", None)
 if not api_key:
     st.error("POLYGON_API_KEY отсутствует в Secrets. Откройте Settings → Secrets и добавьте ключ.")
     st.stop()
 
-# Ticker selector (simple few defaults, but editable for any symbol)
-default_tickers = ["SPY", "AAPL", "MSFT", "NVDA", "TSLA"]
-col1, col2 = st.columns([1, 2])
-with col1:
-    ticker = st.selectbox("Тикер", options=default_tickers, index=0)
-with col2:
-    custom = st.text_input("Или введите другой тикер вручную", value="", placeholder="Например: SPX, QQQ, AMD...")
-    if custom.strip():
-        ticker = custom.strip().upper()
+# Поле ввода тикера (по умолчанию SPY)
+ticker = st.text_input("Тикер", value="SPY", placeholder="Например: SPX, QQQ, AMD...", key="ticker_input").strip().upper()
+if not ticker:
+    ticker = "SPY"
 
 # Fetch expirations when ticker is chosen
 with st.spinner(f"Запрашиваю даты экспираций для {ticker}..."):
