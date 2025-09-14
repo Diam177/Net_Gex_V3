@@ -183,6 +183,68 @@ def _split_raw_by_exp(chain: dict, selected_exps: List[str]) -> Dict[str, List[d
             out[e] = list(items)
     return out
 
+
+
+def _fmt_date(ts):
+    try:
+        return datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m-%d")
+    except Exception:
+        try:
+            return datetime.utcfromtimestamp(int(str(ts)[:10])).strftime("%Y-%m-%d")
+        except Exception:
+            return str(ts)
+
+def _parse_chain_with_compute(chain_obj) -> Tuple[float, List[str], Dict[str, List[dict]]]:
+    """Use lib.compute.extract_core_from_chain if available to robustly parse expirations and per-exp records."""
+    # If provider returned (data, content), take data
+    if isinstance(chain_obj, (list, tuple)) and len(chain_obj) >= 1:
+        chain_obj = chain_obj[0]
+
+    extractor = None
+    for modname in ("lib.compute", "compute"):
+        try:
+            mod = __import__(modname, fromlist=["extract_core_from_chain"])
+            extractor = getattr(mod, "extract_core_from_chain", None)
+            if extractor:
+                break
+        except Exception:
+            continue
+    if extractor is None:
+        # fallback to simple dict-based extraction (old path)
+        spot, exps = _extract_spot_and_exps(chain_obj if isinstance(chain_obj, dict) else {})
+        return spot, exps, {}
+
+    try:
+        quote, t0, S, expirations, blocks_by_date = extractor(chain_obj)
+    except Exception:
+        # fallback
+        spot, exps = _extract_spot_and_exps(chain_obj if isinstance(chain_obj, dict) else {})
+        return spot, exps, {}
+
+    # expirations may be unix timestamps; normalize to 'YYYY-MM-DD' strings
+    exp_labels = [_fmt_date(e) for e in expirations]
+    # Build raw_by_exp: map each exp label to list of raw records
+    raw_map: Dict[str, List[dict]] = {}
+    for k, v in (blocks_by_date or {}).items():
+        lbl = _fmt_date(k)
+        try:
+            # v may be dict with 'options' or already a list
+            if isinstance(v, dict) and "options" in v:
+                recs = v["options"]
+            elif isinstance(v, list):
+                recs = v
+            else:
+                # some providers nest deeper
+                recs = list(v.values())[0] if isinstance(v, dict) and v else []
+        except Exception:
+            recs = []
+        raw_map[lbl] = recs
+    # Ensure keys for all expirations exist
+    for lbl in exp_labels:
+        raw_map.setdefault(lbl, [])
+    return float(S or 0.0), exp_labels, raw_map
+
+
 def _normalize_ohlc(payload) -> Optional[pd.DataFrame]:
     if payload is None:
         return None
@@ -247,13 +309,13 @@ def get_raw_by_exp(
     ohlc_limit: int = 500,
 ) -> TikerRawResult:
     chain = _fetch_chain(ticker)
-    spot, exps = _extract_spot_and_exps(chain)
-    if not exps:
+    spot, exps, raw_prepared = _parse_chain_with_compute(chain)
+if not exps:
         return TikerRawResult(ticker=ticker, spot=spot, expirations=[], selected=[], raw_by_exp={}, ohlc=None, day_high=None, day_low=None)
     if not selected_exps:
         default = _nearest_exp(exps)
         selected_exps = [default] if default else []
-    raw_by_exp = _split_raw_by_exp(chain, selected_exps)
+    raw_by_exp = raw_prepared if raw_prepared else _split_raw_by_exp(chain if isinstance(chain, dict) else {}, selected_exps)
     ohlc_df = None
     day_hi = day_lo = None
     if need_ohlc:
