@@ -238,6 +238,8 @@ if raw_records:
 
             # 7) Финальная таблица (NetGEX/AG + PZ/ER) для выбранной экспирации
             try:
+
+                from lib.final_table import build_final_tables_from_corr, FinalTableConfig
                 if df_corr is not None and windows:
                     final_tables = build_final_tables_from_corr(df_corr, windows)
                     exps = list(final_tables.keys())
