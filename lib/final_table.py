@@ -26,6 +26,87 @@ from sanitize_window import (
     SanitizerConfig,
     sanitize_and_window_pipeline,
 )
+
+# ---------------------------------------------------------------------
+# Helper: flatten Polygon snapshot records into a flat dict structure.
+#
+# Polygon's v3 snapshot returns option data nested inside 'details',
+# 'greeks' and 'day' sub-dictionaries.  The sanitization pipeline
+# expects records where fields like 'option_type', 'strike_price' and
+# 'expiration_date' live at the top level.  Without flattening, the
+# sanitize_window.build_raw_table skips all records because it cannot
+# find the strike price and thus the resulting DataFrame is empty.
+#
+# This helper inspects each record; if it contains a 'details' dict
+# (characteristic of Polygon snapshots), it constructs a new flat
+# dictionary with the keys expected by build_raw_table.  Records that
+# do not have a 'details' dict are returned untouched.
+#
+def _flatten_polygon_snapshot_records(records: Iterable[dict]) -> List[dict]:
+    """Flatten nested Polygon snapshot records.
+
+    Parameters
+    ----------
+    records : Iterable[dict]
+        A list or iterable of raw records from the snapshot.
+
+    Returns
+    -------
+    List[dict]
+        A list of dictionaries with top-level keys suitable for
+        sanitize_window.build_raw_table.
+    """
+    flat_records: List[dict] = []
+    for r in records:
+        # Only flatten dictionaries that have the nested Polygon structure
+        if isinstance(r, dict) and "details" in r:
+            details = r.get("details", {}) or {}
+            greeks  = r.get("greeks", {}) or {}
+            day     = r.get("day", {}) or {}
+
+            flat: dict = {}
+            # option side: contract_type may be 'call' or 'put'
+            contract_type = details.get("contract_type")
+            if contract_type:
+                flat["option_type"] = contract_type
+            # strike price
+            strike = details.get("strike_price")
+            if strike is not None:
+                flat["strike_price"] = strike
+            # expiration date
+            exp_date = details.get("expiration_date")
+            if exp_date:
+                flat["expiration_date"] = exp_date
+            # shares per contract / contract size
+            spc = details.get("shares_per_contract")
+            if spc is not None:
+                flat["shares_per_contract"] = spc
+            # open interest; default to None if missing
+            if "open_interest" in r:
+                flat["open_interest"] = r.get("open_interest")
+            # volume: use day.volume if present
+            vol = None
+            if day and isinstance(day, dict):
+                vol = day.get("volume")
+            if vol is not None:
+                flat["volume"] = vol
+            # implied volatility
+            iv = r.get("implied_volatility")
+            if iv is not None:
+                flat["implied_volatility"] = iv
+            # greeks: delta, gamma, vega
+            for greek_name in ("delta", "gamma", "vega"):
+                if greek_name in greeks:
+                    flat[greek_name] = greeks.get(greek_name)
+            # If nothing was extracted, fall back to the original record
+            if flat:
+                flat_records.append(flat)
+            else:
+                flat_records.append(r)
+        else:
+            # not a dict or not Polygon snapshot structure; append as-is
+            flat_records.append(r)
+    return flat_records
 from netgex_ag import (
     NetGEXAGConfig,
     compute_netgex_ag_per_expiry,
@@ -200,7 +281,16 @@ def process_from_raw(
     """
     sanitizer_cfg = sanitizer_cfg or {}
     s_cfg = SanitizerConfig(**sanitizer_cfg)
-    res = sanitize_and_window_pipeline(raw_records, S=S, cfg=s_cfg)
-    df_corr = res["df_corr"]; windows = res["windows"]
+    # Flatten raw records from Polygon snapshots into the structure
+    # expected by sanitize_window.build_raw_table.  If flattening
+    # fails for any reason, fall back to using raw_records directly.
+    try:
+        flat_records = _flatten_polygon_snapshot_records(raw_records)
+    except Exception:
+        flat_records = raw_records
+
+    res = sanitize_and_window_pipeline(flat_records, S=S, cfg=s_cfg)
+    df_corr = res["df_corr"]
+    windows = res["windows"]
 
     return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
