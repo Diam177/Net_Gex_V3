@@ -7,6 +7,7 @@ import json
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
+from lib.netgex_chart import render_netgex_bars
 
 # Project imports
 from lib.sanitize_window import sanitize_and_window_pipeline
@@ -16,8 +17,6 @@ from lib.tiker_data import (
     get_spot_price,
     PolygonError,
 )
-
-from lib.chart_final_table import render_final_chart
 
 st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
@@ -495,6 +494,12 @@ if raw_records:
                             if df_final is not None and not getattr(df_final, "empty", True):
                                 st.subheader(f"Финальная таблица · {exp_to_show}")
                                 st.dataframe(df_final, use_container_width=True, hide_index=True)
+                                # --- Net GEX chart (under the final table) ---
+                                try:
+                                    render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
+                                except Exception as _chart_e:
+                                    st.error('Не удалось отобразить чарт Net GEX')
+                                    st.exception(_chart_e)
                             else:
                                 st.info("Финальная таблица пуста для выбранной экспирации.")
             except Exception as _e:
@@ -503,26 +508,3 @@ if raw_records:
     except Exception as e:
             st.error("Ошибка пайплайна sanitize/window.")
             st.exception(e)
-
-# --- Визуализация финальной таблицы (чарт) — в самом низу страницы ---
-try:
-    import pandas as _pd  # локальный импорт, чтобы не зависеть от области видимости
-    if "df_final_multi" in locals() and isinstance(df_final_multi, _pd.DataFrame) and not df_final_multi.empty:
-        render_final_chart(
-            df_final_multi,
-            title=ticker if ("ticker" in globals() or "ticker" in locals()) else None,
-            spot=S_med if ("S_med" in globals() or "S_med" in locals()) else None,
-            show_toggles=True,
-            height=520,
-        )
-    elif "df_final" in locals() and isinstance(df_final, _pd.DataFrame) and not df_final.empty:
-        render_final_chart(
-            df_final,
-            title=ticker if ("ticker" in globals() or "ticker" in locals()) else None,
-            spot=None,  # для Single спот возьмём из df["S"]
-            show_toggles=True,
-            height=520,
-        )
-except Exception as _chart_err:
-    st.error("Ошибка построения финальной диаграммы.")
-    st.exception(_chart_err)
