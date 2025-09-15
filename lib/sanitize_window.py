@@ -23,6 +23,44 @@ import numpy as np
 import pandas as pd
 
 
+
+def _parse_expiration_to_ts(exp_raw):
+    """Parse expiration to unix timestamp (seconds, UTC).
+    - If number-like UNIX ts (seconds), return as float.
+    - If string date without time (YYYY-MM-DD), interpret as 16:00 ET (20:00 UTC) end-of-day.
+    - Otherwise try robust UTC parsing.
+    """
+    # Numeric epoch seconds (keep as-is)
+    if isinstance(exp_raw, (int, float)) and exp_raw > 10_000:
+        try:
+            return float(exp_raw)
+        except Exception:
+            return None
+
+    # String-like
+    exp_str = str(exp_raw) if exp_raw is not None else None
+    if not exp_str:
+        return None
+
+    # First: direct UTC parse
+    dt_utc = None
+    try:
+        dt_utc = pd.to_datetime(exp_str, utc=True)
+    except Exception:
+        try:
+            dt_utc = pd.to_datetime(exp_str).tz_localize("UTC")
+        except Exception:
+            return None
+
+    ts = float(dt_utc.timestamp())
+
+    # If the source looks like a date-only (YYYY-MM-DD) and came as midnight UTC,
+    # shift to market close in US (16:00 ET = 20:00 UTC)
+    if isinstance(exp_str, str) and len(exp_str) == 10:
+        if dt_utc.hour == 0 and dt_utc.minute == 0 and dt_utc.second == 0:
+            ts += 20 * 3600.0  # +20:00:00
+    return ts
+
 # -----------------------
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # -----------------------
@@ -183,20 +221,9 @@ def build_raw_table(
             continue
 
         exp_raw = _get_nested(r, ["expiration", "expiration_date", "expiry", "expDate", "t"])
-        if isinstance(exp_raw, (int, float)) and exp_raw > 10_000:
-            # unix ts
-            exp_ts = float(exp_raw)
-            exp_str = datetime.utcfromtimestamp(exp_ts).strftime("%Y-%m-%d")
-        else:
-            exp_str = str(exp_raw) if exp_raw is not None else None
-            try:
-                exp_ts = pd.to_datetime(exp_str).tz_localize("UTC").timestamp()
-            except Exception:
-                # попробуем без таймзоны
-                try:
-                    exp_ts = pd.to_datetime(exp_str).timestamp()
-                except Exception:
-                    exp_ts = None
+        # Robust expiration parsing with market-close adjustment (20:00 UTC for date-only strings)
+        exp_ts = _parse_expiration_to_ts(exp_raw)
+        exp_str = datetime.utcfromtimestamp(exp_ts).strftime("%Y-%m-%d") if exp_ts is not None else (str(exp_raw) if exp_raw is not None else None)
 
         oi = _get_nested(r, ["open_interest", "openInterest", "oi"], 0) or 0
         vol = _get_nested(r, ["volume", "vol"], 0) or 0
