@@ -88,7 +88,23 @@ def render_final_chart(
         return
 
     # Базовая ось X
-    x = df["K"].astype(float)
+    x_raw = df["K"].astype(float)
+    # Квантование страйков на сетку, чтобы исключить накопление ошибок с плавающей точкой
+    import numpy as _np
+    uniq_sorted = _np.sort(_np.unique(x_raw.values.astype(float)))
+    if uniq_sorted.size >= 2:
+        step = _np.median(_np.diff(uniq_sorted))
+        if _np.isfinite(step) and step > 0:
+            x = _np.round(x_raw.values.astype(float) / step) * step
+            x = _np.array(x, dtype=float)
+            uniq_sorted = _np.sort(_np.unique(x))
+        else:
+            x = x_raw.values.astype(float)
+    else:
+        x = x_raw.values.astype(float)
+    # Преобразуем назад в pandas.Series для совместимости
+    import pandas as _pd
+    x = _pd.Series(x)
 
     # Найдём серии
     y_netgex = _coerce_series(df, ["NetGEX_1pct", "NetGEX", "NetGEX_1pct_M"])  # M тоже ок — масштаб правой оси не привязан
