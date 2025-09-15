@@ -92,13 +92,13 @@ def render_netgex_bars(
         step = float(np.nanmin(diffs)) if diffs.size else 1.0
     else:
         step = 1.0
-    bar_width = step * 0.8
+    bar_width = step * 0.6
 
     # Палитра по знаку
     colors = np.where(Ys >= 0.0, COLOR_POS, COLOR_NEG)
 
     # Тумблер отображения
-    show = st.toggle("Показать Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
+    show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
     if not show:
         return
 
@@ -158,6 +158,7 @@ def render_netgex_bars(
         xaxis=dict(
             title=None,
             tickmode="array",
+            tickangle=0,
             tickvals=tick_vals,
             ticktext=tick_text,
             showgrid=False,
@@ -165,10 +166,10 @@ def render_netgex_bars(
             zeroline=False,
         ),
         yaxis=dict(
-            title="Net GEX (M)",
-            showgrid=True,
+            title="Net GEX",
+            showgrid=False,
             gridcolor=GRID_COLOR,
-            zeroline=True,
+            zeroline=False,
             zerolinecolor=GRID_COLOR,
         ),
     )
@@ -177,4 +178,4 @@ def render_netgex_bars(
     fig.update_yaxes(autorange=True)
     fig.update_xaxes(autorange=True)
 
-    st.plotly_chart(fig, use_container_width=True, theme=None)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config={'displayModeBar': False})
