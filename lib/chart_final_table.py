@@ -103,7 +103,7 @@ def render_final_chart(
 
     # Переключатели
     if show_toggles:
-        c1,c2,c3,c4,c5,c6,c7,c8,c9 = st.columns(9)
+        c1,c2,c3,c4,c5,c6,c7,c8,c9,c10 = st.columns(10)
         t_netgex = c1.toggle("Net Gex", value=True)
         t_put_oi = c2.toggle("Put OI", value=False, key="put_oi_t")
         t_call_oi= c3.toggle("Call OI", value=False, key="call_oi_t")
@@ -111,13 +111,14 @@ def render_final_chart(
         t_call_v = c5.toggle("Call Volume", value=False, key="call_v_t")
         t_ag     = c6.toggle("AG", value=False, key="ag_t")
         t_pz     = c7.toggle("PZ", value=False, key="pz_t")
-        t_pzf    = c8.toggle("PZ_FP", value=False, key="pzf_t")  # запасной флажок, если понадобится
-        t_gflip  = c9.toggle("G-Flip", value=False, key="gflip_t")  # placeholder
+        t_er_up  = c8.toggle("ER Up", value=False, key="er_up_t")
+        t_er_dn  = c9.toggle("ER Down", value=False, key="er_dn_t")
+        t_gflip  = c10.toggle("G-Flip", value=False, key="gflip_t")  # placeholder
     else:
         t_netgex=True; t_ag=False
-        t_put_oi=t_call_oi=t_put_v=t_call_v=t_pz=t_pzf=t_gflip=False
+        t_put_oi=t_call_oi=t_put_v=t_call_v=t_pz=t_er_up=t_er_dn=t_gflip=False
 
-    # Фигура с двумя Y-осями
+# Фигура с двумя Y-осями
     fig = go.Figure()
     fig.update_layout(
         template="plotly_dark",
@@ -164,28 +165,21 @@ def render_final_chart(
     # PZ / ER (тонкие линии на вторую ось, чтобы масштаб совпадал с AG)
     if t_pz and y_pz is not None:
         fig.add_trace(go.Scatter(x=x, y=y_pz.astype(float), name="PZ", mode="lines", line=dict(width=1, dash="dot"), yaxis="y2"))
-    if y_er_up is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_er_up.astype(float), name="ER Up", mode="lines", line=dict(width=1, dash="dash"), yaxis="y2", visible="legendonly"))
-    if y_er_dn is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_er_dn.astype(float), name="ER Down", mode="lines", line=dict(width=1, dash="dash"), yaxis="y2", visible="legendonly"))
+    if t_pz and y_er_up is not None:
+        fig.add_trace(
+            go.Scatter(x=x, y=y_er_up.astype(float), name="ER Up", mode="lines", line=dict(width=1, dash="dash"), yaxis="y2")
+        )
+    if t_pz and y_er_dn is not None:
+        fig.add_trace(
+            go.Scatter(x=x, y=y_er_dn.astype(float), name="ER Down", mode="lines", line=dict(width=1, dash="dash"), yaxis="y2")
+        )
 
     # Оси
     fig.update_layout(
         xaxis=dict(title="Strike"),
-        yaxis=dict(title="Net GEX", rangemode="tozero", fixedrange=True),
-        yaxis2=dict(title="Other parameters (AG)", overlaying="y", side="right", rangemode="tozero", fixedrange=True),
+        yaxis=dict(title="Net GEX", rangemode="tozero"),
+        yaxis2=dict(title="Other parameters (AG)", overlaying="y", side="right", rangemode="tozero"),
     )
-
-    # Обозначим каждый страйк на оси X и отключим масштабирование по X
-    try:
-        strikes = list(map(float, x.tolist()))
-    except Exception:
-        strikes = [float(v) for v in x]
-    uniq = sorted(set(strikes))
-    def _fmt_tick(v):
-        iv = int(round(v))
-        return str(iv) if abs(v - iv) < 1e-8 else ('{:.2f}'.format(v).rstrip('0').rstrip('.'))
-    fig.update_xaxes(tickmode="array", tickvals=uniq, ticktext=[_fmt_tick(v) for v in uniq], fixedrange=True)
 
     # Вертикальная линия spot (золотая)
     spot_val = float(spot) if spot is not None else _safe_float_median(_coerce_series(df, ["S"]))
@@ -197,4 +191,4 @@ def render_final_chart(
     if title:
         fig.update_layout(title=dict(text=title, x=0.02, xanchor="left"))
 
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False})
+    st.plotly_chart(fig, use_container_width=True)
