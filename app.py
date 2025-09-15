@@ -400,61 +400,6 @@ if raw_records:
                             if df_final is not None and not getattr(df_final, "empty", True):
                                 st.subheader(f"Финальная таблица · {exp_to_show}")
                                 st.dataframe(df_final, use_container_width=True, hide_index=True)
-                                # --- Чарт профиля по страйкам из финальной таблицы ---
-                                try:
-                                    from lib.final_table_chart import figure_from_final_df
-                                    present = {
-                                        "Put OI": "put_oi" in df_final.columns,
-                                        "Call OI": "call_oi" in df_final.columns,
-                                        "Put Volume": "put_vol" in df_final.columns,
-                                        "Call Volume": "call_vol" in df_final.columns,
-                                        "AG": ("AG_1pct_M" in df_final.columns) or ("AG_1pct" in df_final.columns),
-                                        "Power Zone": "PZ" in df_final.columns,
-                                        "ER Up": "ER_Up" in df_final.columns,
-                                        "ER Down": "ER_Down" in df_final.columns,
-                                    }
-                                    cols = st.columns(4)
-                                    enabled = {}
-                                    i = 0
-                                    for label, exists in present.items():
-                                        if not exists:
-                                            continue
-                                        with cols[i % 4]:
-                                            enabled[label] = st.checkbox(label, value=True, key=f"ftc_{label.replace(' ', '_')}")
-                                        i += 1
-                                    fig = figure_from_final_df(df_final, enabled=enabled)
-                                    st.plotly_chart(fig, use_container_width=True)
-                                except Exception as _chart_e:
-                                    st.warning("Не удалось построить чарт по финальной таблице.")
-                                    st.exception(_chart_e)
-
-                                # --- Чарт профиля по страйкам из финальной таблицы ---
-                                try:
-                                    from lib.final_table_chart import figure_from_final_df
-                                    present = {
-                                        "Put OI": "put_oi" in df_final.columns,
-                                        "Call OI": "call_oi" in df_final.columns,
-                                        "Put Volume": "put_vol" in df_final.columns,
-                                        "Call Volume": "call_vol" in df_final.columns,
-                                        "AG": ("AG_1pct_M" in df_final.columns) or ("AG_1pct" in df_final.columns),
-                                        "Power Zone": "PZ" in df_final.columns,
-                                        "ER Up": "ER_Up" in df_final.columns,
-                                        "ER Down": "ER_Down" in df_final.columns,
-                                    }
-                                    cols = st.columns(4)
-                                    enabled, i = {}, 0
-                                    for label, exists in present.items():
-                                        if not exists:
-                                            continue
-                                        with cols[i % 4]:
-                                            enabled[label] = st.checkbox(label, value=True, key=f"ftc_{label.replace(' ','_')}")
-                                        i += 1
-                                    fig = figure_from_final_df(df_final, enabled=enabled)
-                                    st.plotly_chart(fig, use_container_width=True)
-                                except Exception as _chart_e:
-                                    st.warning("Не удалось построить чарт по финальной таблице.")
-                                    st.exception(_chart_e)
-
                             else:
                                 st.info("Финальная таблица пуста для выбранной экспирации.")
             except Exception as _e:
