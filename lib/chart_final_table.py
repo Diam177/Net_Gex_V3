@@ -63,6 +63,19 @@ def _split_pos_neg(y: pd.Series) -> Dict[str, pd.Series]:
     return {"pos": y_pos, "neg": y_neg}
 
 
+
+def _safe_float_median(series: Optional[pd.Series]) -> float:
+    """Return float(median(series)) or NaN if series is None/empty/non-numeric."""
+    if series is None:
+        return float("nan")
+    try:
+        s = pd.to_numeric(series, errors="coerce").dropna()
+        if s.empty:
+            return float("nan")
+        return float(np.nanmedian(s.values))
+    except Exception:
+        return float("nan")
+
 def render_final_chart(
     df: pd.DataFrame,
     title: Optional[str] = None,
@@ -164,7 +177,7 @@ def render_final_chart(
     )
 
     # Вертикальная линия spot (золотая)
-    spot_val = float(spot) if spot is not None else float(np.nanmedian(_coerce_series(df, ["S"]) or pd.Series([np.nan])))
+    spot_val = float(spot) if spot is not None else _safe_float_median(_coerce_series(df, ["S"]))
     if math.isfinite(spot_val):
         fig.add_vline(x=spot_val, line_width=2, line_dash="solid", line_color="#f1c40f")
         fig.add_annotation(x=spot_val, yref="paper", y=1.05, text=f"Price: {spot_val:.2f}", showarrow=False, font=dict(color="#f1c40f"))
