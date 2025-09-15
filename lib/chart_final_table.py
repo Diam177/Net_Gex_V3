@@ -88,7 +88,8 @@ def render_final_chart(
         st.caption("Нет данных для отображения.")
         return
 
-    # --- X: категориальная ось со всеми страйками из финальной таблицы ---
+    
+# --- X: категориальная ось со всеми страйками из финальной таблицы ---
     import numpy as _np
     K_vals = df["K"].astype(float).values
 
@@ -104,19 +105,22 @@ def render_final_chart(
     else:
         Kq = K_vals.astype(float)
 
-    # Полный упорядоченный список страйков и их строковые метки
+    # Полный упорядоченный список страйков
+    uniq_strikes = _np.sort(_np.unique(Kq)).tolist()
+
+    # Человекочитаемый формат и "сырые" уникальные метки категорий
     def _fmt_tick(v: float) -> str:
         iv = int(round(float(v)))
         return str(iv) if abs(float(v) - iv) < 1e-8 else ('{:.2f}'.format(float(v)).rstrip('0').rstrip('.'))
+    def _raw_label(v: float) -> str:
+        return ('{:.8f}'.format(float(v))).rstrip('0').rstrip('.')
 
-    uniq_strikes = _np.sort(_np.unique(Kq)).tolist()
-    x_labels = [_fmt_tick(v) for v in uniq_strikes]
-    _label_map = {float(k): _fmt_tick(k) for k in uniq_strikes}
+    category_vals = [_raw_label(v) for v in uniq_strikes]  # стабильные категории
+    tick_texts    = [_fmt_tick(v) for v in uniq_strikes]   # подписи
 
-    # Категориальные X для каждой строки
-    x = [_label_map[float(k)] for k in Kq]
-
-    # --- Данные серий ---
+    # Карта: квантованное значение -> "сырая" метка категории
+    _label_map = {float(k): _raw_label(k) for k in uniq_strikes}
+    x = [_label_map[float(k)] for k in Kq]# --- Данные серий ---
     y_netgex = _coerce_series(df, ["NetGEX_1pct", "NetGEX", "NetGEX_1pct_M"])
     y_ag     = _coerce_series(df, ["AG_1pct", "AG", "AG_1pct_M"])
     y_call_oi = _coerce_series(df, ["call_oi", "Call OI", "callOI"])
