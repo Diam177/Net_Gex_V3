@@ -218,6 +218,99 @@ if raw_records:
                     df_corr = pd.concat(df_corr_multi_list, ignore_index=True)
                 if windows_multi:
                     windows = windows_multi
+                    # --- Соберём промежуточные таблицы по каждой экспирации для ZIP-скачивания ---
+                    try:
+                        import io, zipfile
+                        import pandas as pd
+
+                        multi_exports = {}  # exp -> {name: DataFrame}
+                        for _exp in selected_exps:
+                            try:
+                                js_e = download_snapshot_json(ticker, _exp, api_key)
+                                recs_e = _coerce_results(js_e)
+                                res_e = sanitize_and_window_pipeline(recs_e, S=S)
+
+                                df_raw_e    = res_e.get("df_raw")
+                                df_marked_e = res_e.get("df_marked")
+                                df_corr_e   = res_e.get("df_corr")
+                                df_weights_e= res_e.get("df_weights")
+                                windows_e   = res_e.get("windows") or {}
+                                window_raw_e= res_e.get("window_raw")
+                                window_corr_e=res_e.get("window_corr")
+
+                                # windows (табличный вид) для этой экспирации
+                                df_windows_e = None
+                                try:
+                                    if windows_e and isinstance(windows_e, dict) and df_weights_e is not None:
+                                        rows_w = []
+                                        idxs = windows_e.get(_exp, [])
+                                        if hasattr(df_weights_e, "empty") and not df_weights_e.empty:
+                                            gW = df_weights_e[df_weights_e["exp"] == _exp].sort_values("K").reset_index(drop=True)
+                                            for i in list(idxs):
+                                                ii = int(i)
+                                                if 0 <= ii < len(gW):
+                                                    rows_w.append({
+                                                        "exp": _exp,
+                                                        "row_index": ii,
+                                                        "K": float(gW.loc[ii, "K"]),
+                                                        "w_blend": float(gW.loc[ii, "w_blend"]),
+                                                    })
+                                        if rows_w:
+                                            df_windows_e = pd.DataFrame(rows_w, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
+                                except Exception:
+                                    df_windows_e = None
+
+                                multi_exports[_exp] = {
+                                    "df_raw": df_raw_e,
+                                    "df_marked": df_marked_e,
+                                    "df_corr": df_corr_e,
+                                    "df_weights": df_weights_e,
+                                    "windows_table": df_windows_e,
+                                    "window_raw": window_raw_e,
+                                    "window_corr": window_corr_e,
+                                }
+                            except Exception:
+                                # пропускаем проблемные даты, ZIP соберётся из удачных
+                                pass
+
+                        # Кнопка скачивания ZIP (только если есть хоть что-то)
+                        def _zip_multi_intermediate(exports: dict) -> io.BytesIO:
+                            bio = io.BytesIO()
+                            with zipfile.ZipFile(bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                                for exp_key, tbls in (exports or {}).items():
+                                    for name, df in (tbls or {}).items():
+                                        if df is None:
+                                            continue
+                                        try:
+                                            if hasattr(df, "empty") and df.empty:
+                                                continue
+                                        except Exception:
+                                            pass
+                                        try:
+                                            csv_bytes = df.to_csv(index=False).encode("utf-8")
+                                        except Exception:
+                                            # В крайнем случае, превращаем в CSV через str()
+                                            csv_bytes = str(df).encode("utf-8")
+                                        zf.writestr(f"{exp_key}/{name}.csv", csv_bytes)
+                            bio.seek(0)
+                            return bio
+
+                        if any(tbl is not None and (not getattr(tbl, "empty", True)) 
+                               for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
+                            zip_bytes = _zip_multi_intermediate(multi_exports)
+                            fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
+                            st.download_button(
+                                "Скачать промежуточные таблицы (ZIP)",
+                                data=zip_bytes.getvalue(),
+                                file_name=fname,
+                                mime="application/zip",
+                                type="primary",
+                                use_container_width=False,
+                            )
+                    except Exception as _zip_err:
+                        st.warning("Не удалось подготовить ZIP с промежуточными таблицами.")
+                        st.exception(_zip_err)
+
         except Exception as _e_multi:
             st.warning("Multi-exp: не удалось объединить серии.")
             st.exception(_e_multi)
