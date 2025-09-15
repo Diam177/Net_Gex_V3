@@ -483,6 +483,12 @@ if raw_records:
 
                         st.subheader("Финальная таблица · SUM(" + ", ".join(exp_list) + f") · веса={weight_mode}")
                         st.dataframe(df_final_multi, use_container_width=True, hide_index=True)
+                        # --- Net GEX chart (Multi: aggregated) ---
+                        try:
+                            render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
+                        except Exception as _chart_em:
+                            st.error('Не удалось отобразить чарт Net GEX (Multi)')
+                            st.exception(_chart_em)
 
                     else:
                         # --- SINGLE режим: как было ---
