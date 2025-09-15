@@ -22,15 +22,15 @@ import numpy as np
 import pandas as pd
 
 # Внешние модули пайплайна (должны быть в PYTHONPATH или рядом)
-from lib.sanitize_window import (
+from sanitize_window import (
     SanitizerConfig,
     sanitize_and_window_pipeline,
 )
-from lib.netgex_ag import (
+from netgex_ag import (
     NetGEXAGConfig,
     compute_netgex_ag_per_expiry,
 )
-from lib.power_zone_er import compute_power_zone_and_er
+from power_zone_er import compute_power_zone_and_er
 
 
 # --------- конфиг ---------
