@@ -25,9 +25,10 @@ import pandas as pd
 
 
 def _parse_expiration_to_ts(exp_raw):
-    """Parse expiration to unix timestamp (seconds, UTC).
+    """Parse expiration to unix timestamp (seconds, UTC), DST-aware.
     - If number-like UNIX ts (seconds), return as float.
-    - If string date without time (YYYY-MM-DD), interpret as 16:00 ET (20:00 UTC) end-of-day.
+    - If string date without time (YYYY-MM-DD), interpret as end-of-day market close
+      at 16:00 America/New_York for that calendar date (DST-aware), then convert to UTC.
     - Otherwise try robust UTC parsing.
     """
     # Numeric epoch seconds (keep as-is)
@@ -37,35 +38,57 @@ def _parse_expiration_to_ts(exp_raw):
         except Exception:
             return None
 
-    # String-like
     exp_str = str(exp_raw) if exp_raw is not None else None
     if not exp_str:
         return None
 
-    # First: direct UTC parse
-    dt_utc = None
+    # Try parsing generically first
     try:
         dt_utc = pd.to_datetime(exp_str, utc=True)
     except Exception:
         try:
             dt_utc = pd.to_datetime(exp_str).tz_localize("UTC")
         except Exception:
-            return None
+            dt_utc = None
 
-    ts = float(dt_utc.timestamp())
+    # If this is a pure date (YYYY-MM-DD), build 16:00 America/New_York and convert
+    is_date_only = isinstance(exp_str, str) and len(exp_str) == 10 and exp_str[4] == "-" and exp_str[7] == "-"
+    if is_date_only:
+        from datetime import datetime, time
+        try:
+            from zoneinfo import ZoneInfo  # Python 3.9+
+            ny = ZoneInfo("America/New_York")
+            y, m, d = map(int, exp_str.split("-"))
+            dt_ny = datetime(y, m, d, 16, 0, 0, tzinfo=ny)  # 16:00 ET (DST-aware)
+            ts = float(dt_ny.astimezone(tz=None).timestamp())  # to local tz, then timestamp -> epoch in UTC
+            # Better: convert to UTC explicitly to avoid ambiguity
+            ts = float(dt_ny.astimezone(ZoneInfo("UTC")).timestamp())
+            return ts
+        except Exception:
+            # Fallback: keep previous UTC parse if available; else assume 20:00 UTC
+            if dt_utc is not None:
+                # If parsed to midnight UTC, shift by 20:00 as a conservative default
+                if dt_utc.hour == 0 and dt_utc.minute == 0 and dt_utc.second == 0:
+                    return float(dt_utc.timestamp() + 20*3600.0)
+                return float(dt_utc.timestamp())
+            # Last resort: try naive parse and add 20:00 UTC
+            try:
+                naive = pd.to_datetime(exp_str)
+                return float(naive.tz_localize("UTC").timestamp() + 20*3600.0)
+            except Exception:
+                return None
 
-    # If the source looks like a date-only (YYYY-MM-DD) and came as midnight UTC,
-    # shift to market close in US (16:00 ET = 20:00 UTC)
-    if isinstance(exp_str, str) and len(exp_str) == 10:
-        if dt_utc.hour == 0 and dt_utc.minute == 0 and dt_utc.second == 0:
-            ts += 20 * 3600.0  # +20:00:00
-    return ts
+    # If not date-only, return the robust UTC parse if present
+    if dt_utc is not None:
+        return float(dt_utc.timestamp())
 
-# -----------------------
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# -----------------------
+    # As a final fallback, try naive -> UTC
+    try:
+        return float(pd.to_datetime(exp_str).tz_localize("UTC").timestamp())
+    except Exception:
+        return None
 
-_SEC_PER_YEAR = 365.0 * 24 * 3600.0
+_SEC_PER_YEAR = 365.25 * 24 * 3600.0
 
 def _yearfrac(now_ts: float, exp_ts: float) -> float:
     if exp_ts is None:
