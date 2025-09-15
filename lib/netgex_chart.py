@@ -150,6 +150,7 @@ def render_netgex_bars(
     tick_text = [str(int(k)) if float(k).is_integer() else f"{k:.2f}" for k in Ks]
 
     fig.update_layout(
+        dragmode=False,
         template="plotly_dark",
         paper_bgcolor=BG_COLOR,
         plot_bgcolor=BG_COLOR,
@@ -178,4 +179,4 @@ def render_netgex_bars(
     fig.update_yaxes(autorange=True)
     fig.update_xaxes(autorange=True)
 
-    st.plotly_chart(fig, use_container_width=True, theme=None, config={'displayModeBar': False})
+    st.plotly_chart(fig, use_container_width=True, theme=None, config={'displayModeBar': False, 'staticPlot': True})
