@@ -22,6 +22,7 @@ from .final_table import (
     process_from_raw,
     build_final_tables_from_corr,
 )
+from .final_table_chart import figure_from_final_df
 
 
 @st.cache_data(show_spinner=False)
@@ -74,6 +75,35 @@ def render_final_table(section_title: str = "Финальная таблица (
 
     # Показ таблицы и кнопки скачать
     st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+# --- Чарт «профиль по страйкам» из финальной таблицы ---
+try:
+    # Только те серии, которые реально присутствуют
+    present = {
+        "Put OI": "put_oi" in df_show.columns,
+        "Call OI": "call_oi" in df_show.columns,
+        "Put Volume": "put_vol" in df_show.columns,
+        "Call Volume": "call_vol" in df_show.columns,
+        "AG": ("AG_1pct_M" in df_show.columns) or ("AG_1pct" in df_show.columns),
+        "Power Zone": "PZ" in df_show.columns,
+        "ER Up": "ER_Up" in df_show.columns,
+        "ER Down": "ER_Down" in df_show.columns,
+    }
+    cols = st.columns(4)
+    enabled = {}
+    i = 0
+    for label, exists in present.items():
+        if not exists:
+            continue
+        with cols[i % 4]:
+            enabled[label] = st.checkbox(label, value=True, key=f"ftc_{label.replace(' ','_')}")
+        i += 1
+
+    fig = figure_from_final_df(df_show, enabled=enabled)
+    st.plotly_chart(fig, use_container_width=True)
+except Exception as e:
+    st.warning(f"Не удалось построить чарт по финальной таблице: {e}")
+
 
     # CSV (включая call_vol/put_vol, если присутствуют в df_show)
     csv_bytes = df_show.to_csv(index=False).encode("utf-8")
