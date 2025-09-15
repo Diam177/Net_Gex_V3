@@ -354,7 +354,17 @@ if raw_records:
                     import pandas as pd  # локальный импорт безопасен
                     df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
                     st.subheader("windows (табличный вид)")
-                    st.dataframe(df_windows, use_container_width=True, hide_index=True)
+                    # Приведём тип w_blend к float64 и зададим формат — уберёт предупреждение 2^53 в браузере
+                    try:
+                        df_windows = df_windows.astype({'w_blend': 'float64'})
+                        st.dataframe(
+                            df_windows,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={'w_blend': st.column_config.NumberColumn('w_blend', format='%.6f')},
+                        )
+                    except Exception:
+                        st.dataframe(df_windows, use_container_width=True, hide_index=True)
                 except Exception as _e:
                     st.warning("Не удалось отобразить windows в табличном виде.")
                     st.exception(_e)
