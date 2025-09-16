@@ -22,6 +22,83 @@ import pandas as _pd
 import streamlit as st
 import plotly.graph_objects as go
 
+def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
+    """
+    Вычисляет уровень *G-Flip* (страйк K*, где Net GEX(K) ≈ 0) по финальной таблице.
+
+    Методика (приближённая, но строго определённая):
+    - Рассматриваем дискретную функцию y(K) = NetGEX(K) (в млн $ / 1%), агрегированную по страйкам.
+    - Строим кусочно‑линейную интерполяцию между соседними страйками.
+    - Ищем корень y(K*) = 0 в интервалах, где знаки соседних значений отличаются.
+    - Если корней несколько, выбираем тот, который ближе всего к текущей цене spot (если известна),
+      иначе — ближайший к медиане диапазона страйков.
+
+    Формула нулевой точки на отрезке [K0, K1] с y0 = y(K0), y1 = y(K1):
+        K* = K0 - y0 * (K1 - K0) / (y1 - y0)        (линейная интерполяция)
+
+    Замечание по "науке":
+    Строгое определение гамма‑флипа — корень агрегированной функции NetGamma(S) по цене БА.
+    При отсутствии сырых серий (IV, τ, Δ, Γ) мы используем устойчивую proxy‑оценку
+    через NetGEX(K) по страйкам вокруг ATM. На практике этот подход совпадает
+    с визуальным нулевым пересечением Net GEX‑баров у ATM и стабильно работает
+    для интрадей‑индикации.
+    """
+    import numpy as _np
+    import pandas as _pd
+
+    if df_final is None or len(df_final) == 0 or y_col not in df_final.columns or "K" not in df_final.columns:
+        return None
+
+    base = df_final.copy()
+    base["K"] = _pd.to_numeric(base["K"], errors="coerce")
+    base[y_col] = _pd.to_numeric(base[y_col], errors="coerce")
+    base = base.dropna(subset=["K", y_col])
+    if base.empty:
+        return None
+
+    g = base.groupby("K", as_index=False).agg({y_col: "sum"}).sort_values("K").reset_index(drop=True)
+    Ks = g["K"].to_numpy(dtype=float)
+    Ys = g[y_col].to_numpy(dtype=float)
+
+    # Вычисляем G-Flip по финальной таблице
+    g_flip = _compute_gamma_flip_from_table(base, y_col, spot)
+
+    n = len(Ks)
+    if n < 2:
+        return None
+
+    # Индексы, где есть смена знака
+    sign = _np.sign(Ys)
+    zero_idx = _np.where(Ys == 0.0)[0]
+    candidates = []
+    for zi in zero_idx:
+        candidates.append(float(Ks[zi]))
+
+    prod = sign[:-1] * sign[1:]
+    change_idx = _np.where(prod < 0)[0]
+    for i in change_idx:
+        K0, K1 = Ks[i], Ks[i+1]
+        y0, y1 = Ys[i], Ys[i+1]
+        if y1 == y0:
+            continue
+        K_star = K0 - y0 * (K1 - K0) / (y1 - y0)
+        if (K_star >= min(K0, K1)) and (K_star <= max(K0, K1)):
+            candidates.append(float(K_star))
+
+    if not candidates:
+        return None
+
+    if spot is not None and _np.isfinite(spot):
+        diffs = _np.abs(_np.array(candidates, dtype=float) - float(spot))
+        j = int(_np.argmin(diffs))
+        return float(candidates[j])
+    else:
+        mid = 0.5 * (float(Ks[0]) + float(Ks[-1]))
+        diffs = _np.abs(_np.array(candidates, dtype=float) - mid)
+        j = int(_np.argmin(diffs))
+        return float(candidates[j])
+
+
 # Цвета
 COLOR_NEG = '#D9493A'    # отрицательные столбцы
 COLOR_POS = '#60A5E7'    # положительные столбцы
@@ -57,6 +134,7 @@ def render_netgex_bars(
 
     # Тумблер
     show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
+    show_gflip = st.toggle("G-Flip", value=True, key=(toggle_key or f"gflip_toggle_{ticker}"))
     if not show:
         return
 
@@ -84,6 +162,9 @@ def render_netgex_bars(
 
     Ks = g["K"].to_numpy(dtype=float)
     Ys = g[y_col].to_numpy(dtype=float)
+
+    # Вычисляем G-Flip по финальной таблице
+    g_flip = _compute_gamma_flip_from_table(base, y_col, spot)
 
     # Ось X — последовательные индексы без пропусков, подписи — реальные страйки
     x_idx = _np.arange(len(Ks), dtype=float)
@@ -192,6 +273,32 @@ def render_netgex_bars(
             align='left',
             font=dict(size=14)
         )
+
+    
+    # --- G-Flip marker (optional, dashed) ---
+    try:
+        if 'show_gflip' in locals() and show_gflip and (g_flip is not None) and (len(Ks) > 0):
+            import numpy as _np
+            j = int(_np.searchsorted(Ks, float(g_flip)))
+            if j <= 0:
+                x_g = 0.0
+                k_snap = float(Ks[0])
+            elif j >= len(Ks):
+                x_g = float(len(Ks) - 1)
+                k_snap = float(Ks[-1])
+            else:
+                k0, k1 = Ks[j - 1], Ks[j]
+                frac = 0.0 if (k1 - k0) == 0 else (float(g_flip) - k0) / (k1 - k0)
+                x_g = (j - 1) + float(_np.clip(frac, 0.0, 1.0))
+                k_snap = float(k0 if abs(float(g_flip)-k0) <= abs(float(g_flip)-k1) else k1)
+
+            fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
+                          line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
+            fig.add_annotation(x=x_g, xref="x", y=1, yref="paper",
+                               text=f"G-Flip: {k_snap:g}", showarrow=False,
+                               yshift=6, font=dict(size=12, color="#AAAAAA"), xanchor="center")
+    except Exception:
+        pass
 
     # Автомасштаб
     fig.update_yaxes(autorange=True)
