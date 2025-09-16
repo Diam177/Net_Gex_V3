@@ -112,6 +112,11 @@ def render_netgex_bars(
         "<style>div[data-testid='column']{padding-left:2px!important;padding-right:2px!important}</style>",
         unsafe_allow_html=True,
     )
+    # уменьшить шрифт подписей тумблеров (чуть меньше)
+    st.markdown(
+        "<style>label[data-testid='stWidgetLabel']{font-size:0.85rem!important}</style>",
+        unsafe_allow_html=True,
+    )
     col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns(10, gap="small")
     with col1:
         show = st.toggle("Net GEX", value=True,
