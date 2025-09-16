@@ -312,6 +312,13 @@ if raw_records:
                                         zf.writestr(f"{exp_key}/final_table.csv", fin.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
+                                # aggregated final table for Multi (used by chart)
+                                try:
+                                    if 'df_final_multi' in locals() and df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
+                                        zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
+                                except Exception:
+                                    pass
+
                             bio.seek(0)
                             return bio
                         if any(tbl is not None and (not getattr(tbl, "empty", True)) 
