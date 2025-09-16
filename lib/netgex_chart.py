@@ -114,7 +114,7 @@ def render_netgex_bars(
     )
     # уменьшить шрифт подписей тумблеров (чуть меньше)
     st.markdown(
-        "<style>label[data-testid='stWidgetLabel']{font-size:0.85rem!important}</style>",
+        "<style>label[data-testid='stWidgetLabel']{font-size:0.75rem!important}</style>",
         unsafe_allow_html=True,
     )
     col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns(10, gap="small")
