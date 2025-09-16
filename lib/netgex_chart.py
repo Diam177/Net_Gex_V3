@@ -156,6 +156,7 @@ def render_netgex_bars(
 
     # Подписи страйков по индексам
     fig.update_layout(
+        hoverlabel=dict(font=dict(size=10)),  # smaller hover font
         template="plotly_dark",
         paper_bgcolor=BG_COLOR,
         plot_bgcolor=BG_COLOR,
