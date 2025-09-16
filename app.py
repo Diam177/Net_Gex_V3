@@ -284,7 +284,7 @@ if raw_records:
 
                         # Кнопка скачивания ZIP (только если есть хоть что-то)
                         
-                        def _zip_multi_intermediate(exports: dict) -> io.BytesIO:
+                        def _zip_multi_intermediate(exports: dict, final_sum_df=None) -> io.BytesIO:
                             bio = io.BytesIO()
                             with zipfile.ZipFile(bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
                                 # write per-exp intermediates
@@ -318,12 +318,19 @@ if raw_records:
                                         zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
+                                # aggregated final table (sum) used by chart
+                                try:
+                                    if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
+                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
+                                except Exception:
+                                    pass
+
 
                             bio.seek(0)
                             return bio
                         if any(tbl is not None and (not getattr(tbl, "empty", True)) 
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
-                            zip_bytes = _zip_multi_intermediate(multi_exports)
+                            zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
                             st.download_button(
                                 "Скачать таблицы",
@@ -407,45 +414,43 @@ if raw_records:
                 _st_hide_subheader()
                 _st_hide_df(window_corr, use_container_width=True, hide_index=True)
 
-            # Кнопка скачивания ZIP со всеми таблицами (single)
-            try:
-                import io, zipfile
-                from lib.final_table import build_final_tables_from_corr, FinalTableConfig
-                def _zip_single_tables(res_dict, df_corr_single, windows_single, exp_str):
-                    bio = io.BytesIO()
-                    with zipfile.ZipFile(bio, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
-                        for name in ['df_raw','df_marked','df_corr','df_weights','window_raw','window_corr']:
-                            df = res_dict.get(name)
-                            if df is None:
-                                continue
-                            try:
-                                if hasattr(df, 'empty') and df.empty:
+            if 'mode_exp' in locals() and mode_exp != 'Multi':
+                # Кнопка скачивания ZIP со всеми таблицами (single)
+                try:
+                    import io, zipfile
+                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                    def _zip_single_tables(res_dict, df_corr_single, windows_single, exp_str):
+                        bio = io.BytesIO()
+                        with zipfile.ZipFile(bio, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+                            for name in ['df_raw','df_marked','df_corr','df_weights','window_raw','window_corr']:
+                                df = res_dict.get(name)
+                                if df is None:
                                     continue
+                                try:
+                                    if hasattr(df, 'empty') and df.empty:
+                                        continue
+                                except Exception:
+                                    pass
+                                try:
+                                    csv_bytes = df.to_csv(index=False).encode('utf-8')
+                                except Exception:
+                                    csv_bytes = str(df).encode('utf-8')
+                                zf.writestr(f"{exp_str}/{name}.csv", csv_bytes)
+                            # финальная таблица
+                            try:
+                                finals = build_final_tables_from_corr(df_corr_single, windows_single, cfg=FinalTableConfig())
+                                if exp_str in finals and finals[exp_str] is not None and not getattr(finals[exp_str], 'empty', True):
+                                    zf.writestr(f"{exp_str}/final_table.csv", finals[exp_str].to_csv(index=False).encode('utf-8'))
                             except Exception:
                                 pass
-                            try:
-                                csv_bytes = df.to_csv(index=False).encode('utf-8')
-                            except Exception:
-                                csv_bytes = str(df).encode('utf-8')
-                            zf.writestr(f"{exp_str}/{name}.csv", csv_bytes)
-                        # финальная таблица
-                        try:
-                            finals = build_final_tables_from_corr(df_corr_single, windows_single, cfg=FinalTableConfig())
-                            if exp_str in finals and finals[exp_str] is not None and not getattr(finals[exp_str], 'empty', True):
-                                zf.writestr(f"{exp_str}/final_table.csv", finals[exp_str].to_csv(index=False).encode('utf-8'))
-                        except Exception:
-                            pass
-                    bio.seek(0)
-                    return bio
-                exp_str = expiration if 'expiration' in locals() else 'exp'
-                zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
-                st.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
-            except Exception as _e_zip_single:
-                st.warning('Не удалось подготовить ZIP с таблицами (single).')
-                st.exception(_e_zip_single)
-
-
-            
+                        bio.seek(0)
+                        return bio
+                    exp_str = expiration if 'expiration' in locals() else 'exp'
+                    zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
+                    st.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+                except Exception as _e_zip_single:
+                    st.warning('Не удалось подготовить ZIP с таблицами (single).')
+                    st.exception(_e_zip_single)
             # 7) Финальная таблица (по df_corr + windows)
             try:
                 from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
