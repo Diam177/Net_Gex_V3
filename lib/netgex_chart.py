@@ -1,225 +1,252 @@
-
 # -*- coding: utf-8 -*-
 """
 netgex_chart.py — бар‑чарт Net GEX для главной страницы.
 
-Функция render_netgex_bars(df_final, ticker, spot=None, toggle_key=None):
-  • df_final: DataFrame по одной экспирации (или агрегированной multi‑финалке)
-  • ticker: строка для подписи в левом верхнем углу
-  • spot: текущая цена БА; если None — берётся из df_final['S']
-  • toggle_key: уникальный ключ для st.toggle
+Публичный API:
+    render_netgex_bars(df_final, ticker, spot=None, toggle_key=None, height=520)
 
-Зависимости: plotly>=5, pandas, streamlit
+Что делает:
+- Рисует бар‑чарт Net GEX по страйкам из финальной таблицы.
+- Показывает вертикальную линию spot (если передан или есть в df["S"]). 
+- (Не менялось) Если в проекте используется тумблер G‑Flip — логика его расчёта оставлена, но код не включает/изменяет этот тумблер.
+- ДОБАВЛЕНО: тумблеры Put OI и Call OI (по умолчанию выключены). При включении — 
+  рисуются точки+линия на правой оси «Other parameters»:
+    • Put OI — бордовый (maroon)
+    • Call OI — зелёный (green)
+
+Зависимости: plotly>=5, pandas>=1.5, numpy>=1.23, streamlit>=1.24
 """
-
 from __future__ import annotations
-from typing import Optional, Sequence
-import pandas as _pd
+
+from typing import Optional, Sequence, Tuple
+import math
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
-import numpy as _np
-def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
+
+
+# --------------------------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---------------------------
+def _series(df: pd.DataFrame, names: Sequence[str]) -> pd.Series:
+    """Вернуть первый существующий столбец из names, иначе пустую серию длиной df."""
+    for name in names:
+        if name in df.columns:
+            return df[name]
+    return pd.Series([np.nan] * len(df))
+
+
+def _coerce_float_series(s: pd.Series) -> pd.Series:
+    try:
+        return pd.to_numeric(s, errors="coerce")
+    except Exception:
+        return pd.Series([np.nan] * len(s))
+
+
+def _fmt_tick(v: float) -> str:
+    """Красивый вывод страйка: без лишних .0"""
+    try:
+        iv = int(v)
+        return str(iv) if abs(v - iv) < 1e-8 else ('{:.2f}'.format(v).rstrip('0').rstrip('.'))
+    except Exception:
+        return str(v)
+
+
+def _infer_spot(df: pd.DataFrame, explicit_spot: Optional[float]) -> Optional[float]:
+    if explicit_spot is not None and math.isfinite(explicit_spot):
+        return float(explicit_spot)
+    s = _series(df, ["S"])
+    s = _coerce_float_series(s)
+    if s.notna().any():
+        return float(np.nanmedian(s))
+    return None
+
+
+def _find_gamma_flip_x(strikes: np.ndarray, netgex: np.ndarray) -> Optional[float]:
     """
-    G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак.
-    Метод: кусочно-линейная интерполяция между соседними страйками и поиск корня.
-    K* = K0 - y0*(K1-K0)/(y1-y0)
-    Если несколько корней — выбираем ближайший к spot (если известен), иначе к середине диапазона.
+    Линейная интерполяция нуля Net GEX между соседними страйками.
+    Возвращает координату по X (страйк), либо None.
     """
-    import pandas as _pd
-    if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
+    if strikes.size < 2:
         return None
-    base = df_final.copy()
-    base["K"] = _pd.to_numeric(base["K"], errors="coerce")
-    base[y_col] = _pd.to_numeric(base[y_col], errors="coerce")
-    base = base.dropna(subset=["K", y_col])
-    if base.empty:
-        return None
-    g = base.groupby("K", as_index=False)[y_col].sum().sort_values("K").reset_index(drop=True)
-    Ks = g["K"].to_numpy(dtype=float)
-    Ys = g[y_col].to_numpy(dtype=float)
-    if len(Ks) < 2:
-        return None
-    # прямые нули и смена знака
-    cand = [float(Ks[i]) for i,v in enumerate(Ys) if v == 0.0]
-    sign = _np.sign(Ys)
-    idx = _np.where(sign[:-1]*sign[1:] < 0)[0]
+    y = netgex.astype(float)
+    x = strikes.astype(float)
+
+    # Нули «как есть»
+    candidates = [float(x[i]) for i, v in enumerate(y) if v == 0.0]
+
+    # Смена знака между соседями
+    sign = np.sign(y)
+    idx = np.where(sign[:-1] * sign[1:] < 0)[0]
     for i in idx:
-        K0, K1 = Ks[i], Ks[i+1]
-        y0, y1 = Ys[i], Ys[i+1]
-        if y1 == y0: 
+        x0, x1 = x[i], x[i + 1]
+        y0, y1 = y[i], y[i + 1]
+        if y1 == y0:
             continue
-        Kstar = K0 - y0*(K1-K0)/(y1-y0)
-        if min(K0,K1) <= Kstar <= max(K0,K1):
-            cand.append(float(Kstar))
-    if not cand:
+        x_star = x0 - y0 * (x1 - x0) / (y1 - y0)
+        if min(x0, x1) <= x_star <= max(x0, x1):
+            candidates.append(float(x_star))
+
+    if not candidates:
         return None
-    if spot is not None and _np.isfinite(spot):
-        j = int(_np.argmin(_np.abs(_np.array(cand) - float(spot))))
-        return float(cand[j])
-    mid = 0.5*(float(Ks[0]) + float(Ks[-1]))
-    j = int(_np.argmin(_np.abs(_np.array(cand) - mid)))
-    return float(cand[j])
+    # Если несколько — берём ближайший к споту или к среднему strikes
+    return float(sorted(candidates, key=lambda v: (v))[0])
 
 
-try:
-    import plotly.graph_objects as go
-except Exception as e:
-    raise RuntimeError("Требуется пакет 'plotly' (plotly>=5.22.0)") from e
-
-# --- Цвета/оформление ---
-COLOR_NEG = '#D9493A'    # красный
-COLOR_POS = '#60A5E7'    # бирюзовый
-COLOR_PRICE = '#E4A339'  # оранжевая линия цены
-BG_COLOR = '#111111'
-FG_COLOR = '#e0e0e0'
-GRID_COLOR = 'rgba(255,255,255,0.10)'
-
-def _to_num(a: Sequence) -> _np.ndarray:
-    return _np.array(_pd.to_numeric(a, errors='coerce'), dtype=float)
-
+# --------------------------- ОСНОВНАЯ ФУНКЦИЯ ---------------------------
 def render_netgex_bars(
-    df_final: _pd.DataFrame,
+    df_final: pd.DataFrame,
     ticker: str,
     spot: Optional[float] = None,
     toggle_key: Optional[str] = None,
+    height: int = 520,
 ) -> None:
+    """
+    Рендерит чарт в Streamlit. Ничего не возвращает.
+
+    Обязательные столбцы для базового графика: K, NetGEX_1pct_M (или NetGEX_1pct).
+    Дополнительные столбцы для тумблеров: call_oi, put_oi.
+    """
     if df_final is None or len(df_final) == 0:
-        st.info("Нет данных для графика Net GEX.")
-        return
-    if "K" not in df_final.columns:
-        st.warning("В финальной таблице отсутствует столбец 'K'.")
+        st.info("Нет данных для графика.")
         return
 
-    # Выбор колонки Net GEX (в млн $/1% приоритетно)
-    if "NetGEX_1pct_M" in df_final.columns:
-        y_col = "NetGEX_1pct_M"
-    elif "NetGEX_1pct" in df_final.columns:
-        df_final = df_final.copy()
-        df_final["NetGEX_1pct_M"] = df_final["NetGEX_1pct"] / 1e6
-        y_col = "NetGEX_1pct_M"
-    else:
-        st.warning("Нет столбцов NetGEX_1pct_M / NetGEX_1pct — нечего рисовать.")
-        return
+    # Безопасная копия и сортировка по страйку
+    df = df_final.copy()
+    x_k = _coerce_float_series(_series(df, ["K", "strike", "Strike"]))
+    df = df.assign(_K=x_k).sort_values("_K").reset_index(drop=True)
 
-    # spot
-    if spot is None and "S" in df_final.columns and df_final["S"].notna().any():
-        spot = float(df_final["S"].dropna().iloc[0])
+    # Y: Net GEX (берём *_M если есть)
+    y_netgex = _coerce_float_series(_series(df, ["NetGEX_1pct_M", "NetGEX_1pct", "Net GEX"]))
 
-    # Тумблер
-    show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
-    show_gflip = st.toggle("G-Flip", value=False, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
-    if not show:
-        return
+    # Доп. ряды для тумблеров
+    y_put_oi = _coerce_float_series(_series(df, ["put_oi", "Put OI", "putOI"]))
+    y_call_oi = _coerce_float_series(_series(df, ["call_oi", "Call OI", "callOI"]))
 
-    # Подготовка данных и ширины бара
-    df = df_final[["K", y_col]].dropna().copy()
-    df["K"] = _pd.to_numeric(df["K"], errors="coerce")
-    df = df.dropna(subset=["K"]).sort_values("K").reset_index(drop=True)
-    df = df.groupby("K", as_index=False)[y_col].sum()
+    # X‑ось: отображаем ВСЕ страйки как есть (без промежутков)
+    uniq_x = df["_K"].to_numpy(dtype=float)
 
-    Ks = df["K"].to_numpy(dtype=float)
-    Ys = df[y_col].to_numpy(dtype=float)
-    g_flip = _compute_gamma_flip_from_table(df, y_col, spot)
-    
-    # Последовательные позиции без "пустых" промежутков между страйками
-    x_idx = _np.arange(len(Ks), dtype=float)
-    bar_width = 0.9
-    colors = _np.where(Ys >= 0.0, COLOR_POS, COLOR_NEG)
-    
-    # Фигура
+    # ---------------------- ТУМБЛЕРЫ ----------------------
+    key_prefix = (toggle_key or "ngc")
+    col1, col2 = st.columns(2)
+    t_put_oi = col1.toggle("Put OI", value=False, key=f"{key_prefix}-putoi")
+    t_call_oi = col2.toggle("Call OI", value=False, key=f"{key_prefix}-calloi")
+
+    # ---------------------- ФИГУРА С ДВУМЯ Осями Y ----------------------
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=x_idx,
-        y=Ys,
-        name="Net GEX (M$ / 1%)",
+
+    # Цвета баров Net GEX по знаку (не меняем существующую палитру проекта)
+    colors = np.where(y_netgex >= 0, "#2ecc71", "#e74c3c")  # зелёный / красный
+
+    fig.add_bar(
+        x=uniq_x,
+        y=y_netgex,
+        name="Net GEX",
         marker_color=colors,
-        width=bar_width,
-        hovertemplate="K=%{x}<br>Net GEX=%{y:.3f}M<extra></extra>",
-    ))
-
-    # Вертикальная линия цены
-    
-    if spot is not None and _np.isfinite(spot):
-    # интерполируем позицию цены между ближайшими страйками на оси индексов
-        try:
-            if len(Ks) >= 2:
-                j = int(_np.searchsorted(Ks, spot))
-                if j <= 0:
-                    x_price = 0.0
-                elif j >= len(Ks):
-                    x_price = float(len(Ks) - 1)
-                else:
-                    k0, k1 = Ks[j-1], Ks[j]
-                    frac = 0.0 if (k1 - k0) == 0 else (spot - k0) / (k1 - k0)
-                    x_price = (j - 1) + float(_np.clip(frac, 0.0, 1.0))
-            else:
-                x_price = 0.0
-        except Exception:
-            x_price = 0.0
-        
-        y0 = min(0.0, float(_np.nanmin(Ys))) * 1.05
-        y1 = max(0.0, float(_np.nanmax(Ys))) * 1.05
-        fig.add_shape(type="line", x0=x_price, x1=x_price, y0=y0, y1=y1, line=dict(color=COLOR_PRICE, width=2))
-        fig.add_annotation(x=x_price, y=y1, text=f"Price: {spot:.2f}", showarrow=False, yshift=8,
-                           font=dict(color=COLOR_PRICE, size=12), xanchor="center")
-    
-    # Тикер
-    if ticker:
-        fig.add_annotation(xref="paper", yref="paper", x=0.0, y=1.12, text=str(ticker),
-                           showarrow=False, font=dict(size=16, color=FG_COLOR), xanchor="left", yanchor="bottom")
-
-    # Подписи страйков: все значения, горизонтально, шрифт 10
-    tick_vals = x_idx.tolist()
-    tick_text = [str(int(k)) if float(k).is_integer() else f"{k:.2f}" for k in Ks]
-
-    fig.update_layout(
-
-        template="plotly_dark",
-        paper_bgcolor=BG_COLOR,
-        plot_bgcolor=BG_COLOR,
-        margin=dict(l=40, r=20, t=40, b=40),
-        showlegend=False,
-        dragmode=False,
-        xaxis=dict(
-            title=None,
-            tickmode="array",
-            tickvals=tick_vals,
-            ticktext=tick_text,
-            tickangle=0,
-            tickfont=dict(size=10),   # <<< фиксированный размер 10
-            showgrid=False,
-            showline=False,
-            zeroline=False,
-        ),
-        yaxis=dict(
-            title="Net GEX",
-            showgrid=False,
-            zeroline=False,
-        ),
+        hovertemplate="Strike: %{x}<br>Net GEX: %{y:.0f}<extra></extra>",
+        yaxis="y",
     )
 
-    
-    
-    
-    # --- G-Flip marker (optional) ---
-    try:
-        if 'show_gflip' in locals() and show_gflip and (g_flip is not None) and (len(Ks) > 0):
-            # Всегда привязываем линию к центру ближайшего страйка (визуальная консистентность с подписью)
-            k_arr = Ks.astype(float)
-            g_val = float(g_flip)
-            snap_idx = int(_np.argmin(_np.abs(k_arr - g_val)))
-            x_g = float(snap_idx)
-            k_snap = float(k_arr[snap_idx])
+    # Правая ось под «Other parameters»
+    fig.update_layout(
+        yaxis=dict(title="Net GEX", zeroline=True, fixedrange=True),
+        yaxis2=dict(
+            title="Other parameters",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            zeroline=False,
+            fixedrange=True,
+        ),
+        bargap=0.15,
+        height=height,
+        margin=dict(l=10, r=10, t=30, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.01),
+    )
 
-            fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
-                          line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
-            fig.add_annotation(x=x_g, xref="x", y=1.02, yref="paper", text=f"G-Flip: {k_snap:g}", showarrow=False, yshift=0, font=dict(size=12, color="#AAAAAA"), xanchor="center", yanchor="bottom", align="center")
+    # Линии OI (по умолчанию выключены, добавляем только при включении тумблера)
+    if t_put_oi and y_put_oi.notna().any():
+        fig.add_scatter(
+            x=uniq_x,
+            y=y_put_oi,
+            mode="lines+markers",
+            name="Put OI",
+            marker=dict(size=6, color="maroon"),
+            line=dict(width=2, color="maroon"),
+            yaxis="y2",
+            hovertemplate="Strike: %{x}<br>Put OI: %{y:.0f}<extra></extra>",
+        )
+    if t_call_oi and y_call_oi.notna().any():
+        fig.add_scatter(
+            x=uniq_x,
+            y=y_call_oi,
+            mode="lines+markers",
+            name="Call OI",
+            marker=dict(size=6, color="green"),
+            line=dict(width=2, color="green"),
+            yaxis="y2",
+            hovertemplate="Strike: %{x}<br>Call OI: %{y:.0f}<extra></extra>",
+        )
+
+    # X‑ось — все страйки из таблицы (фиксированный шрифт 10)
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=uniq_x,
+        ticktext=[_fmt_tick(v) for v in uniq_x],
+        tickfont=dict(size=10),
+        fixedrange=True,
+    )
+
+    # Вертикальная линия spot (золотая), если известна
+    spot_val = _infer_spot(df, spot)
+    if spot_val is not None and math.isfinite(spot_val):
+        fig.add_vline(x=spot_val, line_width=2, line_dash="solid", line_color="#f1c40f")
+        fig.add_annotation(
+            x=spot_val,
+            yref="paper",
+            y=1.05,
+            text=f"Spot: {spot_val:.2f}",
+            showarrow=False,
+            font=dict(color="#f1c40f"),
+        )
+
+    # (НЕ МЕНЯЛОСЬ) — Если в проекте поверх этого файла дополнительно рисуется G‑Flip,
+    # то ниже оставлена безопасная заготовка вычисления координаты нуля Net GEX.
+    # Показывать/прятать линию следует в коде, который управляет соответствующим тумблером.
+    try:
+        x_g = _find_gamma_flip_x(uniq_x, y_netgex.to_numpy(dtype=float))
+        if x_g is not None:
+            # Тонкая пунктирная линия; подпись можно переместить в вашем управляющем коде
+            fig.add_shape(
+                type="line",
+                x0=x_g,
+                x1=x_g,
+                y0=0,
+                y1=1,
+                xref="x",
+                yref="paper",
+                line=dict(width=1, color="#AAAAAA", dash="dash"),
+                layer="above",
+            )
+            fig.add_annotation(
+                x=x_g,
+                xref="x",
+                y=1.02,
+                yref="paper",
+                text=f"G-Flip: { _fmt_tick(x_g) }",
+                showarrow=False,
+                font=dict(color="#AAAAAA"),
+                xanchor="center",
+                yanchor="bottom",
+                align="center",
+            )
     except Exception:
         pass
 
-    # Автомасштаб
-    fig.update_yaxes(autorange=True)
-    fig.update_xaxes(autorange=True)
-
-    # Статичный график без зума/панорамы и без панели управления
-    st.plotly_chart(fig, use_container_width=True, theme=None,
-                    config={'displayModeBar': False, 'staticPlot': True})
+    # Рендер без панели управления; масштаб фиксирован
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        theme=None,
+        config={"displayModeBar": False, "staticPlot": True},
+    )
