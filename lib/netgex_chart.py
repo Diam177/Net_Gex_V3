@@ -106,7 +106,7 @@ def render_netgex_bars(
 
     # Тумблер
     show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
-    show_gflip = st.toggle("G-Flip", value=True, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
+    show_gflip = st.toggle("G-Flip", value=False, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
     if not show:
         return
 
