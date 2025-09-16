@@ -183,6 +183,24 @@ def render_netgex_bars(
         ),
     )
 
+    # Аннотация с тикером: ровно по центру над значениями левой шкалы
+    if isinstance(ticker, str) and ticker.strip():
+        try:
+            ml = int(getattr(getattr(fig.layout, "margin", None), "l", 40) or 40)
+        except Exception:
+            ml = 40
+        fig.add_annotation(
+            xref='paper', yref='paper',
+            x=0, y=1,
+            xanchor='center', yanchor='top',
+            xshift=int(-ml/2),
+            text=ticker.upper(),
+            showarrow=False,
+            align='center',
+            font=dict(size=14)
+        )
+
+
     # Аннотация с тикером в левом верхнем углу (координаты бумаги)
     if isinstance(ticker, str) and ticker.strip():
         fig.add_annotation(
