@@ -182,6 +182,20 @@ def render_netgex_bars(
             fixedrange=True,   # запрет масштабирования по Y
         ),
     )
+    # Аннотация с тикером: верхний левый угол внутри области графика, сразу справа от подписей оси Y
+    if isinstance(ticker, str) and ticker.strip():
+        fig.add_annotation(
+            xref='paper', yref='paper',
+            x=0, y=1,
+            xanchor='left', yanchor='top',
+            xshift=12,     # вправо от левого края области графика
+            yshift=6,      # немного ниже верхней кромки
+            text=ticker.upper(),
+            showarrow=False,
+            align='left',
+            font=dict(size=14)
+        )
+
 
     # Аннотация с тикером в левом верхнем углу (координаты бумаги)
     if isinstance(ticker, str) and ticker.strip():
