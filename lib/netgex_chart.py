@@ -199,21 +199,33 @@ def render_netgex_bars(
     )
 
     
+    
     # --- G-Flip marker (optional) ---
     try:
         if 'show_gflip' in locals() and show_gflip and (g_flip is not None) and (len(Ks) > 0):
-            j = int(_np.searchsorted(Ks, float(g_flip)))
-            if j <= 0:
-                x_g = 0.0
-                k_snap = float(Ks[0])
-            elif j >= len(Ks):
-                x_g = float(len(Ks) - 1)
-                k_snap = float(Ks[-1])
+            # 1) Если G-Flip точно совпадает со страйком (с учётом небольшого допуска),
+            #    ставим линию ровно по центру соответствующего столбца (индекс бара).
+            import numpy as _np
+            matches = _np.where(_np.isclose(Ks.astype(float), float(g_flip), rtol=0.0, atol=1e-6))[0]
+            if matches.size > 0:
+                idx = int(matches[0])
+                x_g = float(idx)
+                k_snap = float(Ks[idx])
             else:
-                k0, k1 = Ks[j-1], Ks[j]
-                frac = 0.0 if (k1 - k0) == 0 else (float(g_flip) - k0) / (k1 - k0)
-                x_g = (j - 1) + float(_np.clip(frac, 0.0, 1.0))
-                k_snap = float(k0 if abs(float(g_flip)-k0) <= abs(float(g_flip)-k1) else k1)
+                # 2) Иначе — интерполяция между ближайшими страйками (как раньше)
+                j = int(_np.searchsorted(Ks, float(g_flip)))
+                if j <= 0:
+                    x_g = 0.0
+                    k_snap = float(Ks[0])
+                elif j >= len(Ks):
+                    x_g = float(len(Ks) - 1)
+                    k_snap = float(Ks[-1])
+                else:
+                    k0, k1 = Ks[j - 1], Ks[j]
+                    frac = 0.0 if (k1 - k0) == 0 else (float(g_flip) - k0) / (k1 - k0)
+                    x_g = (j - 1) + float(_np.clip(frac, 0.0, 1.0))
+                    k_snap = float(k0 if abs(float(g_flip)-k0) <= abs(float(g_flip)-k1) else k1)
+
             fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
                           line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
             fig.add_annotation(x=x_g, xref="x", y=1, yref="paper",
