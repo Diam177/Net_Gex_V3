@@ -7,6 +7,14 @@ import json
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
+
+# --- Helpers to hide tables from main page ---
+def _st_hide_df(*args, **kwargs):
+    # no-op: we suppress table rendering on main page per requirements
+    return None
+def _st_hide_subheader(*args, **kwargs):
+    # no-op: suppress section headers for tables
+    return None
 from lib.netgex_chart import render_netgex_bars
 
 # Project imports
@@ -275,9 +283,11 @@ if raw_records:
                                 pass
 
                         # Кнопка скачивания ZIP (только если есть хоть что-то)
+                        
                         def _zip_multi_intermediate(exports: dict) -> io.BytesIO:
                             bio = io.BytesIO()
                             with zipfile.ZipFile(bio, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                                # write per-exp intermediates
                                 for exp_key, tbls in (exports or {}).items():
                                     for name, df in (tbls or {}).items():
                                         if df is None:
@@ -290,18 +300,26 @@ if raw_records:
                                         try:
                                             csv_bytes = df.to_csv(index=False).encode("utf-8")
                                         except Exception:
-                                            # В крайнем случае, превращаем в CSV через str()
                                             csv_bytes = str(df).encode("utf-8")
                                         zf.writestr(f"{exp_key}/{name}.csv", csv_bytes)
+                                # write per-exp finals
+                                try:
+                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                                    finals = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
+                                    for exp_key, fin in (finals or {}).items():
+                                        if fin is None or getattr(fin, "empty", True):
+                                            continue
+                                        zf.writestr(f"{exp_key}/final_table.csv", fin.to_csv(index=False).encode("utf-8"))
+                                except Exception:
+                                    pass
                             bio.seek(0)
                             return bio
-
                         if any(tbl is not None and (not getattr(tbl, "empty", True)) 
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
                             st.download_button(
-                                "Скачать промежуточные таблицы (ZIP)",
+                                "Скачать таблицы",
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
@@ -319,25 +337,25 @@ if raw_records:
         if df_raw is None or getattr(df_raw, "empty", True):
             st.warning("df_raw пуст. Проверьте формат данных.")
         else:
-            st.dataframe(df_raw, use_container_width=True)
+            _st_hide_df(df_raw, use_container_width=True)
             # --- Ниже показываем остальные массивы по степени создания ---
             # 1) df_marked (df_raw + флаги аномалий)
             df_marked = res.get("df_marked")
             if df_marked is not None and not getattr(df_marked, "empty", True):
-                st.subheader("df_marked")
-                st.dataframe(df_marked, use_container_width=True, hide_index=True)
+                _st_hide_subheader()
+                _st_hide_df(df_marked, use_container_width=True, hide_index=True)
 
             # 2) df_corr (восстановленные IV/Greeks)
             df_corr = res.get("df_corr")
             if df_corr is not None and not getattr(df_corr, "empty", True):
-                st.subheader("df_corr")
-                st.dataframe(df_corr, use_container_width=True, hide_index=True)
+                _st_hide_subheader()
+                _st_hide_df(df_corr, use_container_width=True, hide_index=True)
 
             # 3) df_weights (веса окна по страйку)
             df_weights = res.get("df_weights")
             if df_weights is not None and not getattr(df_weights, "empty", True):
-                st.subheader("df_weights")
-                st.dataframe(df_weights, use_container_width=True, hide_index=True)
+                _st_hide_subheader()
+                _st_hide_df(df_weights, use_container_width=True, hide_index=True)
 
             # 4) windows (выбранные страйки каждого окна) — преобразуем в таблицу
             windows = res.get("windows")
@@ -353,18 +371,19 @@ if raw_records:
                                              "w_blend": float(g.loc[int(i), "w_blend"])})
                     import pandas as pd  # локальный импорт безопасен
                     df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
-                    st.subheader("windows (табличный вид)")
+                    _st_hide_subheader()
                     # Приведём тип w_blend к float64 и зададим формат — уберёт предупреждение 2^53 в браузере
                     try:
                         df_windows = df_windows.astype({'w_blend': 'float64'})
-                        st.dataframe(
+                        _st_hide_df(
                             df_windows,
                             use_container_width=True,
                             hide_index=True,
                             column_config={'w_blend': st.column_config.NumberColumn('w_blend', format='%.6f')},
                         )
                     except Exception:
-                        st.dataframe(df_windows, use_container_width=True, hide_index=True)
+                        _st_hide_df(df_windows, use_container_width=True, hide_index=True)
+                
                 except Exception as _e:
                     st.warning("Не удалось отобразить windows в табличном виде.")
                     st.exception(_e)
@@ -372,14 +391,52 @@ if raw_records:
             # 5) window_raw (строки окна из исходных + флаги)
             window_raw = res.get("window_raw")
             if window_raw is not None and not getattr(window_raw, "empty", True):
-                st.subheader("window_raw")
-                st.dataframe(window_raw, use_container_width=True, hide_index=True)
+                _st_hide_subheader()
+                _st_hide_df(window_raw, use_container_width=True, hide_index=True)
 
             # 6) window_corr (строки окна из исправленных данных)
             window_corr = res.get("window_corr")
             if window_corr is not None and not getattr(window_corr, "empty", True):
-                st.subheader("window_corr")
-                st.dataframe(window_corr, use_container_width=True, hide_index=True)
+                _st_hide_subheader()
+                _st_hide_df(window_corr, use_container_width=True, hide_index=True)
+
+            # Кнопка скачивания ZIP со всеми таблицами (single)
+            try:
+                import io, zipfile
+                from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                def _zip_single_tables(res_dict, df_corr_single, windows_single, exp_str):
+                    bio = io.BytesIO()
+                    with zipfile.ZipFile(bio, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+                        for name in ['df_raw','df_marked','df_corr','df_weights','window_raw','window_corr']:
+                            df = res_dict.get(name)
+                            if df is None:
+                                continue
+                            try:
+                                if hasattr(df, 'empty') and df.empty:
+                                    continue
+                            except Exception:
+                                pass
+                            try:
+                                csv_bytes = df.to_csv(index=False).encode('utf-8')
+                            except Exception:
+                                csv_bytes = str(df).encode('utf-8')
+                            zf.writestr(f"{exp_str}/{name}.csv", csv_bytes)
+                        # финальная таблица
+                        try:
+                            finals = build_final_tables_from_corr(df_corr_single, windows_single, cfg=FinalTableConfig())
+                            if exp_str in finals and finals[exp_str] is not None and not getattr(finals[exp_str], 'empty', True):
+                                zf.writestr(f"{exp_str}/final_table.csv", finals[exp_str].to_csv(index=False).encode('utf-8'))
+                        except Exception:
+                            pass
+                    bio.seek(0)
+                    return bio
+                exp_str = expiration if 'expiration' in locals() else 'exp'
+                zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
+                st.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+            except Exception as _e_zip_single:
+                st.warning('Не удалось подготовить ZIP с таблицами (single).')
+                st.exception(_e_zip_single)
+
 
             
             # 7) Финальная таблица (по df_corr + windows)
@@ -491,11 +548,11 @@ if raw_records:
                         cols += ["PZ","ER_Up","ER_Down"]
                         df_final_multi = base[cols].sort_values("K").reset_index(drop=True)
 
-                        st.subheader("Финальная таблица · SUM(" + ", ".join(exp_list) + f") · веса={weight_mode}")
-                        st.dataframe(df_final_multi, use_container_width=True, hide_index=True)
+                        _st_hide_subheader()
+                        _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
                         # --- Net GEX chart (Multi: aggregated) ---
                         try:
-                            render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
+                            False and render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
                         except Exception as _chart_em:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
@@ -508,11 +565,11 @@ if raw_records:
                             exp_to_show = expiration if 'expiration' in locals() and expiration in final_tables else exps[0]
                             df_final = final_tables.get(exp_to_show)
                             if df_final is not None and not getattr(df_final, "empty", True):
-                                st.subheader(f"Финальная таблица · {exp_to_show}")
-                                st.dataframe(df_final, use_container_width=True, hide_index=True)
+                                _st_hide_subheader()
+                                _st_hide_df(df_final, use_container_width=True, hide_index=True)
                                 # --- Net GEX chart (under the final table) ---
                                 try:
-                                    render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
+                                    False and render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
                                 except Exception as _chart_e:
                                     st.error('Не удалось отобразить чарт Net GEX')
                                     st.exception(_chart_e)
