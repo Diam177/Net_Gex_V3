@@ -141,6 +141,21 @@ def render_netgex_bars(
         hovertemplate="K=%{x}<br>Net GEX=%{y:.3f}M<extra></extra>",
     ))
 
+    # (Invisible) dummy trace to expose right-side secondary y-axis without drawing anything
+    try:
+        fig.add_trace(go.Scatter(
+            x=[x_idx[0] if len(x_idx) > 0 else 0],
+            y=[0],
+            yaxis="y2",
+            mode="markers",
+            marker=dict(opacity=0),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+    except Exception:
+        pass
+
+
     # Вертикальная линия цены
     
     if spot is not None and _np.isfinite(spot):
@@ -181,7 +196,7 @@ def render_netgex_bars(
         template="plotly_dark",
         paper_bgcolor=BG_COLOR,
         plot_bgcolor=BG_COLOR,
-        margin=dict(l=40, r=20, t=40, b=40),
+        margin=dict(l=40, r=60, t=40, b=40),
         showlegend=False,
         dragmode=False,
         xaxis=dict(
@@ -199,6 +214,16 @@ def render_netgex_bars(
             title="Net GEX",
             showgrid=False,
             zeroline=False,
+        ),
+        yaxis2=dict(
+            title="Other parameters",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            zeroline=False,
+            showline=True,
+            ticks="outside",
+            tickfont=dict(size=10),
         ),
     )
 
