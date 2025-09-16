@@ -5,16 +5,13 @@ netgex_chart.py — бар‑чарт Net GEX для главной страни
 Функция:
     render_netgex_bars(df_final, ticker, spot=None, toggle_key=None)
 
-Требования к данным:
-- df_final: содержит K (страйк), NetGEX_1pct_M ИЛИ NetGEX_1pct,
-  опционально: S, call_oi, put_oi, call_vol, put_vol.
-
-Особенности реализации:
-- Ось X показывает все страйки без «пустых» промежутков.
-- Взаимодействия (зум/пан/скролл/даблклик) отключены, ховер остаётся.
-- Фон графика полностью прозрачный (совпадает с фоном страницы).
-- В левом верхнем углу — аннотация с тикером.
-- В правом верхнем углу — легенда «Net GEX» с прозрачным фоном.
+Особенности:
+- ВСЕ страйки на оси X без «пустых» промежутков.
+- Ховер: Strike, Call OI, Put OI, Call Volume, Put Volume, Net GEX (M$).
+- Взаимодействия (зум/пан/скролл/даблклик) отключены; ховер остаётся.
+- Фон графика прозрачный.
+- ОДНА аннотация с тикером — в верхнем левом углу внутри области графика, сразу справа от подписей оси Y.
+- Легенда Net GEX — в правом верхнем углу.
 """
 
 from __future__ import annotations
@@ -36,7 +33,6 @@ def render_netgex_bars(
     spot: Optional[float] = None,
     toggle_key: Optional[str] = None,
 ) -> None:
-    """Рендерит бар‑чарт Net GEX."""
     if df_final is None or len(df_final) == 0:
         st.info("Нет данных для графика Net GEX.")
         return
@@ -55,7 +51,7 @@ def render_netgex_bars(
         st.warning("Нет столбцов NetGEX_1pct_M / NetGEX_1pct — нечего рисовать.")
         return
 
-    # Цена БА (если не передана — возьмём из S)
+    # Цена БА
     if spot is None and "S" in df_final.columns and df_final["S"].notna().any():
         spot = float(_pd.to_numeric(df_final["S"], errors="coerce").dropna().iloc[0])
 
@@ -108,7 +104,7 @@ def render_netgex_bars(
     fig.add_trace(go.Bar(
         x=x_idx,
         y=Ys,
-        name="Net GEX",  # для легенды — ровно так
+        name="Net GEX",
         marker_color=colors.tolist(),
         width=bar_width,
         customdata=custom,
@@ -149,12 +145,12 @@ def render_netgex_bars(
                            showarrow=False, yshift=8,
                            font=dict(color=COLOR_PRICE, size=12), xanchor="center")
 
-    # Базовая компоновка
+    # Компоновка
     fig.update_layout(
         template=None,
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        hoverlabel=dict(font=dict(size=10)),  # уменьшенный шрифт ховера
+        hoverlabel=dict(font=dict(size=10)),
         margin=dict(l=40, r=20, t=40, b=40),
         showlegend=True,
         legend=dict(
@@ -173,16 +169,17 @@ def render_netgex_bars(
             showgrid=False,
             showline=False,
             zeroline=False,
-            fixedrange=True,   # запрет масштабирования по X
+            fixedrange=True,
         ),
         yaxis=dict(
             title="Net GEX",
             showgrid=False,
             zeroline=False,
-            fixedrange=True,   # запрет масштабирования по Y
+            fixedrange=True,
         ),
     )
-    # Аннотация с тикером: верхний левый угол внутри области графика, сразу справа от подписей оси Y
+
+    # --- ЕДИНСТВЕННАЯ аннотация с тикером ---
     if isinstance(ticker, str) and ticker.strip():
         fig.add_annotation(
             xref='paper', yref='paper',
@@ -196,24 +193,11 @@ def render_netgex_bars(
             font=dict(size=14)
         )
 
-
-    # Аннотация с тикером в левом верхнем углу (координаты бумаги)
-    if isinstance(ticker, str) and ticker.strip():
-        fig.add_annotation(
-            xref='paper', yref='paper',
-            x=0, y=1,
-            xanchor='left', yanchor='top',
-            text=ticker.upper(),
-            showarrow=False,
-            align='left',
-            font=dict(size=14)
-        )
-
     # Автомасштаб
     fig.update_yaxes(autorange=True)
     fig.update_xaxes(autorange=True)
 
-    # Прозрачность контейнеров Plotly
+    # Прозрачность контейнера Plotly
     st.markdown(
         """
         <style>
