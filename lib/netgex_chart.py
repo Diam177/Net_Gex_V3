@@ -25,9 +25,9 @@ except Exception as e:
     raise RuntimeError("Требуется пакет 'plotly' (plotly>=5.22.0)") from e
 
 # --- Цвета/оформление ---
-COLOR_NEG = '#ff2d2d'    # красный
-COLOR_POS = '#22ccff'    # бирюзовый
-COLOR_PRICE = '#ff9900'  # оранжевая линия цены
+COLOR_NEG = '#D9493A'    # красный
+COLOR_POS = '#60A5E7'    # бирюзовый
+COLOR_PRICE = '#E4A339'  # оранжевая линия цены
 BG_COLOR = '#111111'
 FG_COLOR = '#e0e0e0'
 GRID_COLOR = 'rgba(255,255,255,0.10)'
