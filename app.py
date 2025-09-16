@@ -138,10 +138,6 @@ with col2:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
 
-with col3:
-    spot_manual = st.text_input("Spot (необязательно)", value=st.session_state.get("spot_manual",""))
-    st.session_state["spot_manual"] = spot_manual
-
 st.divider()
 
 # --- Data fetch ---------------------------------------------------------------
@@ -177,14 +173,7 @@ else:
 
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
-# 1) ручной ввод
-if spot_manual:
-    try:
-        S = float(spot_manual)
-    except Exception:
-        st.warning("Spot введён некорректно. Будет использована автоматическая оценка.")
-# 2) из Polygon (если нет ручного)
-if S is None and ticker:
+if ticker:
     try:
         S, ts_ms, src = get_spot_price(ticker, api_key)
         st.caption(f"Spot {S} (источник: {src})")
@@ -331,17 +320,6 @@ if raw_records:
                         if any(tbl is not None and (not getattr(tbl, "empty", True)) 
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
-                            # Добавляем агрегированную финальную таблицу в корень архива (для чарта Multi)
-                            try:
-                                import io, zipfile
-                                if 'df_final_multi' in locals() and df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
-                                    _bio = io.BytesIO(zip_bytes.getvalue())
-                                    with zipfile.ZipFile(_bio, mode="a", compression=zipfile.ZIP_DEFLATED) as _zf:
-                                        _zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
-                                    _bio.seek(0)
-                                    zip_bytes = _bio
-                            except Exception:
-                                pass
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
                             st.download_button(
                                 "Скачать таблицы",
@@ -456,11 +434,9 @@ if raw_records:
                                 pass
                         bio.seek(0)
                         return bio
-
-                    if "mode_exp" in locals() and mode_exp == "Single":
-                        exp_str = expiration if 'expiration' in locals() else 'exp'
-                        zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
-                        st.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+                    exp_str = expiration if 'expiration' in locals() else 'exp'
+                    zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
+                    st.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
                 except Exception as _e_zip_single:
                     st.warning('Не удалось подготовить ZIP с таблицами (single).')
                     st.exception(_e_zip_single)
