@@ -86,7 +86,7 @@ def render_netgex_bars(
     # Предполагаем рабочую ширину области графика ~1200px (минус поля). Для адаптивности берём максимум с 0.2*step, чтобы не схлопывалось на малом окне.
     plot_px = 1200.0
     x_range = float(Ks.max() - Ks.min()) if Ks.size else 1.0
-    px_target = 30.0
+    px_target = 28.0
     bar_width = max((x_range * (px_target / plot_px)), step * 0.2)
 
 
