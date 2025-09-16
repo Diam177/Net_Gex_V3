@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
-
 import numpy as _np
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
     """
@@ -207,7 +206,6 @@ def render_netgex_bars(
             # Всегда привязываем линию к центру ближайшего страйка (визуальная консистентность с подписью)
             k_arr = Ks.astype(float)
             g_val = float(g_flip)
-            import numpy as _np
             snap_idx = int(_np.argmin(_np.abs(k_arr - g_val)))
             x_g = float(snap_idx)
             k_snap = float(k_arr[snap_idx])
