@@ -104,11 +104,14 @@ def render_netgex_bars(
     if spot is None and "S" in df_final.columns and df_final["S"].notna().any():
         spot = float(df_final["S"].dropna().iloc[0])
 
-    # Тумблер
-    show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
-    show_gflip = st.toggle("G-Flip", value=False, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
-    # Новый тумблер (пока без функционала): Put OI
-    _ = st.toggle("Put OI", value=False, key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
+    # Тумблеры (горизонтально)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
+    with col2:
+        show_gflip = st.toggle("G-Flip", value=False, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
+    with col3:
+        _ = st.toggle("Put OI", value=False, key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
     if not show:
         return
 
