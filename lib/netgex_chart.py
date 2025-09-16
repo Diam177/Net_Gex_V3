@@ -144,6 +144,18 @@ def render_netgex_bars(
         fig.add_shape(type="line", x0=x_price, x1=x_price, y0=y0, y1=y1,
                       line=dict(color=COLOR_PRICE, width=2))
         fig.add_annotation(x=x_price, y=y1, text=f"Price: {spot:.2f}",
+    # --- Аннотация с тикером в левом верхнем углу ---
+    if isinstance(ticker, str) and ticker.strip():
+        fig.add_annotation(
+            xref='paper', yref='paper',
+            x=0, y=1,
+            xanchor='left', yanchor='top',
+            text=ticker.upper(),
+            showarrow=False,
+            align='left',
+            font=dict(size=14)
+        )
+
                            showarrow=False, yshift=8,
                            font=dict(color=COLOR_PRICE, size=12), xanchor="center")
 
@@ -154,7 +166,7 @@ def render_netgex_bars(
         plot_bgcolor='rgba(0,0,0,0)',
         hoverlabel=dict(font=dict(size=10)),  # уменьшенный шрифт ховера
         margin=dict(l=40, r=20, t=40, b=40),
-        showlegend=False,
+        showlegend=True,
         dragmode=False,
         xaxis=dict(
             title=None,
@@ -166,8 +178,9 @@ def render_netgex_bars(
             showgrid=False,
             showline=False,
             zeroline=False,
-            fixedrange=True,   # запрет масштабирования по X
-        ),
+            fixedrange=True,   # запрет масштабирования по X,
+        legend=dict(x=1, y=1, xanchor='right', yanchor='top', bgcolor='rgba(0,0,0,0)'),
+    ),
         yaxis=dict(
             title="Net GEX",
             showgrid=False,
