@@ -552,7 +552,7 @@ if raw_records:
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
                         # --- Net GEX chart (Multi: aggregated) ---
                         try:
-                            False and render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
+                            render_netgex_bars(df_final=df_final_multi, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
                         except Exception as _chart_em:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
@@ -569,7 +569,7 @@ if raw_records:
                                 _st_hide_df(df_final, use_container_width=True, hide_index=True)
                                 # --- Net GEX chart (under the final table) ---
                                 try:
-                                    False and render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
+                                    render_netgex_bars(df_final=df_final, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
                                 except Exception as _chart_e:
                                     st.error('Не удалось отобразить чарт Net GEX')
                                     st.exception(_chart_e)
