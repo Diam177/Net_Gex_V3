@@ -187,7 +187,7 @@ def render_netgex_bars(
     if isinstance(ticker, str) and ticker.strip():
         fig.add_annotation(
             xref='paper', yref='paper',
-            x=0, y=0,
+            x=20, y=3,
             xanchor='left', yanchor='top',
             text=ticker.upper(),
             showarrow=False,
