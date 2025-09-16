@@ -109,7 +109,7 @@ def render_netgex_bars(
 
     # компактный зазор между колонками с тумблерами
     st.markdown(
-        "<style>div[data-testid='column']{padding-left:1px!important;padding-right:2px!important}</style>",
+        "<style>div[data-testid='column']{padding-left:0px!important;padding-right:2px!important}</style>",
         unsafe_allow_html=True,
     )
     # уменьшить шрифт подписей тумблеров (чуть меньше)
