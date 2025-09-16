@@ -212,6 +212,6 @@ def render_netgex_bars(
     st.plotly_chart(
         fig,
         use_container_width=True,
-        theme=None,
+        theme='streamlit',
         config={'displayModeBar': False, 'scrollZoom': False, 'doubleClick': False}
     )
