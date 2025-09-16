@@ -120,10 +120,10 @@ def render_netgex_bars(
         _ = st.toggle("Call OI", value=False,
                       key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}"))
     with col5:
-        _ = st.toggle("Put Volume", value=False,
+        _ = st.toggle("Put Vol", value=False,
                       key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}"))
     with col6:
-        _ = st.toggle("Call Volume", value=False,
+        _ = st.toggle("Call Vol", value=False,
                       key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}"))
     with col7:
         _ = st.toggle("AG", value=False,
