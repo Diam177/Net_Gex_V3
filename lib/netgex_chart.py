@@ -120,6 +120,26 @@ def render_netgex_bars(
     tick_vals = Ks.tolist()
     tick_text = [str(int(k)) if float(k).is_integer() else f"{k:.2f}" for k in Ks]
 
+    # Динамический подбор размера шрифта подписей страйков так,
+    # чтобы ширина текста не превышала ширину столбца
+    try:
+        max_chars = max(len(t) for t in tick_text) if tick_text else 1
+        # оценка ширины символа ~0.6 от размера шрифта
+        CHAR_COEF = 0.6
+        MAX_FONT = 10
+        MIN_FONT = 6
+        # оценка ширины бара в пикселях
+        bar_px = plot_px * (bar_width / max(x_range, 1e-9))
+        est_label_px = MAX_FONT * CHAR_COEF * max_chars
+        if est_label_px > bar_px:
+            tick_font_size = max(MIN_FONT, int(bar_px / (CHAR_COEF * max_chars)))
+        else:
+            tick_font_size = MAX_FONT
+    except Exception:
+        tick_font_size = 10
+
+
+
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor=BG_COLOR,
@@ -133,7 +153,7 @@ def render_netgex_bars(
             tickvals=tick_vals,
             ticktext=tick_text,
             tickangle=0,
-            tickfont=dict(size=10),   # <<< фиксированный размер 10
+            tickfont=dict(size=tick_font_size),   # <<< фиксированный размер 10
             showgrid=False,
             showline=False,
             zeroline=False,
