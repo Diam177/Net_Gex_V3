@@ -112,6 +112,30 @@ def render_netgex_bars(
         show_gflip = st.toggle("G-Flip", value=False, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
     with col3:
         _ = st.toggle("Put OI", value=False, key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
+
+    # Дополнительные тумблеры (горизонтально, второй ряд). Все выключены по умолчанию и ни на что не влияют.
+    r1, r2, r3, r4, r5, r6, r7 = st.columns(7)
+    with r1:
+        _ = st.toggle("Call OI", value=False,
+                      key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}"))
+    with r2:
+        _ = st.toggle("Put Volume", value=False,
+                      key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}"))
+    with r3:
+        _ = st.toggle("Call Volume", value=False,
+                      key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}"))
+    with r4:
+        _ = st.toggle("AG", value=False,
+                      key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}"))
+    with r5:
+        _ = st.toggle("PZ", value=False,
+                      key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}"))
+    with r6:
+        _ = st.toggle("ER_Up", value=False,
+                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}"))
+    with r7:
+        _ = st.toggle("ER_Down", value=False,
+                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}"))
     if not show:
         return
 
