@@ -205,7 +205,6 @@ def render_netgex_bars(
         if 'show_gflip' in locals() and show_gflip and (g_flip is not None) and (len(Ks) > 0):
             # 1) Если G-Flip точно совпадает со страйком (с учётом небольшого допуска),
             #    ставим линию ровно по центру соответствующего столбца (индекс бара).
-            import numpy as _np
             matches = _np.where(_np.isclose(Ks.astype(float), float(g_flip), rtol=0.0, atol=1e-6))[0]
             if matches.size > 0:
                 idx = int(matches[0])
