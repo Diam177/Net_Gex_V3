@@ -89,7 +89,7 @@ def render_netgex_bars(
     px_target = 28.0
     # ширина из пикселей и безопасная ширина как доля шага; берём МИН(пиксели, 0.7*step), чтобы не было наложения
     width_px_based = (x_range * (px_target / plot_px))
-    bar_width = min(step * 0.7, max(width_px_based, step * 0.2))
+    bar_width = min(step * 0.9, max(width_px_based, step * 0.2))
     colors = _np.where(Ys >= 0.0, COLOR_POS, COLOR_NEG)
     
     # Фигура
