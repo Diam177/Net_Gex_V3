@@ -22,6 +22,14 @@ import pandas as _pd
 import streamlit as st
 import plotly.graph_objects as go
 
+def _get_streamlit_theme_colors():
+    try:
+        bg = st.get_option('theme.backgroundColor') or '#0e1117'
+        fg = st.get_option('theme.textColor') or '#fafafa'
+    except Exception:
+        bg, fg = '#0e1117', '#fafafa'
+    return bg, fg
+
 # Цвета (оставьте как в вашем проекте при необходимости)
 COLOR_NEG = '#D9493A'    # отрицательные столбцы
 COLOR_POS = '#60A5E7'    # положительные столбцы
@@ -212,6 +220,6 @@ def render_netgex_bars(
     st.plotly_chart(
         fig,
         use_container_width=True,
-        theme='streamlit',
+        theme=None,
         config={'displayModeBar': False, 'scrollZoom': False, 'doubleClick': False}
     )
