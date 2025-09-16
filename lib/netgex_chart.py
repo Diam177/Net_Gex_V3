@@ -212,9 +212,7 @@ def render_netgex_bars(
 
             fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
                           line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
-            fig.add_annotation(x=x_g, xref="x", y=1, yref="paper",
-                               text=f"G-Flip: {k_snap:g}", showarrow=False,
-                               yshift=6, font=dict(size=12, color="#AAAAAA"), xanchor="center")
+            fig.add_annotation(x=x_g, xref="x", y=1.02, yref="paper", text=f"G-Flip: {k_snap:g}", showarrow=False, yshift=0, font=dict(size=12, color="#AAAAAA"), xanchor="center", yanchor="bottom", align="center")
     except Exception:
         pass
 
