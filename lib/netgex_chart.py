@@ -28,6 +28,27 @@ COLOR_POS = '#60A5E7'    # положительные столбцы
 COLOR_PRICE = '#E4A339'  # линия цены
 BG_COLOR = '#111111'
 
+def _inject_no_crosshair_css() -> None:
+    # Глобально переопределяем курсор для Plotly-чартов в Streamlit
+    st.markdown(
+        """
+        <style>
+        /* Отключаем crosshair-курсор у Plotly в Streamlit */
+        div[data-testid="stPlotlyChart"] .draglayer,
+        div[data-testid="stPlotlyChart"] .hoverlayer,
+        div[data-testid="stPlotlyChart"] .zoomlayer,
+        div[data-testid="stPlotlyChart"] .nsewdrag,
+        div[data-testid="stPlotlyChart"] .neswdrag,
+        div[data-testid="stPlotlyChart"] .ewdrag,
+        div[data-testid="stPlotlyChart"] .nsdrag {
+            cursor: default !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _to_float_array(a: Sequence) -> _np.ndarray:
     return _np.array(_pd.to_numeric(a, errors='coerce'), dtype=float)
 
@@ -164,6 +185,7 @@ def render_netgex_bars(
         showlegend=False,
         dragmode=False,
         xaxis=dict(
+            fixedrange=True,
             title=None,
             tickmode="array",
             tickvals=x_idx.tolist(),
@@ -175,6 +197,7 @@ def render_netgex_bars(
             zeroline=False,
         ),
         yaxis=dict(
+            fixedrange=True,
             title="Net GEX",
             showgrid=False,
             zeroline=False,
@@ -190,5 +213,5 @@ def render_netgex_bars(
         fig,
         use_container_width=True,
         theme=None,
-        config={'displayModeBar': False}
+        config={'displayModeBar': False, 'scrollZoom': False, 'doubleClick': False}
     )
