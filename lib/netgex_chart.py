@@ -14,11 +14,10 @@ netgex_chart.py — бар‑чарт Net GEX для главной страни
 
 from __future__ import annotations
 from typing import Optional, Sequence
-
-import numpy as _np
 import pandas as _pd
 import streamlit as st
 
+import numpy as _np
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
     """
     G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак.
@@ -26,7 +25,6 @@ def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> 
     K* = K0 - y0*(K1-K0)/(y1-y0)
     Если несколько корней — выбираем ближайший к spot (если известен), иначе к середине диапазона.
     """
-    import numpy as _np
     import pandas as _pd
     if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
         return None
@@ -204,7 +202,6 @@ def render_netgex_bars(
     # --- G-Flip marker (optional) ---
     try:
         if 'show_gflip' in locals() and show_gflip and (g_flip is not None) and (len(Ks) > 0):
-            import numpy as _np
             j = int(_np.searchsorted(Ks, float(g_flip)))
             if j <= 0:
                 x_g = 0.0
