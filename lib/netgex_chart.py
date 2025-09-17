@@ -13,6 +13,33 @@ netgex_chart.py — бар‑чарт Net GEX для главной страни
 """
 
 from __future__ import annotations
+
+# --- Series-specific colors (custom palette) ---
+# Provided by user:
+# Put OI - #800020
+# Call OI - #2ECC71
+# Put Volume - #FF8C00
+# Call Volume - #1E88E5
+# AG - #9A7DF7
+# PZ - #E4C51E
+# ER_Up - #1FCE54
+# ER_Down - #D21717
+SERIES_COLORS = {
+    "Put OI": "#800020",
+    "Call OI": "#2ECC71",
+    "Put Volume": "#FF8C00",
+    "Call Volume": "#1E88E5",
+    "AG": "#9A7DF7",
+    "AG (1%)": "#9A7DF7",  # alias if used in labels
+    "PZ": "#E4C51E",
+    "ER_Up": "#1FCE54",
+    "ER_Down": "#D21717",
+}
+def _rgba(hex_color: str, alpha: float) -> str:
+    """'#RRGGBB' -> 'rgba(r,g,b,alpha)'."""
+    s = hex_color.lstrip("#")
+    r = int(s[0:2], 16); g = int(s[2:4], 16); b = int(s[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
 from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
@@ -139,33 +166,26 @@ def render_netgex_bars(
         show_put_oi = st.toggle("Put OI", value=False,
                       key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
     with col4:
-        show_call_oi = st.toggle("Call OI", value=False,
-                      key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}")
-)
+        _ = st.toggle("Call OI", value=False,
+                      key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}"))
     with col5:
-        show_put_vol = st.toggle("Put Vol", value=False,
-                      key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}")
-)
+        _ = st.toggle("Put Vol", value=False,
+                      key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}"))
     with col6:
-        show_call_vol = st.toggle("Call Vol", value=False,
-                      key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}")
-)
+        _ = st.toggle("Call Vol", value=False,
+                      key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}"))
     with col7:
-        show_ag = st.toggle("AG", value=False,
-                      key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}")
-)
+        _ = st.toggle("AG", value=False,
+                      key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}"))
     with col8:
-        show_pz = st.toggle("PZ", value=False,
-                      key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}")
-)
+        _ = st.toggle("PZ", value=False,
+                      key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}"))
     with col9:
-        show_er_up = st.toggle("ER_Up", value=False,
-                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}")
-)
+        _ = st.toggle("ER_Up", value=False,
+                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}"))
     with col10:
-        show_er_down = st.toggle("ER_Down", value=False,
-                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}")
-)
+        _ = st.toggle("ER_Down", value=False,
+                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}"))
 
     if not show:
         return
@@ -220,169 +240,6 @@ def render_netgex_bars(
                 ))
     except Exception:
         pass
-    # --- Call OI markers (toggle-controlled) ---
-    try:
-        if 'show_call_oi' in locals() and show_call_oi:
-            if ("K" in df_final.columns) and ("call_oi" in df_final.columns):
-                df_call = df_final.groupby("K", as_index=False)["call_oi"].sum().sort_values("K").reset_index(drop=True)
-                _map_call = {float(k): float(v) for k, v in zip(df_call["K"].to_numpy(), df_call["call_oi"].to_numpy())}
-                y_call = [_map_call.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_call,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="Call OI",
-                    hovertemplate="Strike=%{customdata}<br>Call OI=%{y:.0f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
-    # --- Put Volume markers (toggle-controlled) ---
-    try:
-        if 'show_put_vol' in locals() and show_put_vol:
-            if ("K" in df_final.columns) and ("put_vol" in df_final.columns):
-                df_pv = df_final.groupby("K", as_index=False)["put_vol"].sum().sort_values("K").reset_index(drop=True)
-                _map_pv = {float(k): float(v) for k, v in zip(df_pv["K"].to_numpy(), df_pv["put_vol"].to_numpy())}
-                y_pv = [_map_pv.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_pv,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="Put Volume",
-                    hovertemplate="Strike=%{customdata}<br>Put Volume=%{y:.0f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
-    # --- Call Volume markers (toggle-controlled) ---
-    try:
-        if 'show_call_vol' in locals() and show_call_vol:
-            if ("K" in df_final.columns) and ("call_vol" in df_final.columns):
-                df_cv = df_final.groupby("K", as_index=False)["call_vol"].sum().sort_values("K").reset_index(drop=True)
-                _map_cv = {float(k): float(v) for k, v in zip(df_cv["K"].to_numpy(), df_cv["call_vol"].to_numpy())}
-                y_cv = [_map_cv.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_cv,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="Call Volume",
-                    hovertemplate="Strike=%{customdata}<br>Call Volume=%{y:.0f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
-    # --- AG markers (toggle-controlled) ---
-    try:
-        if 'show_ag' in locals() and show_ag:
-            # предпочитаем AG_1pct, иначе AG_1pct_M
-            ag_col = "AG_1pct" if "AG_1pct" in df_final.columns else ("AG_1pct_M" if "AG_1pct_M" in df_final.columns else None)
-            if ("K" in df_final.columns) and (ag_col is not None):
-                df_ag = df_final.groupby("K", as_index=False)[ag_col].sum().sort_values("K").reset_index(drop=True)
-                _map_ag = {float(k): float(v) for k, v in zip(df_ag["K"].to_numpy(), df_ag[ag_col].to_numpy())}
-                y_ag = [_map_ag.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_ag,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="AG",
-                    hovertemplate="Strike=%{customdata}<br>AG=%{y:.0f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
-    # --- PZ markers (toggle-controlled) ---
-    try:
-        if 'show_pz' in locals() and show_pz:
-            if ("K" in df_final.columns) and ("PZ" in df_final.columns):
-                df_pz = df_final.groupby("K", as_index=False)["PZ"].sum().sort_values("K").reset_index(drop=True)
-                _map_pz = {float(k): float(v) for k, v in zip(df_pz["K"].to_numpy(), df_pz["PZ"].to_numpy())}
-                y_pz = [_map_pz.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_pz,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="PZ",
-                    hovertemplate="Strike=%{customdata}<br>PZ=%{y:.0f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
-    # --- ER_Up markers (toggle-controlled) ---
-    try:
-        if 'show_er_up' in locals() and show_er_up:
-            if ("K" in df_final.columns) and ("ER_Up" in df_final.columns):
-                df_eu = df_final.groupby("K", as_index=False)["ER_Up"].sum().sort_values("K").reset_index(drop=True)
-                _map_eu = {float(k): float(v) for k, v in zip(df_eu["K"].to_numpy(), df_eu["ER_Up"].to_numpy())}
-                y_eu = [_map_eu.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_eu,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="ER_Up",
-                    hovertemplate="Strike=%{customdata}<br>ER_Up=%{y:.0f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
-    # --- ER_Down markers (toggle-controlled) ---
-    try:
-        if 'show_er_down' in locals() and show_er_down:
-            if ("K" in df_final.columns) and ("ER_Down" in df_final.columns):
-                df_ed = df_final.groupby("K", as_index=False)["ER_Down"].sum().sort_values("K").reset_index(drop=True)
-                _map_ed = {float(k): float(v) for k, v in zip(df_ed["K"].to_numpy(), df_ed["ER_Down"].to_numpy())}
-                y_ed = [_map_ed.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_ed,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5),
-                    marker=dict(size=6),
-                    fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="ER_Down",
-                    hovertemplate="Strike=%{customdata}<br>ER_Down=%{y:.0f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
 
 
     # (Invisible) dummy trace to expose right-side secondary y-axis without drawing anything
@@ -495,5 +352,24 @@ def render_netgex_bars(
     fig.update_xaxes(autorange=True)
 
     # Статичный график без зума/панорамы и без панели управления
+    # --- apply per-series colors for right-axis traces ---
+    try:
+        for _tr in fig.data:
+            _nm = (_tr.name or "").strip()
+            if _nm in SERIES_COLORS:
+                _col = SERIES_COLORS[_nm]
+                _tr.update(line=dict(color=_col))
+                try:
+                    _tr.update(marker=dict(color=_col))
+                except Exception:
+                    pass
+                try:
+                    if getattr(_tr, "fill", None) == "tozeroy":
+                        _tr.update(fillcolor=_rgba(_col, 0.30))  # 70% transparent
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={'displayModeBar': False, 'staticPlot': True})
