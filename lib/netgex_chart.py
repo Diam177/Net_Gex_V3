@@ -223,11 +223,11 @@ def render_netgex_bars(
         customdata=customdata_list,
         hovertemplate=(
             "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-            "Call OI: %{customdata[1]:,.0f}<br>" +
-            "Put OI: %{customdata[2]:,.0f}<br>" +
-            "Call Volume: %{customdata[3]:,.0f}<br>" +
-            "Put Volume: %{customdata[4]:,.0f}<br>" +
-            "Net GEX: %{customdata[5]:,.1f}M" +
+            "Call OI: %{customdata[1]:.0f}<br>" +
+            "Put OI: %{customdata[2]:.0f}<br>" +
+            "Call Volume: %{customdata[3]:.1f}<br>" +
+            "Put Volume: %{customdata[4]:.1f}<br>" +
+            "Net GEX: %{customdata[5]:.1f}" +
             "<extra></extra>"
         ),
         hoverlabel=dict(
