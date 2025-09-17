@@ -16,6 +16,7 @@ from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
 import numpy as _np
+
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
     """
     G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак.
@@ -103,16 +104,13 @@ def render_netgex_bars(
     if spot is None and "S" in df_final.columns and df_final["S"].notna().any():
         spot = float(df_final["S"].dropna().iloc[0])
 
-# --- Toggles: single horizontal row ---
     # --- Toggles: single horizontal row ---
-
     # компактный зазор между колонками с тумблерами
     st.markdown(
         "<style>div[data-testid='column']{padding-left:0px!important;padding-right:2px!important}</style>",
         unsafe_allow_html=True,
     )
-    # уменьшить шрифт подписей тумблеров (чуть меньше)
-# уменьшить шрифт подписей тумблеров
+    # уменьшить шрифт подписей тумблеров
     st.markdown("""
     <style>
     /* уменьшить шрифт подписи у st.toggle (надёжные селекторы) */
@@ -139,32 +137,25 @@ def render_netgex_bars(
                       key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
     with col4:
         show_call_oi = st.toggle("Call OI", value=False,
-                      key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}")
-)
+                      key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}"))
     with col5:
         show_put_vol = st.toggle("Put Vol", value=False,
-                      key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}")
-)
+                      key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}"))
     with col6:
         show_call_vol = st.toggle("Call Vol", value=False,
-                      key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}")
-)
+                      key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}"))
     with col7:
         show_ag = st.toggle("AG", value=False,
-                      key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}")
-)
+                      key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}"))
     with col8:
         show_pz = st.toggle("PZ", value=False,
-                      key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}")
-)
+                      key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}"))
     with col9:
         show_er_up = st.toggle("ER_Up", value=False,
-                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}")
-)
+                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}"))
     with col10:
         show_er_down = st.toggle("ER_Down", value=False,
-                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}")
-)
+                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}"))
 
     if not show:
         return
@@ -536,4 +527,22 @@ def render_netgex_bars(
     if show_er_up and "ER_Up" in df_final.columns:
         df_eu = df_final.groupby("K", as_index=False)["ER_Up"].sum().sort_values("K").reset_index(drop=True)
         _map_eu = {float(k): float(v) for k, v in zip(df_eu["K"].to_numpy(), df_eu["ER_Up"].to_numpy())}
-        y_eu = [_map_eu.get(float(k), 0) for k in
+        y_eu = [_map_eu.get(float(k), 0) for k in Ks]
+        
+        eu_customdata = []
+        for i, k in enumerate(Ks):
+            hd = hover_data.get(k, {})
+            eu_customdata.append([
+                k,  # Strike
+                hd.get("call_oi", 0),  # Call OI
+                hd.get("put_oi", 0),   # Put OI  
+                hd.get("call_vol", 0),  # Call Volume
+                hd.get("put_vol", 0),   # Put Volume
+                y_eu[i]  # ER_Up value
+            ])
+        
+        fig.add_trace(go.Scatter(
+            x=x_idx,
+            y=y_eu,
+            customdata=eu_customdata,
+            yaxis
