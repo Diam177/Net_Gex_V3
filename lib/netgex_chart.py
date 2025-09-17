@@ -184,6 +184,32 @@ def render_netgex_bars(
     bar_width = 0.9
     colors = _np.where(Ys >= 0.0, COLOR_POS, COLOR_NEG)
     
+    # Подготовка данных для hover Net GEX
+    hover_data = {}
+    for k in Ks:
+        k_data = df_final[df_final["K"] == k]
+        if not k_data.empty:
+            hover_data[k] = {
+                "call_oi": k_data["call_oi"].sum() if "call_oi" in k_data.columns else 0,
+                "put_oi": k_data["put_oi"].sum() if "put_oi" in k_data.columns else 0,
+                "call_vol": k_data["call_vol"].sum() if "call_vol" in k_data.columns else 0,
+                "put_vol": k_data["put_vol"].sum() if "put_vol" in k_data.columns else 0,
+            }
+        else:
+            hover_data[k] = {"call_oi": 0, "put_oi": 0, "call_vol": 0, "put_vol": 0}
+    
+    customdata_list = []
+    for i, k in enumerate(Ks):
+        hd = hover_data.get(k, {})
+        customdata_list.append([
+            k,  # Strike
+            hd.get("call_oi", 0),  # Call OI
+            hd.get("put_oi", 0),   # Put OI  
+            hd.get("call_vol", 0),  # Call Volume
+            hd.get("put_vol", 0),   # Put Volume
+            Ys[i]  # Net GEX value
+        ])
+    
     # Подготовка данных для hover
     # Собираем данные по страйкам для всплывающей подсказки
     hover_data = {}
