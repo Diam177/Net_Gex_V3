@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-netgex_chart.py — бар‑чарт Net GEX для главной страницы с улучшенными hover-подсказками.
+netgex_chart.py — бар‑чарт Net GEX для главной страницы.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import numpy as _np
 
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
     """G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак."""
+    import pandas as _pd
     if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
         return None
     base = df_final.copy()
@@ -24,7 +25,6 @@ def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> 
     Ys = g[y_col].to_numpy(dtype=float)
     if len(Ks) < 2:
         return None
-    # прямые нули и смена знака
     cand = [float(Ks[i]) for i,v in enumerate(Ys) if v == 0.0]
     sign = _np.sign(Ys)
     idx = _np.where(sign[:-1]*sign[1:] < 0)[0]
@@ -50,28 +50,17 @@ try:
 except Exception as e:
     raise RuntimeError("Требуется пакет 'plotly' (plotly>=5.22.0)") from e
 
-# --- Цвета/оформление ---
-COLOR_NEG = '#D9493A'    # красный
-COLOR_POS = '#60A5E7'    # бирюзовый
-COLOR_PRICE = '#E4A339'  # оранжевая линия цены
+COLOR_NEG = '#D9493A'
+COLOR_POS = '#60A5E7'
+COLOR_PRICE = '#E4A339'
+BG_COLOR = '#111111'
+FG_COLOR = '#e0e0e0'
+GRID_COLOR = 'rgba(255,255,255,0.10)'
 
 def _to_num(a: Sequence) -> _np.ndarray:
     return _np.array(_pd.to_numeric(a, errors='coerce'), dtype=float)
 
-def _create_hover_template(series_name: str = "") -> str:
-    """Создает единый шаблон hover для всех серий"""
-    return (
-        "<b style='color:white; font-size:14px'>Strike: %{customdata[0]:.0f}</b><br>" +
-        "<span style='font-size:12px'>" +
-        "Call OI: <b>%{customdata[1]:,.0f}</b><br>" +
-        "Put OI: <b>%{customdata[2]:,.0f}</b><br>" +
-        "Call Volume: <b>%{customdata[3]:,.0f}</b><br>" +
-        "Put Volume: <b>%{customdata[4]:,.0f}</b><br>" +
-        f"{series_name}: <b>" + "%{customdata[5]:,.1f}</b>" +
-        "</span><extra></extra>"
-    )
-
-def _create_hover_data(Ks, df_final, y_values, series_name=""):
+def _create_hover_data(Ks, df_final, y_values):
     """Создает customdata для hover"""
     hover_data = {}
     for k in Ks:
@@ -90,14 +79,24 @@ def _create_hover_data(Ks, df_final, y_values, series_name=""):
     for i, k in enumerate(Ks):
         hd = hover_data.get(k, {})
         customdata_list.append([
-            k,  # Strike
-            hd.get("call_oi", 0),  # Call OI
-            hd.get("put_oi", 0),   # Put OI  
-            hd.get("call_vol", 0),  # Call Volume
-            hd.get("put_vol", 0),   # Put Volume
-            y_values[i] if i < len(y_values) else 0  # Series value
+            k, hd.get("call_oi", 0), hd.get("put_oi", 0), 
+            hd.get("call_vol", 0), hd.get("put_vol", 0), 
+            y_values[i] if i < len(y_values) else 0
         ])
     return customdata_list
+
+def _hover_template(series_name=""):
+    """Единый шаблон hover"""
+    return (
+        "<b style='color:white; font-size:14px'>Strike: %{customdata[0]:.0f}</b><br>" +
+        "<span style='font-size:12px'>" +
+        "Call OI: <b>%{customdata[1]:,.0f}</b><br>" +
+        "Put OI: <b>%{customdata[2]:,.0f}</b><br>" +
+        "Call Volume: <b>%{customdata[3]:,.0f}</b><br>" +
+        "Put Volume: <b>%{customdata[4]:,.0f}</b><br>" +
+        f"{series_name}: <b>" + "%{customdata[5]:,.1f}</b>" +
+        "</span><extra></extra>"
+    )
 
 def render_netgex_bars(
     df_final: _pd.DataFrame,
@@ -112,7 +111,6 @@ def render_netgex_bars(
         st.warning("В финальной таблице отсутствует столбец 'K'.")
         return
 
-    # Выбор колонки Net GEX
     if "NetGEX_1pct_M" in df_final.columns:
         y_col = "NetGEX_1pct_M"
     elif "NetGEX_1pct" in df_final.columns:
@@ -123,11 +121,9 @@ def render_netgex_bars(
         st.warning("Нет столбцов NetGEX_1pct_M / NetGEX_1pct — нечего рисовать.")
         return
 
-    # spot
     if spot is None and "S" in df_final.columns and df_final["S"].notna().any():
         spot = float(df_final["S"].dropna().iloc[0])
 
-    # --- Toggles: single horizontal row ---
     st.markdown("<style>div[data-testid='column']{padding-left:0px!important;padding-right:2px!important}</style>", unsafe_allow_html=True)
     st.markdown("""<style>div[data-testid="stWidgetLabel"] * {font-size: 0.80rem !important;line-height: 1.1 !important;}
     label:has(> div[data-baseweb="switch"]) * {font-size: 0.80rem !important;line-height: 1.1 !important;}</style>""", unsafe_allow_html=True)
@@ -157,7 +153,6 @@ def render_netgex_bars(
     if not show:
         return
 
-    # Подготовка данных
     df = df_final[["K", y_col]].dropna().copy()
     df["K"] = _pd.to_numeric(df["K"], errors="coerce")
     df = df.dropna(subset=["K"]).sort_values("K").reset_index(drop=True)
@@ -171,40 +166,38 @@ def render_netgex_bars(
     bar_width = 0.9
     colors = _np.where(Ys >= 0.0, COLOR_POS, COLOR_NEG)
     
-    # Фигура
     fig = go.Figure()
     
-    # Net GEX столбики с hover
-    customdata_netgex = _create_hover_data(Ks, df_final, Ys, "Net GEX")
+    # Net GEX bars
+    customdata_netgex = _create_hover_data(Ks, df_final, Ys)
     fig.add_trace(go.Bar(
         x=x_idx, y=Ys, name="Net GEX (M$ / 1%)", marker_color=colors, width=bar_width,
-        customdata=customdata_netgex, hovertemplate=_create_hover_template("Net GEX"),
-        hoverlabel=dict(bgcolor=colors, bordercolor="white", font=dict(size=12, color="white", family="Arial")),
+        customdata=customdata_netgex, hovertemplate=_hover_template("Net GEX"),
+        hoverlabel=dict(bgcolor=colors, bordercolor="white", font=dict(size=13, color="white")),
     ))
 
-    # Функция для добавления серий
-    def add_series(show_flag, col_name, color, name, yaxis="y2"):
+    # Series helper function
+    def add_series(show_flag, col_name, color, name):
         if show_flag and col_name in df_final.columns:
-            df_series = df_final.groupby("K", as_index=False)[col_name].sum().sort_values("K").reset_index(drop=True)
-            _map_series = {float(k): float(v) for k, v in zip(df_series["K"].to_numpy(), df_series[col_name].to_numpy())}
-            y_series = [_map_series.get(float(k), 0) for k in Ks]
-            customdata_series = _create_hover_data(Ks, df_final, y_series, name)
+            df_s = df_final.groupby("K", as_index=False)[col_name].sum().sort_values("K").reset_index(drop=True)
+            y_s = [dict(zip(df_s["K"], df_s[col_name])).get(float(k), 0) for k in Ks]
+            customdata_s = _create_hover_data(Ks, df_final, y_s)
             
             fig.add_trace(go.Scatter(
-                x=x_idx, y=y_series, customdata=customdata_series, yaxis=yaxis,
+                x=x_idx, y=y_s, customdata=customdata_s, yaxis="y2",
                 mode="lines+markers", line=dict(shape="spline", smoothing=1.0, width=1.5, color=color),
-                marker=dict(size=6, color=color),                 fill="tozeroy", fillcolor=f"rgba({color[1:3]}, {color[3:5]}, {color[5:7]}, 0.3)" if color.startswith("#") and len(color)==7 else "rgba(128,128,128,0.3)",
-                name=name, hovertemplate=_create_hover_template(name),
-                hoverlabel=dict(bgcolor=color, bordercolor="white", font=dict(size=12, color="white", family="Arial")),
+                marker=dict(size=6, color=color), fill="tozeroy", 
+                fillcolor=f"rgba({int(color[1:3],16)}, {int(color[3:5],16)}, {int(color[5:7],16)}, 0.3)",
+                name=name, hovertemplate=_hover_template(name),
+                hoverlabel=dict(bgcolor=color, bordercolor="white", font=dict(size=13, color="white")),
             ))
 
-    # Добавляем все серии
+    # Add all series
     add_series(show_put_oi, "put_oi", "#800020", "Put OI")
     add_series(show_call_oi, "call_oi", "#2ECC71", "Call OI")
     add_series(show_put_vol, "put_vol", "#FF8C00", "Put Volume")
     add_series(show_call_vol, "call_vol", "#1E88E5", "Call Volume")
     
-    # AG с правильным выбором колонки
     if show_ag:
         ag_col = "AG_1pct" if "AG_1pct" in df_final.columns else ("AG_1pct_M" if "AG_1pct_M" in df_final.columns else None)
         if ag_col:
@@ -214,16 +207,13 @@ def render_netgex_bars(
     add_series(show_er_up, "ER_Up", "#1FCE54", "ER_Up")
     add_series(show_er_down, "ER_Down", "#D21717", "ER_Down")
 
-    # (Invisible) dummy trace для правой оси
-    try:
-        fig.add_trace(go.Scatter(
-            x=[x_idx[0] if len(x_idx) > 0 else 0], y=[0], yaxis="y2",
-            mode="markers", marker=dict(opacity=0), showlegend=False, hoverinfo="skip",
-        ))
-    except Exception:
-        pass
+    # Dummy trace for y2 axis
+    fig.add_trace(go.Scatter(
+        x=[x_idx[0] if len(x_idx) > 0 else 0], y=[0], yaxis="y2",
+        mode="markers", marker=dict(opacity=0), showlegend=False, hoverinfo="skip",
+    ))
 
-    # Вертикальная линия цены
+    # Price line
     if spot is not None and _np.isfinite(spot):
         try:
             if len(Ks) >= 2:
@@ -247,41 +237,36 @@ def render_netgex_bars(
         fig.add_annotation(x=x_price, y=y1, text=f"Price: {spot:.2f}", showarrow=False, yshift=8,
                            font=dict(color=COLOR_PRICE, size=12), xanchor="center")
     
-    # Тикер
+    # Ticker
     if ticker:
         fig.add_annotation(xref="paper", yref="paper", x=0.0, y=1.12, text=str(ticker),
-                           showarrow=False, font=dict(size=16, color="#e0e0e0"), xanchor="left", yanchor="bottom")
+                           showarrow=False, font=dict(size=16, color=FG_COLOR), xanchor="left", yanchor="bottom")
 
-    # Подписи страйков
+    # Layout
     tick_vals = x_idx.tolist()
     tick_text = [str(int(k)) if float(k).is_integer() else f"{k:.2f}" for k in Ks]
 
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor="#111111", plot_bgcolor="#111111",
+        template="plotly_dark", paper_bgcolor=BG_COLOR, plot_bgcolor=BG_COLOR,
         margin=dict(l=40, r=60, t=40, b=40), showlegend=False, dragmode=False,
         xaxis=dict(title=None, tickmode="array", tickvals=tick_vals, ticktext=tick_text, tickangle=0, tickfont=dict(size=10), showgrid=False, showline=False, zeroline=False,),
         yaxis=dict(title="Net GEX", showgrid=False, zeroline=False,),
         yaxis2=dict(title="Other parameters", overlaying="y", side="right", showgrid=False, zeroline=False, showline=True, ticks="outside", tickfont=dict(size=10),),
     )
 
-    # --- G-Flip marker ---
-    try:
-        if show_gflip and (g_flip is not None) and (len(Ks) > 0):
-            k_arr = Ks.astype(float)
-            g_val = float(g_flip)
-            snap_idx = int(_np.argmin(_np.abs(k_arr - g_val)))
-            x_g = float(snap_idx)
-            k_snap = float(k_arr[snap_idx])
-            fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
-                          line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
-            fig.add_annotation(x=x_g, xref="x", y=1.02, yref="paper", text=f"G-Flip: {k_snap:g}", showarrow=False, yshift=0, 
-                               font=dict(size=12, color="#AAAAAA"), xanchor="center", yanchor="bottom", align="center")
-    except Exception:
-        pass
+    # G-Flip marker
+    if show_gflip and (g_flip is not None) and (len(Ks) > 0):
+        k_arr = Ks.astype(float)
+        g_val = float(g_flip)
+        snap_idx = int(_np.argmin(_np.abs(k_arr - g_val)))
+        x_g = float(snap_idx)
+        k_snap = float(k_arr[snap_idx])
+        fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
+                      line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
+        fig.add_annotation(x=x_g, xref="x", y=1.02, yref="paper", text=f"G-Flip: {k_snap:g}", showarrow=False, yshift=0, 
+                           font=dict(size=12, color="#AAAAAA"), xanchor="center", yanchor="bottom", align="center")
 
-    # Автомасштаб
     fig.update_yaxes(autorange=True)
     fig.update_xaxes(autorange=True)
 
-    # Статичный график
     st.plotly_chart(fig, use_container_width=True, theme=None, config={'displayModeBar': False, 'staticPlot': True})
