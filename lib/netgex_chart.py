@@ -104,62 +104,10 @@ def render_netgex_bars(
     if spot is None and "S" in df_final.columns and df_final["S"].notna().any():
         spot = float(df_final["S"].dropna().iloc[0])
 
-# --- Toggles: single horizontal row ---
-    # --- Toggles: single horizontal row ---
-
-    # компактный зазор между колонками с тумблерами
-    st.markdown(
-        "<style>div[data-testid='column']{padding-left:0px!important;padding-right:2px!important}</style>",
-        unsafe_allow_html=True,
-    )
-    # уменьшить шрифт подписей тумблеров (чуть меньше)
-# уменьшить шрифт подписей тумблеров
-    st.markdown("""
-    <style>
-    /* уменьшить шрифт подписи у st.toggle (надёжные селекторы) */
-    div[data-testid="stWidgetLabel"] * {
-      font-size: 0.80rem !important;
-      line-height: 1.1 !important;
-    }
-    label:has(> div[data-baseweb="switch"]) * {
-      font-size: 0.80rem !important;
-      line-height: 1.1 !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns(10, gap="small")
-    with col1:
-        show = st.toggle("Net GEX", value=True,
-                         key=(toggle_key or f"netgex_toggle_{ticker}"))
-    with col2:
-        show_gflip = st.toggle("G-Flip", value=False,
-                               key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
-    with col3:
-        show_put_oi = st.toggle("Put OI", value=False,
-                      key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
-    with col4:
-        _ = st.toggle("Call OI", value=False,
-                      key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}"))
-    with col5:
-        _ = st.toggle("Put Vol", value=False,
-                      key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}"))
-    with col6:
-        _ = st.toggle("Call Vol", value=False,
-                      key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}"))
-    with col7:
-        _ = st.toggle("AG", value=False,
-                      key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}"))
-    with col8:
-        _ = st.toggle("PZ", value=False,
-                      key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}"))
-    with col9:
-        _ = st.toggle("ER_Up", value=False,
-                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}"))
-    with col10:
-        _ = st.toggle("ER_Down", value=False,
-                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}"))
-
+    # Тумблер
+    show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
+    show_gflip = st.toggle("G-Flip", value=False, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
+    show_call_oi = st.toggle("Call OI", value=False, key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}"))
     if not show:
         return
 
@@ -188,44 +136,26 @@ def render_netgex_bars(
         width=bar_width,
         hovertemplate="K=%{x}<br>Net GEX=%{y:.3f}M<extra></extra>",
     ))
-
-    # --- Put OI markers (toggle-controlled) ---
+    # --- Call OI line + markers + area (toggle-controlled) ---
     try:
-        if 'show_put_oi' in locals() and show_put_oi:
-            # Суммируем финальный put_oi по страйкам и выравниваем по Ks
-            if ("K" in df_final.columns) and ("put_oi" in df_final.columns):
-                df_put = df_final.groupby("K", as_index=False)["put_oi"].sum().sort_values("K").reset_index(drop=True)
-                _map_put = {float(k): float(v) for k, v in zip(df_put["K"].to_numpy(), df_put["put_oi"].to_numpy())}
-                y_put = [_map_put.get(float(k), None) for k in Ks]
-                # Линия + точки, плавная, заливка к нулю правой оси (y2). Прозрачность заливки ~70% (alpha=0.3)
+        if 'show_call_oi' in locals() and show_call_oi:
+            if ("K" in df_final.columns) and ("call_oi" in df_final.columns):
+                df_call = df_final.groupby("K", as_index=False)["call_oi"].sum().sort_values("K").reset_index(drop=True)
+                _map_call = {float(k): float(v) for k, v in zip(df_call["K"].to_numpy(), df_call["call_oi"].to_numpy())}
+                y_call = [_map_call.get(float(k), None) for k in Ks]
                 fig.add_trace(go.Scatter(
                     x=x_idx,
-                    y=y_put,
+                    y=y_call,
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5),
                     marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(255, 99, 71, 0.3)",
-                    name="Put OI",
-                    hovertemplate="Strike=%{customdata}<br>Put OI=%{y:.0f}<extra></extra>",
+                    fillcolor="rgba(99, 110, 250, 0.3)",
+                    name="Call OI",
+                    hovertemplate="Strike=%{customdata}<br>Call OI=%{y:.0f}<extra></extra>",
                 ))
-    except Exception:
-        pass
-
-
-    # (Invisible) dummy trace to expose right-side secondary y-axis without drawing anything
-    try:
-        fig.add_trace(go.Scatter(
-            x=[x_idx[0] if len(x_idx) > 0 else 0],
-            y=[0],
-            yaxis="y2",
-            mode="markers",
-            marker=dict(opacity=0),
-            showlegend=False,
-            hoverinfo="skip",
-        ))
     except Exception:
         pass
 
@@ -270,7 +200,7 @@ def render_netgex_bars(
         template="plotly_dark",
         paper_bgcolor=BG_COLOR,
         plot_bgcolor=BG_COLOR,
-        margin=dict(l=40, r=60, t=40, b=40),
+        margin=dict(l=40, r=20, t=40, b=40),
         showlegend=False,
         dragmode=False,
         xaxis=dict(
