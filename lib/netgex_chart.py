@@ -136,7 +136,7 @@ def render_netgex_bars(
         show_gflip = st.toggle("G-Flip", value=False,
                                key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
     with col3:
-        _ = st.toggle("Put OI", value=False,
+        show_put_oi = st.toggle("Put OI", value=False,
                       key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
     with col4:
         _ = st.toggle("Call OI", value=False,
@@ -188,6 +188,29 @@ def render_netgex_bars(
         width=bar_width,
         hovertemplate="K=%{x}<br>Net GEX=%{y:.3f}M<extra></extra>",
     ))
+    # --- Put OI markers (toggle-controlled) ---
+    try:
+        if 'show_put_oi' in locals() and show_put_oi:
+            # Суммируем финальный put_oi по страйкам и выравниваем по Ks
+            if ("K" in df_final.columns) and ("put_oi" in df_final.columns):
+                df_put = df_final.groupby("K", as_index=False)["put_oi"].sum().sort_values("K").reset_index(drop=True)
+                # map K->put_oi and align to Ks used on x_idx
+                _map_put = {float(k): float(v) for k, v in zip(df_put["K"].to_numpy(), df_put["put_oi"].to_numpy())}
+                y_put = [ _map_put.get(float(k), None) for k in Ks ]
+                # Добавляем точки на правую ось (y2)
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_put,
+                    customdata=Ks,
+                    yaxis="y2",
+                    mode="markers",
+                    name="Put OI",
+                    marker=dict(size=6),
+                    hovertemplate="Strike=%{customdata}<br>Put OI=%{y:.0f}<extra></extra>",
+                ))
+    except Exception:
+        pass
+
 
     # (Invisible) dummy trace to expose right-side secondary y-axis without drawing anything
     try:
