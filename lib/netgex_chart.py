@@ -211,17 +211,15 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#800020", color="#2ECC71", color="#FF8C00", color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
-                    marker=dict(size=6, color="#800020", color="#2ECC71", color="#FF8C00", color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="Put OI",
                     hovertemplate="Strike=%{customdata}<br>Put OI=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
-
-
     # --- Call OI markers (toggle-controlled) ---
     try:
         if 'show_call_oi' in locals() and show_call_oi:
@@ -235,10 +233,10 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#2ECC71", color="#FF8C00", color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
-                    marker=dict(size=6, color="#2ECC71", color="#FF8C00", color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="Call OI",
                     hovertemplate="Strike=%{customdata}<br>Call OI=%{y:.0f}<extra></extra>",
                 ))
@@ -258,10 +256,10 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#FF8C00", color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
-                    marker=dict(size=6, color="#FF8C00", color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="Put Volume",
                     hovertemplate="Strike=%{customdata}<br>Put Volume=%{y:.0f}<extra></extra>",
                 ))
@@ -281,10 +279,10 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
-                    marker=dict(size=6, color="#1E88E5", color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="Call Volume",
                     hovertemplate="Strike=%{customdata}<br>Call Volume=%{y:.0f}<extra></extra>",
                 ))
@@ -294,11 +292,11 @@ def render_netgex_bars(
     # --- AG markers (toggle-controlled) ---
     try:
         if 'show_ag' in locals() and show_ag:
-            # Приоритет AG_1pct, иначе AG_1pct_M
-            col_ag = "AG_1pct" if "AG_1pct" in df_final.columns else ("AG_1pct_M" if "AG_1pct_M" in df_final.columns else None)
-            if ("K" in df_final.columns) and col_ag:
-                df_ag = df_final.groupby("K", as_index=False)[col_ag].sum().sort_values("K").reset_index(drop=True)
-                _map_ag = {float(k): float(v) for k, v in zip(df_ag["K"].to_numpy(), df_ag[col_ag].to_numpy())}
+            # предпочитаем AG_1pct, иначе AG_1pct_M
+            ag_col = "AG_1pct" if "AG_1pct" in df_final.columns else ("AG_1pct_M" if "AG_1pct_M" in df_final.columns else None)
+            if ("K" in df_final.columns) and (ag_col is not None):
+                df_ag = df_final.groupby("K", as_index=False)[ag_col].sum().sort_values("K").reset_index(drop=True)
+                _map_ag = {float(k): float(v) for k, v in zip(df_ag["K"].to_numpy(), df_ag[ag_col].to_numpy())}
                 y_ag = [_map_ag.get(float(k), None) for k in Ks]
                 fig.add_trace(go.Scatter(
                     x=x_idx,
@@ -306,10 +304,10 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
-                    marker=dict(size=6, color="#9A7DF7", color="#E4C51E", color="#1FCE54", color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="AG",
                     hovertemplate="Strike=%{customdata}<br>AG=%{y:.0f}<extra></extra>",
                 ))
@@ -329,10 +327,10 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#E4C51E", color="#1FCE54", color="#D21717"),
-                    marker=dict(size=6, color="#E4C51E", color="#1FCE54", color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="PZ",
                     hovertemplate="Strike=%{customdata}<br>PZ=%{y:.0f}<extra></extra>",
                 ))
@@ -352,10 +350,10 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1FCE54", color="#D21717"),
-                    marker=dict(size=6, color="#1FCE54", color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="ER_Up",
                     hovertemplate="Strike=%{customdata}<br>ER_Up=%{y:.0f}<extra></extra>",
                 ))
@@ -375,15 +373,16 @@ def render_netgex_bars(
                     customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#D21717"),
-                    marker=dict(size=6, color="#D21717"),
+                    line=dict(shape="spline", smoothing=1.0, width=1.5),
+                    marker=dict(size=6),
                     fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    fillcolor="rgba(255, 99, 71, 0.3)",
                     name="ER_Down",
                     hovertemplate="Strike=%{customdata}<br>ER_Down=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
+
 
 
     # (Invisible) dummy trace to expose right-side secondary y-axis without drawing anything
