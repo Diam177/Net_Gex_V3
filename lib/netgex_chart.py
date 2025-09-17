@@ -1,6 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 netgex_chart.py — бар‑чарт Net GEX для главной страницы.
+
+Функция render_netgex_bars(df_final, ticker, spot=None, toggle_key=None):
+  • df_final: DataFrame по одной экспирации (или агрегированной multi‑финалке)
+  • ticker: строка для подписи в левом верхнем углу
+  • spot: текущая цена БА; если None — берётся из df_final['S']
+  • toggle_key: уникальный ключ для st.toggle
+
+Зависимости: plotly>=5, pandas, streamlit
 """
 
 from __future__ import annotations
@@ -8,9 +16,13 @@ from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
 import numpy as _np
-
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
-    """G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак."""
+    """
+    G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак.
+    Метод: кусочно-линейная интерполяция между соседними страйками и поиск корня.
+    K* = K0 - y0*(K1-K0)/(y1-y0)
+    Если несколько корней — выбираем ближайший к spot (если известен), иначе к середине диапазона.
+    """
     import pandas as _pd
     if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
         return None
@@ -25,6 +37,7 @@ def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> 
     Ys = g[y_col].to_numpy(dtype=float)
     if len(Ks) < 2:
         return None
+    # прямые нули и смена знака
     cand = [float(Ks[i]) for i,v in enumerate(Ys) if v == 0.0]
     sign = _np.sign(Ys)
     idx = _np.where(sign[:-1]*sign[1:] < 0)[0]
@@ -45,58 +58,22 @@ def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> 
     j = int(_np.argmin(_np.abs(_np.array(cand) - mid)))
     return float(cand[j])
 
+
 try:
     import plotly.graph_objects as go
 except Exception as e:
     raise RuntimeError("Требуется пакет 'plotly' (plotly>=5.22.0)") from e
 
-COLOR_NEG = '#D9493A'
-COLOR_POS = '#60A5E7'
-COLOR_PRICE = '#E4A339'
+# --- Цвета/оформление ---
+COLOR_NEG = '#D9493A'    # красный
+COLOR_POS = '#60A5E7'    # бирюзовый
+COLOR_PRICE = '#E4A339'  # оранжевая линия цены
 BG_COLOR = '#111111'
 FG_COLOR = '#e0e0e0'
 GRID_COLOR = 'rgba(255,255,255,0.10)'
 
 def _to_num(a: Sequence) -> _np.ndarray:
     return _np.array(_pd.to_numeric(a, errors='coerce'), dtype=float)
-
-def _create_hover_data(Ks, df_final, y_values):
-    """Создает customdata для hover"""
-    hover_data = {}
-    for k in Ks:
-        k_data = df_final[df_final["K"] == k]
-        if not k_data.empty:
-            hover_data[k] = {
-                "call_oi": k_data["call_oi"].sum() if "call_oi" in k_data.columns else 0,
-                "put_oi": k_data["put_oi"].sum() if "put_oi" in k_data.columns else 0,
-                "call_vol": k_data["call_vol"].sum() if "call_vol" in k_data.columns else 0,
-                "put_vol": k_data["put_vol"].sum() if "put_vol" in k_data.columns else 0,
-            }
-        else:
-            hover_data[k] = {"call_oi": 0, "put_oi": 0, "call_vol": 0, "put_vol": 0}
-    
-    customdata_list = []
-    for i, k in enumerate(Ks):
-        hd = hover_data.get(k, {})
-        customdata_list.append([
-            k, hd.get("call_oi", 0), hd.get("put_oi", 0), 
-            hd.get("call_vol", 0), hd.get("put_vol", 0), 
-            y_values[i] if i < len(y_values) else 0
-        ])
-    return customdata_list
-
-def _hover_template(series_name=""):
-    """Единый шаблон hover"""
-    return (
-        "<b style='color:white; font-size:14px'>Strike: %{customdata[0]:.0f}</b><br>" +
-        "<span style='font-size:12px'>" +
-        "Call OI: <b>%{customdata[1]:,.0f}</b><br>" +
-        "Put OI: <b>%{customdata[2]:,.0f}</b><br>" +
-        "Call Volume: <b>%{customdata[3]:,.0f}</b><br>" +
-        "Put Volume: <b>%{customdata[4]:,.0f}</b><br>" +
-        f"{series_name}: <b>" + "%{customdata[5]:,.1f}</b>" +
-        "</span><extra></extra>"
-    )
 
 def render_netgex_bars(
     df_final: _pd.DataFrame,
@@ -111,6 +88,7 @@ def render_netgex_bars(
         st.warning("В финальной таблице отсутствует столбец 'K'.")
         return
 
+    # Выбор колонки Net GEX (в млн $/1% приоритетно)
     if "NetGEX_1pct_M" in df_final.columns:
         y_col = "NetGEX_1pct_M"
     elif "NetGEX_1pct" in df_final.columns:
@@ -121,38 +99,77 @@ def render_netgex_bars(
         st.warning("Нет столбцов NetGEX_1pct_M / NetGEX_1pct — нечего рисовать.")
         return
 
+    # spot
     if spot is None and "S" in df_final.columns and df_final["S"].notna().any():
         spot = float(df_final["S"].dropna().iloc[0])
 
-    st.markdown("<style>div[data-testid='column']{padding-left:0px!important;padding-right:2px!important}</style>", unsafe_allow_html=True)
-    st.markdown("""<style>div[data-testid="stWidgetLabel"] * {font-size: 0.80rem !important;line-height: 1.1 !important;}
-    label:has(> div[data-baseweb="switch"]) * {font-size: 0.80rem !important;line-height: 1.1 !important;}</style>""", unsafe_allow_html=True)
+# --- Toggles: single horizontal row ---
+    # --- Toggles: single horizontal row ---
+
+    # компактный зазор между колонками с тумблерами
+    st.markdown(
+        "<style>div[data-testid='column']{padding-left:0px!important;padding-right:2px!important}</style>",
+        unsafe_allow_html=True,
+    )
+    # уменьшить шрифт подписей тумблеров (чуть меньше)
+# уменьшить шрифт подписей тумблеров
+    st.markdown("""
+    <style>
+    /* уменьшить шрифт подписи у st.toggle (надёжные селекторы) */
+    div[data-testid="stWidgetLabel"] * {
+      font-size: 0.80rem !important;
+      line-height: 1.1 !important;
+    }
+    label:has(> div[data-baseweb="switch"]) * {
+      font-size: 0.80rem !important;
+      line-height: 1.1 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns(10, gap="small")
     with col1:
-        show = st.toggle("Net GEX", value=True, key=(toggle_key or f"netgex_toggle_{ticker}"))
+        show = st.toggle("Net GEX", value=True,
+                         key=(toggle_key or f"netgex_toggle_{ticker}"))
     with col2:
-        show_gflip = st.toggle("G-Flip", value=False, key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
+        show_gflip = st.toggle("G-Flip", value=False,
+                               key=(f"{toggle_key}__gflip" if toggle_key else f"gflip_toggle_{ticker}"))
     with col3:
-        show_put_oi = st.toggle("Put OI", value=False, key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
+        show_put_oi = st.toggle("Put OI", value=False,
+                      key=(f"{toggle_key}__put_oi" if toggle_key else f"putoi_toggle_{ticker}"))
     with col4:
-        show_call_oi = st.toggle("Call OI", value=False, key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}"))
+        show_call_oi = st.toggle("Call OI", value=False,
+                      key=(f"{toggle_key}__call_oi" if toggle_key else f"calloi_toggle_{ticker}")
+)
     with col5:
-        show_put_vol = st.toggle("Put Vol", value=False, key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}"))
+        show_put_vol = st.toggle("Put Vol", value=False,
+                      key=(f"{toggle_key}__put_vol" if toggle_key else f"putvol_toggle_{ticker}")
+)
     with col6:
-        show_call_vol = st.toggle("Call Vol", value=False, key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}"))
+        show_call_vol = st.toggle("Call Vol", value=False,
+                      key=(f"{toggle_key}__call_vol" if toggle_key else f"callvol_toggle_{ticker}")
+)
     with col7:
-        show_ag = st.toggle("AG", value=False, key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}"))
+        show_ag = st.toggle("AG", value=False,
+                      key=(f"{toggle_key}__ag" if toggle_key else f"ag_toggle_{ticker}")
+)
     with col8:
-        show_pz = st.toggle("PZ", value=False, key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}"))
+        show_pz = st.toggle("PZ", value=False,
+                      key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}")
+)
     with col9:
-        show_er_up = st.toggle("ER_Up", value=False, key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}"))
+        show_er_up = st.toggle("ER_Up", value=False,
+                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}")
+)
     with col10:
-        show_er_down = st.toggle("ER_Down", value=False, key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}"))
+        show_er_down = st.toggle("ER_Down", value=False,
+                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}")
+)
 
     if not show:
         return
 
+    # Подготовка данных и ширины бара
     df = df_final[["K", y_col]].dropna().copy()
     df["K"] = _pd.to_numeric(df["K"], errors="coerce")
     df = df.dropna(subset=["K"]).sort_values("K").reset_index(drop=True)
@@ -162,59 +179,424 @@ def render_netgex_bars(
     Ys = df[y_col].to_numpy(dtype=float)
     g_flip = _compute_gamma_flip_from_table(df, y_col, spot)
     
+    # Последовательные позиции без "пустых" промежутков между страйками
     x_idx = _np.arange(len(Ks), dtype=float)
     bar_width = 0.9
     colors = _np.where(Ys >= 0.0, COLOR_POS, COLOR_NEG)
     
+    # Подготовка данных для hover
+    # Собираем данные по страйкам для всплывающей подсказки
+    hover_data = {}
+    for k in Ks:
+        k_data = df_final[df_final["K"] == k]
+        if not k_data.empty:
+            hover_data[k] = {
+                "call_oi": k_data["call_oi"].sum() if "call_oi" in k_data.columns else 0,
+                "put_oi": k_data["put_oi"].sum() if "put_oi" in k_data.columns else 0,
+                "call_vol": k_data["call_vol"].sum() if "call_vol" in k_data.columns else 0,
+                "put_vol": k_data["put_vol"].sum() if "put_vol" in k_data.columns else 0,
+            }
+        else:
+            hover_data[k] = {"call_oi": 0, "put_oi": 0, "call_vol": 0, "put_vol": 0}
+    
+    # Создаем customdata для hover
+    customdata_list = []
+    for i, k in enumerate(Ks):
+        hd = hover_data.get(k, {})
+        customdata_list.append([
+            k,  # Strike
+            hd.get("call_oi", 0),  # Call OI
+            hd.get("put_oi", 0),   # Put OI  
+            hd.get("call_vol", 0),  # Call Volume
+            hd.get("put_vol", 0),   # Put Volume
+            Ys[i]  # Net GEX value
+        ])
+    
+    # Фигура
     fig = go.Figure()
-    
-    # Net GEX bars
-    customdata_netgex = _create_hover_data(Ks, df_final, Ys)
     fig.add_trace(go.Bar(
-        x=x_idx, y=Ys, name="Net GEX (M$ / 1%)", marker_color=colors, width=bar_width,
-        customdata=customdata_netgex, hovertemplate=_hover_template("Net GEX"),
-        hoverlabel=dict(bgcolor=colors, bordercolor="white", font=dict(size=13, color="white")),
+        x=x_idx,
+        y=Ys,
+        name="Net GEX (M$ / 1%)",
+        marker_color=colors,
+        width=bar_width,
+        customdata=customdata_list,
+        hovertemplate=(
+            "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+            "Call OI: %{customdata[1]:,.0f}<br>" +
+            "Put OI: %{customdata[2]:,.0f}<br>" +
+            "Call Volume: %{customdata[3]:,.0f}<br>" +
+            "Put Volume: %{customdata[4]:,.0f}<br>" +
+            "Net GEX: %{customdata[5]:,.1f}M" +
+            "<extra></extra>"
+        ),
+        hoverlabel=dict(
+            bgcolor=colors,  # Цвет фона подсказки соответствует цвету столбика
+            bordercolor="white",
+            font=dict(size=13, color="white")
+        ),
     ))
 
-    # Series helper function
-    def add_series(show_flag, col_name, color, name):
-        if show_flag and col_name in df_final.columns:
-            df_s = df_final.groupby("K", as_index=False)[col_name].sum().sort_values("K").reset_index(drop=True)
-            y_s = [dict(zip(df_s["K"], df_s[col_name])).get(float(k), 0) for k in Ks]
-            customdata_s = _create_hover_data(Ks, df_final, y_s)
-            
-            fig.add_trace(go.Scatter(
-                x=x_idx, y=y_s, customdata=customdata_s, yaxis="y2",
-                mode="lines+markers", line=dict(shape="spline", smoothing=1.0, width=1.5, color=color),
-                marker=dict(size=6, color=color), fill="tozeroy", 
-                fillcolor=f"rgba({int(color[1:3],16)}, {int(color[3:5],16)}, {int(color[5:7],16)}, 0.3)",
-                name=name, hovertemplate=_hover_template(name),
-                hoverlabel=dict(bgcolor=color, bordercolor="white", font=dict(size=13, color="white")),
-            ))
+    # --- Put OI markers (toggle-controlled) ---
+    try:
+        if 'show_put_oi' in locals() and show_put_oi:
+            # Суммируем финальный put_oi по страйкам и выравниваем по Ks
+            if ("K" in df_final.columns) and ("put_oi" in df_final.columns):
+                df_put = df_final.groupby("K", as_index=False)["put_oi"].sum().sort_values("K").reset_index(drop=True)
+                _map_put = {float(k): float(v) for k, v in zip(df_put["K"].to_numpy(), df_put["put_oi"].to_numpy())}
+                y_put = [_map_put.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для Put OI hover
+                put_customdata = []
+                for i, k in enumerate(Ks):
+                    hd = hover_data.get(k, {})
+                    put_customdata.append([
+                        k,  # Strike
+                        hd.get("put_oi", 0),   # Put OI
+                    ])
+                
+                # Линия + точки, плавная, заливка к нулю правой оси (y2). Прозрачность заливки ~70% (alpha=0.3)
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_put,
+                    customdata=put_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#800020"),
+                    marker=dict(size=6, color="#800020"),
+                    fill="tozeroy",
+                    fillcolor="rgba(128, 0, 32, 0.3)",
+                    name="Put OI",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "Put OI: %{customdata[1]:,.0f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#800020",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
+    # --- Call OI markers (toggle-controlled) ---
+    try:
+        if 'show_call_oi' in locals() and show_call_oi:
+            if ("K" in df_final.columns) and ("call_oi" in df_final.columns):
+                df_call = df_final.groupby("K", as_index=False)["call_oi"].sum().sort_values("K").reset_index(drop=True)
+                _map_call = {float(k): float(v) for k, v in zip(df_call["K"].to_numpy(), df_call["call_oi"].to_numpy())}
+                y_call = [_map_call.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для Call OI hover
+                call_customdata = []
+                for i, k in enumerate(Ks):
+                    hd = hover_data.get(k, {})
+                    call_customdata.append([
+                        k,  # Strike
+                        hd.get("call_oi", 0),   # Call OI
+                    ])
+                
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_call,
+                    customdata=call_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#2ECC71"),
+                    marker=dict(size=6, color="#2ECC71"),
+                    fill="tozeroy",
+                    fillcolor="rgba(46, 204, 113, 0.3)",
+                    name="Call OI",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "Call OI: %{customdata[1]:,.0f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#2ECC71",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
 
-    # Add all series
-    add_series(show_put_oi, "put_oi", "#800020", "Put OI")
-    add_series(show_call_oi, "call_oi", "#2ECC71", "Call OI")
-    add_series(show_put_vol, "put_vol", "#FF8C00", "Put Volume")
-    add_series(show_call_vol, "call_vol", "#1E88E5", "Call Volume")
+    # --- Put Volume markers (toggle-controlled) ---
+    try:
+        if 'show_put_vol' in locals() and show_put_vol:
+            if ("K" in df_final.columns) and ("put_vol" in df_final.columns):
+                df_pv = df_final.groupby("K", as_index=False)["put_vol"].sum().sort_values("K").reset_index(drop=True)
+                _map_pv = {float(k): float(v) for k, v in zip(df_pv["K"].to_numpy(), df_pv["put_vol"].to_numpy())}
+                y_pv = [_map_pv.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для Put Volume hover
+                put_vol_customdata = []
+                for i, k in enumerate(Ks):
+                    hd = hover_data.get(k, {})
+                    put_vol_customdata.append([
+                        k,  # Strike
+                        hd.get("put_vol", 0),   # Put Volume
+                    ])
+                
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_pv,
+                    customdata=put_vol_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#FF8C00"),
+                    marker=dict(size=6, color="#FF8C00"),
+                    fill="tozeroy",
+                    fillcolor="rgba(255, 140, 0, 0.3)",
+                    name="Put Volume",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "Put Volume: %{customdata[1]:,.0f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#FF8C00",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
+
+    # --- Call Volume markers (toggle-controlled) ---
+    try:
+        if 'show_call_vol' in locals() and show_call_vol:
+            if ("K" in df_final.columns) and ("call_vol" in df_final.columns):
+                df_cv = df_final.groupby("K", as_index=False)["call_vol"].sum().sort_values("K").reset_index(drop=True)
+                _map_cv = {float(k): float(v) for k, v in zip(df_cv["K"].to_numpy(), df_cv["call_vol"].to_numpy())}
+                y_cv = [_map_cv.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для Call Volume hover
+                call_vol_customdata = []
+                for i, k in enumerate(Ks):
+                    hd = hover_data.get(k, {})
+                    call_vol_customdata.append([
+                        k,  # Strike
+                        hd.get("call_vol", 0),   # Call Volume
+                    ])
+                
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_cv,
+                    customdata=call_vol_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1E88E5"),
+                    marker=dict(size=6, color="#1E88E5"),
+                    fill="tozeroy",
+                    fillcolor="rgba(30, 136, 229, 0.3)",
+                    name="Call Volume",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "Call Volume: %{customdata[1]:,.0f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#1E88E5",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
+
+    # --- AG markers (toggle-controlled) ---
+    try:
+        if 'show_ag' in locals() and show_ag:
+            # предпочитаем AG_1pct, иначе AG_1pct_M
+            ag_col = "AG_1pct" if "AG_1pct" in df_final.columns else ("AG_1pct_M" if "AG_1pct_M" in df_final.columns else None)
+            if ("K" in df_final.columns) and (ag_col is not None):
+                df_ag = df_final.groupby("K", as_index=False)[ag_col].sum().sort_values("K").reset_index(drop=True)
+                _map_ag = {float(k): float(v) for k, v in zip(df_ag["K"].to_numpy(), df_ag[ag_col].to_numpy())}
+                y_ag = [_map_ag.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для AG hover
+                ag_customdata = []
+                for i, k in enumerate(Ks):
+                    ag_val = _map_ag.get(float(k), 0)
+                    ag_customdata.append([
+                        k,  # Strike
+                        ag_val,   # AG value
+                    ])
+                
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_ag,
+                    customdata=ag_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#9A7DF7"),
+                    marker=dict(size=6, color="#9A7DF7"),
+                    fill="tozeroy",
+                    fillcolor="rgba(154, 125, 247, 0.3)",
+                    name="AG",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "AG: %{customdata[1]:,.1f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#9A7DF7",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
+
+    # --- PZ markers (toggle-controlled) ---
+    try:
+        if 'show_pz' in locals() and show_pz:
+            if ("K" in df_final.columns) and ("PZ" in df_final.columns):
+                df_pz = df_final.groupby("K", as_index=False)["PZ"].sum().sort_values("K").reset_index(drop=True)
+                _map_pz = {float(k): float(v) for k, v in zip(df_pz["K"].to_numpy(), df_pz["PZ"].to_numpy())}
+                y_pz = [_map_pz.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для PZ hover
+                pz_customdata = []
+                for i, k in enumerate(Ks):
+                    pz_val = _map_pz.get(float(k), 0)
+                    pz_customdata.append([
+                        k,  # Strike
+                        pz_val,   # PZ value
+                    ])
+                
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_pz,
+                    customdata=pz_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#E4C51E"),
+                    marker=dict(size=6, color="#E4C51E"),
+                    fill="tozeroy",
+                    fillcolor="rgba(228, 197, 30, 0.3)",
+                    name="PZ",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "PZ: %{customdata[1]:,.3f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#E4C51E",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
+
+    # --- ER_Up markers (toggle-controlled) ---
+    try:
+        if 'show_er_up' in locals() and show_er_up:
+            if ("K" in df_final.columns) and ("ER_Up" in df_final.columns):
+                df_eu = df_final.groupby("K", as_index=False)["ER_Up"].sum().sort_values("K").reset_index(drop=True)
+                _map_eu = {float(k): float(v) for k, v in zip(df_eu["K"].to_numpy(), df_eu["ER_Up"].to_numpy())}
+                y_eu = [_map_eu.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для ER_Up hover
+                er_up_customdata = []
+                for i, k in enumerate(Ks):
+                    er_up_val = _map_eu.get(float(k), 0)
+                    er_up_customdata.append([
+                        k,  # Strike
+                        er_up_val,   # ER_Up value
+                    ])
+                
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_eu,
+                    customdata=er_up_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1FCE54"),
+                    marker=dict(size=6, color="#1FCE54"),
+                    fill="tozeroy",
+                    fillcolor="rgba(31, 206, 84, 0.3)",
+                    name="ER_Up",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "ER_Up: %{customdata[1]:,.3f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#1FCE54",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
+
+    # --- ER_Down markers (toggle-controlled) ---
+    try:
+        if 'show_er_down' in locals() and show_er_down:
+            if ("K" in df_final.columns) and ("ER_Down" in df_final.columns):
+                df_ed = df_final.groupby("K", as_index=False)["ER_Down"].sum().sort_values("K").reset_index(drop=True)
+                _map_ed = {float(k): float(v) for k, v in zip(df_ed["K"].to_numpy(), df_ed["ER_Down"].to_numpy())}
+                y_ed = [_map_ed.get(float(k), None) for k in Ks]
+                
+                # Подготовка customdata для ER_Down hover
+                er_down_customdata = []
+                for i, k in enumerate(Ks):
+                    er_down_val = _map_ed.get(float(k), 0)
+                    er_down_customdata.append([
+                        k,  # Strike
+                        er_down_val,   # ER_Down value
+                    ])
+                
+                fig.add_trace(go.Scatter(
+                    x=x_idx,
+                    y=y_ed,
+                    customdata=er_down_customdata,
+                    yaxis="y2",
+                    mode="lines+markers",
+                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#D21717"),
+                    marker=dict(size=6, color="#D21717"),
+                    fill="tozeroy",
+                    fillcolor="rgba(210, 23, 23, 0.3)",
+                    name="ER_Down",
+                    hovertemplate=(
+                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+                        "ER_Down: %{customdata[1]:,.3f}" +
+                        "<extra></extra>"
+                    ),
+                    hoverlabel=dict(
+                        bgcolor="#D21717",
+                        bordercolor="white",
+                        font=dict(size=13, color="white")
+                    ),
+                ))
+    except Exception:
+        pass
+
+
+
+    # (Invisible) dummy trace to expose right-side secondary y-axis without drawing anything
+    try:
+        fig.add_trace(go.Scatter(
+            x=[x_idx[0] if len(x_idx) > 0 else 0],
+            y=[0],
+            yaxis="y2",
+            mode="markers",
+            marker=dict(opacity=0),
+            showlegend=False,
+            hoverinfo="skip",
+        ))
+    except Exception:
+        pass
+
+
+    # Вертикальная линия цены
     
-    if show_ag:
-        ag_col = "AG_1pct" if "AG_1pct" in df_final.columns else ("AG_1pct_M" if "AG_1pct_M" in df_final.columns else None)
-        if ag_col:
-            add_series(True, ag_col, "#9A7DF7", "AG")
-    
-    add_series(show_pz, "PZ", "#E4C51E", "PZ")
-    add_series(show_er_up, "ER_Up", "#1FCE54", "ER_Up")
-    add_series(show_er_down, "ER_Down", "#D21717", "ER_Down")
-
-    # Dummy trace for y2 axis
-    fig.add_trace(go.Scatter(
-        x=[x_idx[0] if len(x_idx) > 0 else 0], y=[0], yaxis="y2",
-        mode="markers", marker=dict(opacity=0), showlegend=False, hoverinfo="skip",
-    ))
-
-    # Price line
     if spot is not None and _np.isfinite(spot):
+    # интерполируем позицию цены между ближайшими страйками на оси индексов
         try:
             if len(Ks) >= 2:
                 j = int(_np.searchsorted(Ks, spot))
@@ -237,36 +619,74 @@ def render_netgex_bars(
         fig.add_annotation(x=x_price, y=y1, text=f"Price: {spot:.2f}", showarrow=False, yshift=8,
                            font=dict(color=COLOR_PRICE, size=12), xanchor="center")
     
-    # Ticker
+    # Тикер
     if ticker:
         fig.add_annotation(xref="paper", yref="paper", x=0.0, y=1.12, text=str(ticker),
                            showarrow=False, font=dict(size=16, color=FG_COLOR), xanchor="left", yanchor="bottom")
 
-    # Layout
+    # Подписи страйков: все значения, горизонтально, шрифт 10
     tick_vals = x_idx.tolist()
     tick_text = [str(int(k)) if float(k).is_integer() else f"{k:.2f}" for k in Ks]
 
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor=BG_COLOR, plot_bgcolor=BG_COLOR,
-        margin=dict(l=40, r=60, t=40, b=40), showlegend=False, dragmode=False,
-        xaxis=dict(title=None, tickmode="array", tickvals=tick_vals, ticktext=tick_text, tickangle=0, tickfont=dict(size=10), showgrid=False, showline=False, zeroline=False,),
-        yaxis=dict(title="Net GEX", showgrid=False, zeroline=False,),
-        yaxis2=dict(title="Other parameters", overlaying="y", side="right", showgrid=False, zeroline=False, showline=True, ticks="outside", tickfont=dict(size=10),),
+
+        template="plotly_dark",
+        paper_bgcolor=BG_COLOR,
+        plot_bgcolor=BG_COLOR,
+        margin=dict(l=40, r=60, t=40, b=40),
+        showlegend=False,
+        dragmode=False,
+        xaxis=dict(
+            title=None,
+            tickmode="array",
+            tickvals=tick_vals,
+            ticktext=tick_text,
+            tickangle=0,
+            tickfont=dict(size=10),   # <<< фиксированный размер 10
+            showgrid=False,
+            showline=False,
+            zeroline=False,
+        ),
+        yaxis=dict(
+            title="Net GEX",
+            showgrid=False,
+            zeroline=False,
+        ),
+        yaxis2=dict(
+            title="Other parameters",
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            zeroline=False,
+            showline=True,
+            ticks="outside",
+            tickfont=dict(size=10),
+        ),
     )
 
-    # G-Flip marker
-    if show_gflip and (g_flip is not None) and (len(Ks) > 0):
-        k_arr = Ks.astype(float)
-        g_val = float(g_flip)
-        snap_idx = int(_np.argmin(_np.abs(k_arr - g_val)))
-        x_g = float(snap_idx)
-        k_snap = float(k_arr[snap_idx])
-        fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
-                      line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
-        fig.add_annotation(x=x_g, xref="x", y=1.02, yref="paper", text=f"G-Flip: {k_snap:g}", showarrow=False, yshift=0, 
-                           font=dict(size=12, color="#AAAAAA"), xanchor="center", yanchor="bottom", align="center")
+    
+    
+    
+    # --- G-Flip marker (optional) ---
+    try:
+        if 'show_gflip' in locals() and show_gflip and (g_flip is not None) and (len(Ks) > 0):
+            # Всегда привязываем линию к центру ближайшего страйка (визуальная консистентность с подписью)
+            k_arr = Ks.astype(float)
+            g_val = float(g_flip)
+            snap_idx = int(_np.argmin(_np.abs(k_arr - g_val)))
+            x_g = float(snap_idx)
+            k_snap = float(k_arr[snap_idx])
 
+            fig.add_shape(type="line", x0=x_g, x1=x_g, y0=0, y1=1, xref="x", yref="paper",
+                          line=dict(width=1, color="#AAAAAA", dash="dash"), layer="above")
+            fig.add_annotation(x=x_g, xref="x", y=1.02, yref="paper", text=f"G-Flip: {k_snap:g}", showarrow=False, yshift=0, font=dict(size=12, color="#AAAAAA"), xanchor="center", yanchor="bottom", align="center")
+    except Exception:
+        pass
+
+    # Автомасштаб
     fig.update_yaxes(autorange=True)
     fig.update_xaxes(autorange=True)
 
-    st.plotly_chart(fig, use_container_width=True, theme=None, config={'displayModeBar': False, 'staticPlot': True})
+    # Статичный график без зума/панорамы и без панели управления
+    st.plotly_chart(fig, use_container_width=True, theme=None,
+                    config={'displayModeBar': False, 'staticPlot': True})
