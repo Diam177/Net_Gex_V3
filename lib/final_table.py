@@ -1,200 +1,208 @@
+
 # -*- coding: utf-8 -*-
 """
-chart_final_table.py
---------------------
-Стримлит-рендер чарта для финальной таблицы.
-Зависимости: plotly>=5.18, pandas, numpy, streamlit
+final_table.py — единая сборка финальной таблицы по страйкам окна:
+- Берёт "исправленные" данные и окна (sanitize_window.py)
+- Считает Net GEX / AG (netgex_ag.py)
+- Считает Power Zone / ER Up / ER Down (power_zone_er.py)
+- Собирает одну финальную таблицу по каждому expiry: [exp, K, S, F, call_oi, put_oi,
+  dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct, AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down]
 
-Публичный API:
-    render_final_chart(df, title=None, spot=None, show_toggles=True, height=520)
-
-Вход:
-    df: pandas.DataFrame с колонками (любое подмножество — отсутствие будет игнорироваться):
-        ["K","S","F","NetGEX_1pct","AG_1pct","NetGEX_1pct_M","AG_1pct_M",
-         "call_oi","put_oi","call_vol","put_vol","PZ","ER_Up","ER_Down"]
-    spot: float|None — текущая цена (вертикальная линия). Если None — возьмём медиану df["S"].
-    title: str|None — заголовок (тикер).
-    show_toggles: bool — показать переключатели видимости серий.
-    height: int — высота фигуры.
-
-Поведение (см. ориентир по скриншоту):
-    - Столбцы (левая ось): Net GEX (красные отрицательные, голубые положительные).
-    - Линия+заливка (правая ось): AG (фиолетовая волна).
-    - Переключатели: Put OI, Call OI, Put Volume, Call Volume, PZ, ER (Up/Down). AG и Net GEX включены по умолчанию.
-    - Вертикальная золотая линия со значением spot.
+Предусмотрены два варианта входа:
+1) process_from_raw(raw_records, S, ...) — полный цикл "сырые -> финальные таблицы"
+2) build_final_tables_from_corr(df_corr, windows, ...) — если у вас уже есть df_corr и окна
 """
-from __future__ import annotations
 
-import math
-from typing import Optional, Dict
+from __future__ import annotations
+__all__ = ['FinalTableConfig', 'build_final_tables_from_corr', 'process_from_raw', '_series_ctx_from_corr']
+
+
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-try:
-    import plotly.graph_objects as go
-except Exception as e:  # pragma: no cover
-    raise RuntimeError("plotly is required: pip install plotly>=5.18") from e
-
-# streamlit может отсутствовать в тестовом окружении
-try:
-    import streamlit as st  # type: ignore
-except Exception:  # pragma: no cover
-    class _ST:
-        def toggle(self, *a, **k): return True
-        def columns(self, n): return [self]*n
-        def markdown(self, *a, **k): pass
-        def write(self, *a, **k): pass
-        def plotly_chart(self, *a, **k): pass
-        def caption(self, *a, **k): pass
-    st = _ST()  # type: ignore
+# Внешние модули пайплайна (должны быть в PYTHONPATH или рядом)
+from lib.sanitize_window import (
+    SanitizerConfig,
+    sanitize_and_window_pipeline,
+)
+from lib.netgex_ag import (
+    NetGEXAGConfig,
+    compute_netgex_ag_per_expiry,
+)
+from lib.power_zone_er import compute_power_zone_and_er
 
 
-def _coerce_series(df: pd.DataFrame, col_candidates) -> Optional[pd.Series]:
-    for c in col_candidates:
-        if c in df.columns:
-            return df[c]
-    return None
+# --------- конфиг ---------
+
+@dataclass
+class FinalTableConfig:
+    # Масштаб для млн $ в колонках *_M (используется в netgex_ag)
+    scale_millions: float = 1e6
+    # Параметры для Power Zone / ER (оставляем значения по умолчанию из power_zone_er)
+    day_high: Optional[float] = None
+    day_low: Optional[float] = None
 
 
-def _split_pos_neg(y: pd.Series) -> Dict[str, pd.Series]:
-    y_pos = y.clip(lower=0)
-    y_neg = y.clip(upper=0)
-    return {"pos": y_pos, "neg": y_neg}
+# --------- helpers ---------
+
+def _window_strikes(df_corr: pd.DataFrame, exp: str, windows: Dict[str, np.ndarray]) -> np.ndarray:
+    Ks = np.array(sorted(df_corr.loc[df_corr["exp"] == exp, "K"].unique()), dtype=float)
+    idx = np.array(windows.get(exp, []), dtype=int)
+    if Ks.size == 0:
+        return Ks
+    if idx.size == 0 or idx.max() >= Ks.size or idx.min() < 0:
+        return Ks
+    return Ks[idx]
 
 
+def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
+    """
+    Конструирует all_series_ctx-словарь для power_zone_er из df_corr по конкретной экспирации.
+    Возвращает dict с одним ключом exp -> контекст (совместимо с compute_power_zone_and_er).
+    """
+    g = df_corr[df_corr["exp"] == exp].copy()
+    if g.empty:
+        return {}
 
-def _safe_float_median(series: Optional[pd.Series]) -> float:
-    """Return float(median(series)) or NaN if series is None/empty/non-numeric."""
-    if series is None:
-        return float("nan")
-    try:
-        s = pd.to_numeric(series, errors="coerce").dropna()
-        if s.empty:
-            return float("nan")
-        return float(np.nanmedian(s.values))
-    except Exception:
-        return float("nan")
+    # Страйки и сортировка
+    Ks = np.array(sorted(g["K"].unique()), dtype=float)
+    # OI / Volume по сторонам
+    agg_oi = g.groupby(["K", "side"], as_index=False)["oi"].sum()
+    agg_vol = g.groupby(["K", "side"], as_index=False)["vol"].sum()
+    pivot_oi = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
+    pivot_vol = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
+    call_oi = {float(k): float(v) for k, v in pivot_oi.get("C", pd.Series(dtype=float)).items()}
+    put_oi  = {float(k): float(v) for k, v in pivot_oi.get("P", pd.Series(dtype=float)).items()}
+    call_vol= {float(k): float(v) for k, v in pivot_vol.get("C", pd.Series(dtype=float)).items()}
+    put_vol = {float(k): float(v) for k, v in pivot_vol.get("P", pd.Series(dtype=float)).items()}
 
-def render_final_chart(
-    df: pd.DataFrame,
-    title: Optional[str] = None,
-    spot: Optional[float] = None,
-    show_toggles: bool = True,
-    height: int = 520,
-) -> None:
-    if df is None or len(df) == 0:
-        st.caption("Нет данных для отображения.")
-        return
+    # IV по сторонам (исправленная)
+    iv_call = g[g["side"]=="C"].groupby("K")["iv_corr"].median().to_dict()
+    iv_put  = g[g["side"]=="P"].groupby("K")["iv_corr"].median().to_dict()
 
-    # Базовая ось X
-    x = df["K"].astype(float)
-
-    # Найдём серии
-    y_netgex = _coerce_series(df, ["NetGEX_1pct", "NetGEX", "NetGEX_1pct_M"])  # M тоже ок — масштаб правой оси не привязан
-    y_ag     = _coerce_series(df, ["AG_1pct", "AG", "AG_1pct_M"])
-    y_call_oi = _coerce_series(df, ["call_oi", "Call OI", "callOI"])
-    y_put_oi  = _coerce_series(df, ["put_oi", "Put OI", "putOI"])
-    y_call_vol = _coerce_series(df, ["call_vol", "Call Volume", "callVolume","call_vol_sum"])
-    y_put_vol  = _coerce_series(df, ["put_vol", "Put Volume", "putVolume","put_vol_sum"])
-    y_pz     = _coerce_series(df, ["PZ","PZ_FP","PZ_norm"])
-    y_er_up  = _coerce_series(df, ["ER_Up","ER_up","ERup"])
-    y_er_dn  = _coerce_series(df, ["ER_Down","ER_down","ERdn"])
-
-    # Переключатели
-    if show_toggles:
-        c1,c2,c3,c4,c5,c6,c7,c8,c9 = st.columns(9)
-        t_netgex = c1.toggle("Net Gex", value=True)
-        t_put_oi = c2.toggle("Put OI", value=False, key="put_oi_t")
-        t_call_oi= c3.toggle("Call OI", value=False, key="call_oi_t")
-        t_put_v  = c4.toggle("Put Volume", value=False, key="put_v_t")
-        t_call_v = c5.toggle("Call Volume", value=False, key="call_v_t")
-        t_ag     = c6.toggle("AG", value=False, key="ag_t")
-        t_pz     = c7.toggle("PZ", value=False, key="pz_t")
-        t_pzf    = c8.toggle("PZ_FP", value=False, key="pzf_t")  # запасной флажок, если понадобится
-        t_gflip  = c9.toggle("G-Flip", value=False, key="gflip_t")  # placeholder
-    else:
-        t_netgex=True; t_ag=False
-        t_put_oi=t_call_oi=t_put_v=t_call_v=t_pz=t_pzf=t_gflip=False
-
-    # Фигура с двумя Y-осями
-    fig = go.Figure()
-    fig.update_layout(
-        template="plotly_dark",
-        height=height,
-        margin=dict(l=40,r=40,t=60,b=50),
-        legend=dict(orientation="h", y=1.12, x=0.01),
+    # Dollar gamma на 1% * OI по сторонам (из df_corr) — построим для формы профиля
+    g["dg1pct_row"] = np.where(
+        np.isfinite(g["gamma_corr"]) & (g["gamma_corr"] > 0) &
+        np.isfinite(g["S"]) & np.isfinite(g["mult"]) &
+        np.isfinite(g["oi"]) & (g["oi"] > 0),
+        g["gamma_corr"].to_numpy() * (g["S"].to_numpy()**2) * 0.01 * g["mult"].to_numpy() * g["oi"].to_numpy(),
+        0.0
     )
+    agg_dg = g.groupby(["K","side"], as_index=False)["dg1pct_row"].sum()
+    p_dg = agg_dg.pivot_table(index="K", columns="side", values="dg1pct_row", aggfunc="sum").fillna(0.0)
+    dg_call = p_dg.get("C", pd.Series(dtype=float)).reindex(Ks, fill_value=0.0).to_numpy()
+    dg_put  = p_dg.get("P", pd.Series(dtype=float)).reindex(Ks, fill_value=0.0).to_numpy()
 
-    # Net GEX как бары: отрицательные — красные, положительные — голубые
-    if t_netgex and y_netgex is not None:
-        split = _split_pos_neg(y_netgex.astype(float))
-        fig.add_bar(
-            x=x, y=split["neg"],
-            name="Net GEX (neg)", marker_color="crimson", opacity=0.9, yaxis="y1"
+    # gamma_abs_share / gamma_net_share — возьмём форму профилей от долларовой гаммы:
+    # Важно: compute_power_zone_and_er далее нормализует эти ряды, поэтому абсолютный масштаб не критичен.
+    gamma_abs_share = (dg_call + dg_put)  # прокси AG-профиля
+    gamma_net_share = (dg_call - dg_put)  # прокси NetGEX-профиля
+
+    # Время до экспирации (медиана T)
+    T_med = float(np.nanmedian(g["T"].values)) if len(g) else 0.0
+
+    ctx = {
+        "strikes": Ks.tolist(),
+        "gamma_abs_share": gamma_abs_share,
+        "gamma_net_share": gamma_net_share,
+        "call_oi": call_oi,
+        "put_oi": put_oi,
+        "call_vol": call_vol,
+        "put_vol": put_vol,
+        "iv_call": iv_call,
+        "iv_put": iv_put,
+        "T": T_med,
+    }
+    return {exp: ctx}
+
+
+def build_final_tables_from_corr(
+    df_corr: pd.DataFrame,
+    windows: Dict[str, np.ndarray],
+    cfg: FinalTableConfig = FinalTableConfig(),
+) -> Dict[str, pd.DataFrame]:
+    """
+    Собирает финальные таблицы по каждой экспирации:
+    exp, K, S, F, call_oi, put_oi, dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct,
+    AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down
+    """
+    results: Dict[str, pd.DataFrame] = {}
+
+    # Пройдём по экспирациям, для каждой построим таблицу NetGEX/AG и добавим PZ/ER
+    for exp in sorted(df_corr["exp"].dropna().unique()):
+        # 1) таблица NetGEX/AG по окну
+        net_tbl = compute_netgex_ag_per_expiry(
+            df_corr, exp, windows=windows,
+            cfg=NetGEXAGConfig(scale=cfg.scale_millions, aggregate="none")
         )
-        fig.add_bar(
-            x=x, y=split["pos"],
-            name="Net GEX (pos)", marker_color="lightskyblue", opacity=0.9, yaxis="y1"
+        # 1.b) добавим объёмы по сторонам из df_corr
+        g_exp = df_corr[df_corr["exp"] == exp].copy()
+        agg_vol = g_exp.groupby(["K","side"], as_index=False)["vol"].sum()
+        pv = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
+        call_vol_map = {float(k): float(v) for k, v in pv.get("C", pd.Series(dtype=float)).items()}
+        put_vol_map  = {float(k): float(v) for k, v in pv.get("P", pd.Series(dtype=float)).items()}
+        net_tbl["call_vol"] = net_tbl["K"].map(call_vol_map).fillna(0.0)
+        net_tbl["put_vol"]  = net_tbl["K"].map(put_vol_map).fillna(0.0)
+
+        if net_tbl.empty:
+            results[exp] = net_tbl
+            continue
+
+        # 2) strikes окна и контекст для PZ/ER
+        strikes_eval = _window_strikes(df_corr, exp, windows)
+        series_ctx_map = _series_ctx_from_corr(df_corr, exp)
+        if exp not in series_ctx_map:
+            # если не удалось собрать контекст — вернём без PZ/ER
+            net_tbl["PZ"] = 0.0; net_tbl["ER_Up"] = 0.0; net_tbl["ER_Down"] = 0.0
+            results[exp] = net_tbl
+            continue
+
+        # 3) PZ/ER по формуле проекта
+        pz, er_up, er_down = compute_power_zone_and_er(
+            S=float(np.nanmedian(df_corr.loc[df_corr["exp"]==exp, "S"].values)),
+            strikes_eval=strikes_eval,
+            all_series_ctx=[series_ctx_map[exp]],
+            day_high=cfg.day_high,
+            day_low=cfg.day_low,
         )
 
-    # AG как фиолетовая линия с заливкой на вторую ось
-    if t_ag and y_ag is not None:
-        fig.add_trace(go.Scatter(
-            x=x, y=y_ag.astype(float),
-            name="AG",
-            mode="lines+markers",
-            line=dict(width=2, color="#9b59b6"),
-            marker=dict(size=4),
-            yaxis="y2",
-            fill="tozeroy",
-            fillcolor="rgba(155,89,182,0.25)"
-        ))
+        # 4) привязка PZ/ER к таблице по K
+        pz_map   = {float(k): float(v) for k, v in zip(strikes_eval, pz)}
+        erup_map = {float(k): float(v) for k, v in zip(strikes_eval, er_up)}
+        erdn_map = {float(k): float(v) for k, v in zip(strikes_eval, er_down)}
+        net_tbl["PZ"]      = net_tbl["K"].map(pz_map).fillna(0.0)
+        net_tbl["ER_Up"]   = net_tbl["K"].map(erup_map).fillna(0.0)
+        net_tbl["ER_Down"] = net_tbl["K"].map(erdn_map).fillna(0.0)
 
-    # Доп.слои — OI и Volume (как линии на левой оси, чтобы не перегружать правую)
-    if t_put_oi and y_put_oi is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_put_oi.astype(float), name="Put OI", mode="lines", line=dict(width=1), yaxis="y1"))
-    if t_call_oi and y_call_oi is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_call_oi.astype(float), name="Call OI", mode="lines", line=dict(width=1), yaxis="y1"))
-    if t_put_v and y_put_vol is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_put_vol.astype(float), name="Put Vol", mode="lines", line=dict(width=1), yaxis="y1"))
-    if t_call_v and y_call_vol is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_call_vol.astype(float), name="Call Vol", mode="lines", line=dict(width=1), yaxis="y1"))
+        # Упорядочим колонки
+        cols = ["exp","K","S"] + (["F"] if "F" in net_tbl.columns else []) + \
+               ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
+        if "AG_1pct_M" in net_tbl.columns:
+            cols += ["AG_1pct_M","NetGEX_1pct_M"]
+        cols += ["PZ","ER_Up","ER_Down"]
+        net_tbl = net_tbl[cols].sort_values("K").reset_index(drop=True)
 
-    # PZ / ER (тонкие линии на вторую ось, чтобы масштаб совпадал с AG)
-    if t_pz and y_pz is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_pz.astype(float), name="PZ", mode="lines", line=dict(width=1, dash="dot"), yaxis="y2"))
-    if y_er_up is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_er_up.astype(float), name="ER Up", mode="lines", line=dict(width=1, dash="dash"), yaxis="y2", visible="legendonly"))
-    if y_er_dn is not None:
-        fig.add_trace(go.Scatter(x=x, y=y_er_dn.astype(float), name="ER Down", mode="lines", line=dict(width=1, dash="dash"), yaxis="y2", visible="legendonly"))
+        results[exp] = net_tbl
 
-    # Оси
-    fig.update_layout(
-        xaxis=dict(title="Strike"),
-        yaxis=dict(title="Net GEX", rangemode="tozero", fixedrange=True),
-        yaxis2=dict(title="Other parameters (AG)", overlaying="y", side="right", rangemode="tozero", fixedrange=True),
-    )
+    return results
 
-    # Обозначим каждый страйк на оси X и отключим масштабирование по X
-    try:
-        strikes = list(map(float, x.tolist()))
-    except Exception:
-        strikes = [float(v) for v in x]
-    uniq = sorted(set(strikes))
-    def _fmt_tick(v):
-        iv = int(round(v))
-        return str(iv) if abs(v - iv) < 1e-8 else ('{:.2f}'.format(v).rstrip('0').rstrip('.'))
-    fig.update_xaxes(tickmode="array", tickvals=uniq, ticktext=[_fmt_tick(v) for v in uniq], fixedrange=True)
 
-    # Вертикальная линия spot (золотая)
-    spot_val = float(spot) if spot is not None else _safe_float_median(_coerce_series(df, ["S"]))
-    if math.isfinite(spot_val):
-        fig.add_vline(x=spot_val, line_width=2, line_dash="solid", line_color="#f1c40f")
-        fig.add_annotation(x=spot_val, yref="paper", y=1.05, text=f"Price: {spot_val:.2f}", showarrow=False, font=dict(color="#f1c40f"))
+def process_from_raw(
+    raw_records: List[dict],
+    S: float,
+    sanitizer_cfg: Optional[dict] = None,
+    final_cfg: FinalTableConfig = FinalTableConfig(),
+) -> Dict[str, pd.DataFrame]:
+    """
+    Полный цикл: сырые записи -> санитайз -> окна -> NetGEX/AG -> PZ/ER -> финальные таблицы.
+    Возвращает словарь {exp: DataFrame}.
+    """
+    sanitizer_cfg = sanitizer_cfg or {}
+    s_cfg = SanitizerConfig(**sanitizer_cfg)
+    res = sanitize_and_window_pipeline(raw_records, S=S, cfg=s_cfg)
+    df_corr = res["df_corr"]; windows = res["windows"]
 
-    # Заголовок
-    if title:
-        fig.update_layout(title=dict(text=title, x=0.02, xanchor="left"))
-
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "scrollZoom": False, "doubleClick": False})
+    return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
