@@ -179,7 +179,7 @@ def render_netgex_bars(
     fig.add_trace(go.Bar(
         x=x_idx, y=Ys, name="Net GEX (M$ / 1%)", marker_color=colors, width=bar_width,
         customdata=customdata_netgex, hovertemplate=_create_hover_template("Net GEX"),
-        hoverlabel=dict(bgcolor=colors, bordercolor="white", borderwidth=2, font=dict(size=12, color="white", family="Arial")),
+        hoverlabel=dict(bgcolor=colors, bordercolor="white", font=dict(size=12, color="white", family="Arial")),
     ))
 
     # Функция для добавления серий
@@ -193,9 +193,9 @@ def render_netgex_bars(
             fig.add_trace(go.Scatter(
                 x=x_idx, y=y_series, customdata=customdata_series, yaxis=yaxis,
                 mode="lines+markers", line=dict(shape="spline", smoothing=1.0, width=1.5, color=color),
-                marker=dict(size=6, color=color), fill="tozeroy", fillcolor=f"rgba{color[3:]}0.3)" if color.startswith("#") else f"{color}0.3)",
+                marker=dict(size=6, color=color),                 fill="tozeroy", fillcolor=f"rgba({color[1:3]}, {color[3:5]}, {color[5:7]}, 0.3)" if color.startswith("#") and len(color)==7 else "rgba(128,128,128,0.3)",
                 name=name, hovertemplate=_create_hover_template(name),
-                hoverlabel=dict(bgcolor=color, bordercolor="white", borderwidth=2, font=dict(size=12, color="white", family="Arial")),
+                hoverlabel=dict(bgcolor=color, bordercolor="white", font=dict(size=12, color="white", family="Arial")),
             ))
 
     # Добавляем все серии
