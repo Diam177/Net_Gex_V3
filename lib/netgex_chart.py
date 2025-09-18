@@ -537,7 +537,7 @@ def render_netgex_bars(
             side="right",
             showgrid=False,
             zeroline=False,
-            showline=True,
+            showline=False,
             ticks="outside",
             tickfont=dict(size=10),
         ),
