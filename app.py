@@ -102,10 +102,19 @@ if not api_key:
     st.stop()
 
 
+
+# --- Input state helpers ------------------------------------------------------
+if "ticker" not in st.session_state:
+    st.session_state["ticker"] = "SPY"
+
+def _normalize_ticker():
+    t = st.session_state.get("ticker", "")
+    st.session_state["ticker"] = (t or "").strip().upper()
+
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
-    ticker = st.text_input("Тикер", value=st.session_state.get("ticker", "SPY")).strip().upper()
-    st.session_state["ticker"] = ticker
+    st.text_input("Тикер", key="ticker", on_change=_normalize_ticker)
+    ticker = st.session_state.get("ticker", "")
 
     # Получаем список будущих экспираций под выбранный тикер
     expirations: list[str] = st.session_state.get(f"expirations:{ticker}", [])
