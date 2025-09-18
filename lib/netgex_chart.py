@@ -15,26 +15,6 @@ from __future__ import annotations
 from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
-
-def _get_theme_bg():
-    try:
-        bg = st.get_option('theme.backgroundColor')
-        if not bg:
-            raise ValueError('no bg color')
-    except Exception:
-        bg = '#0E1117'
-    return bg
-
-def _get_border_color():
-    # Use a neutral gray consistent with Streamlit dark cards
-    try:
-        # If secondary background exists, nudge it brighter for the stroke
-        sec = st.get_option('theme.secondaryBackgroundColor') or ''
-    except Exception:
-        sec = ''
-    # Fallback border color widely used in dark Streamlit UI
-    return '#31333F'
-
 import numpy as _np
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
     """
@@ -557,7 +537,7 @@ def render_netgex_bars(
             side="right",
             showgrid=False,
             zeroline=False,
-            showline=False,
+            showline=True,
             ticks="outside",
             tickfont=dict(size=10),
         ),
@@ -589,8 +569,3 @@ def render_netgex_bars(
     # График без панели и без зума/панорамы, но с hover-подсказками
     st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={'displayModeBar': False})
-
-fig.add_shape(type='rect', x0=0, y0=0, x1=1, y1=1,
-              xref='paper', yref='paper',
-              line=dict(color=_get_border_color(), width=2),
-              fillcolor='rgba(0,0,0,0)', layer='above')
