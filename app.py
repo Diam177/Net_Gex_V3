@@ -101,13 +101,12 @@ if not api_key:
     st.error("POLYGON_API_KEY не задан в Streamlit Secrets или переменных окружения.")
     st.stop()
 
-col1, col2, col3 = st.columns([1.2, 1, 1])
 
-with col1:
+# --- Controls moved to sidebar ----------------------------------------------
+with st.sidebar:
     ticker = st.text_input("Тикер", value=st.session_state.get("ticker", "SPY")).strip().upper()
     st.session_state["ticker"] = ticker
 
-with col2:
     # Получаем список будущих экспираций под выбранный тикер
     expirations: list[str] = st.session_state.get(f"expirations:{ticker}", [])
     if not expirations and ticker:
@@ -133,7 +132,6 @@ with col2:
         else:
             selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
             weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
-
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
