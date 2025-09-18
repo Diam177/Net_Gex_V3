@@ -13,7 +13,7 @@ import streamlit as st
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
     import pandas as pd
-    import pytz, requests
+    import pytz
     t = (ticker or "").strip().upper()
     if not t or not session_date_str:
         return None
@@ -30,28 +30,18 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     if not res:
         return None
     tz = pytz.timezone("America/New_York")
-    # Build dataframe with OHLC + volume + vwap
-    times  = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
-    opens  = [x.get("o") for x in res]
-    highs  = [x.get("h") for x in res]
-    lows   = [x.get("l") for x in res]
-    closes = [x.get("c") for x in res]
+    # Build dataframe
+    times = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
+    price = [x.get("c") for x in res]
     volume = [x.get("v") for x in res]
     vwap_api = [x.get("vw") for x in res]
-    df = pd.DataFrame({
-        "time": times,
-        "open": pd.to_numeric(opens, errors="coerce"),
-        "high": pd.to_numeric(highs, errors="coerce"),
-        "low":  pd.to_numeric(lows,  errors="coerce"),
-        "close":pd.to_numeric(closes,errors="coerce"),
-        "price":pd.to_numeric(closes,errors="coerce"),  # совместимость со старой линией
-        "volume": pd.to_numeric(volume, errors="coerce"),
-    })
+    df = pd.DataFrame({"time": times, "price": pd.to_numeric(price, errors="coerce"),
+                       "volume": pd.to_numeric(volume, errors="coerce")})
     if any(v is not None for v in vwap_api):
         df["vwap"] = pd.to_numeric(vwap_api, errors="coerce")
     else:
         vol = df["volume"].fillna(0.0)
-        pr  = df["close"].fillna(method="ffill")
+        pr  = df["price"].fillna(method="ffill")
         cum_vol = vol.cumsum().replace(0, pd.NA)
         df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol
     return df
@@ -635,10 +625,19 @@ if raw_records:
                                     _ycol = "NetGEX_1pct_M" if "NetGEX_1pct_M" in df_final.columns else ("NetGEX_1pct" if "NetGEX_1pct" in df_final.columns else None)
                                     _spot_for_flip = float(pd.to_numeric(df_final.get("S"), errors="coerce").median()) if "S" in df_final.columns else None
                                     _gflip_val = _compute_gamma_flip_from_table(df_final, y_col=_ycol or "NetGEX_1pct", spot=_spot_for_flip)
+                                    
+# --- Snap G-Flip to nearest available strike from df_final['K'] (no math rounding) ---
+try:
+    import pandas as pd
+    _Ks = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final.columns) else []
+    if (_gflip_val is not None) and _Ks:
+        _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
+except Exception:
+    pass
                                     import pytz, pandas as pd
                                     _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
-                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
+                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
                                 except Exception as _kl_e:
                                     st.error('Не удалось отобразить чарт Key Levels')
                                     st.exception(_kl_e)
