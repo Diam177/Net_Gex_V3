@@ -38,11 +38,25 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     df = pd.DataFrame({"time": times, "price": pd.to_numeric(price, errors="coerce"),
                        "volume": pd.to_numeric(volume, errors="coerce")})
     if any(v is not None for v in vwap_api):
-        df["vwap"] = pd.to_numeric(vwap_api, errors="coerce")
-    else:
+
+        vw = pd.to_numeric(vwap_api, errors="coerce")
+
         vol = df["volume"].fillna(0.0)
-        pr  = df["price"].fillna(method="ffill")
+
         cum_vol = vol.cumsum().replace(0, pd.NA)
+
+        # Session VWAP: cumulative (bar_vw * volume) / cumulative volume
+
+        df["vwap"] = (vw.mul(vol)).cumsum() / cum_vol
+
+    else:
+
+        vol = df["volume"].fillna(0.0)
+
+        pr  = df["price"].fillna(method="ffill")
+
+        cum_vol = vol.cumsum().replace(0, pd.NA)
+
         df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol
     return df
 # --- Helpers to hide tables from main page ---
