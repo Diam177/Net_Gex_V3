@@ -191,6 +191,7 @@ if S is None and raw_records:
     S = _infer_spot_from_snapshot(raw_records)
     if S:
         # spot fallback caption hidden per UI request
+        pass
 
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
