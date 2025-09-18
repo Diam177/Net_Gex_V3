@@ -13,7 +13,7 @@ import streamlit as st
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
     import pandas as pd
-    import pytz
+    import pytz, requests
     t = (ticker or "").strip().upper()
     if not t or not session_date_str:
         return None
@@ -30,18 +30,28 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     if not res:
         return None
     tz = pytz.timezone("America/New_York")
-    # Build dataframe
-    times = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
-    price = [x.get("c") for x in res]
+    # Build dataframe with OHLC + volume + vwap
+    times  = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
+    opens  = [x.get("o") for x in res]
+    highs  = [x.get("h") for x in res]
+    lows   = [x.get("l") for x in res]
+    closes = [x.get("c") for x in res]
     volume = [x.get("v") for x in res]
     vwap_api = [x.get("vw") for x in res]
-    df = pd.DataFrame({"time": times, "price": pd.to_numeric(price, errors="coerce"),
-                       "volume": pd.to_numeric(volume, errors="coerce")})
+    df = pd.DataFrame({
+        "time": times,
+        "open": pd.to_numeric(opens, errors="coerce"),
+        "high": pd.to_numeric(highs, errors="coerce"),
+        "low":  pd.to_numeric(lows,  errors="coerce"),
+        "close":pd.to_numeric(closes,errors="coerce"),
+        "price":pd.to_numeric(closes,errors="coerce"),  # совместимость со старой линией
+        "volume": pd.to_numeric(volume, errors="coerce"),
+    })
     if any(v is not None for v in vwap_api):
         df["vwap"] = pd.to_numeric(vwap_api, errors="coerce")
     else:
         vol = df["volume"].fillna(0.0)
-        pr  = df["price"].fillna(method="ffill")
+        pr  = df["close"].fillna(method="ffill")
         cum_vol = vol.cumsum().replace(0, pd.NA)
         df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol
     return df
