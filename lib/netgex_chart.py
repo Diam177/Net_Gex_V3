@@ -212,61 +212,32 @@ def render_netgex_bars(
             Ys[i]  # Net GEX value
         ])
     
-    
-# Фигура
+    # Фигура
     fig = go.Figure()
-
-    # Определяем единицы измерения для подписи Net GEX в ховере
-    _unit_suffix = "M" if str(y_col).endswith("_M") else ""
-
-    # Разделяем положительные и отрицательные значения на два трека,
-    # чтобы цвет hover-таблички соответствовал цвету столбца (как на примерах).
-    pos_mask = (Ys >= 0)
-    neg_mask = ~pos_mask
-
-    def _subset(arr, mask, fill=None):
-        out = []
-        for a, m in zip(arr, mask):
-            out.append(a if m else fill)
-        return out
-
-    # customdata по точкам: [Strike, Call OI, Put OI, Call Vol, Put Vol, Net GEX]
-    # Для треков используем одну и ту же customdata, Plotly игнорирует элементы с y=None.
-    hover_tmpl = (
-        "<b>Strike: %{customdata[0]:.0f}</b><br>"
-        "Call OI: %{customdata[1]:,.0f}<br>"
-        "Put OI: %{customdata[2]:,.0f}<br>"
-        "Call Volume: %{customdata[3]:,.0f}<br>"
-        "Put Volume: %{customdata[4]:,.0f}<br>"
-        "Net GEX: %{customdata[5]:,.1f}"+ _unit_suffix +
-        "<extra></extra>"
-    )
-
-    # Положительные бары (синие)
     fig.add_trace(go.Bar(
         x=x_idx,
-        y=_subset(Ys, pos_mask),
-        name="Net GEX (>0)",
-        marker_color=COLOR_POS,
+        y=Ys,
+        name="Net GEX (M$ / 1%)",
+        marker_color=colors,
         width=bar_width,
         customdata=customdata_list,
-        hovertemplate=hover_tmpl,
-        hoverlabel=dict(bgcolor=COLOR_POS, bordercolor="white",
-                        font=dict(size=13, color="white")),
+        hovertemplate=(
+            "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
+            "Call OI: %{customdata[1]:,.0f}<br>" +
+            "Put OI: %{customdata[2]:,.0f}<br>" +
+            "Call Volume: %{customdata[3]:,.0f}<br>" +
+            "Put Volume: %{customdata[4]:,.0f}<br>" +
+            "Net GEX: %{customdata[5]:,.1f}M" +
+            "<extra></extra>"
+        ),
+        hoverlabel=dict(
+            bgcolor=colors,  # Цвет фона подсказки соответствует цвету столбика
+            bordercolor="white",
+            font=dict(size=13, color="white")
+        ),
     ))
-    # Отрицательные бары (красные)
-    fig.add_trace(go.Bar(
-        x=x_idx,
-        y=_subset(Ys, neg_mask),
-        name="Net GEX (<0)",
-        marker_color=COLOR_NEG,
-        width=bar_width,
-        customdata=customdata_list,
-        hovertemplate=hover_tmpl,
-        hoverlabel=dict(bgcolor=COLOR_NEG, bordercolor="white",
-                        font=dict(size=13, color="white")),
-    ))
-# --- Put OI markers (toggle-controlled) ---
+
+    # --- Put OI markers (toggle-controlled) ---
     try:
         if 'show_put_oi' in locals() and show_put_oi:
             # Суммируем финальный put_oi по страйкам и выравниваем по Ks
@@ -286,7 +257,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(128, 0, 32, 0.3)",
                     name="Put OI",
-                    hovertemplate="Strike=%{customdata}<br>Put OI=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>Put OI: %{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -308,7 +279,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(46, 204, 113, 0.3)",
                     name="Call OI",
-                    hovertemplate="Strike=%{customdata}<br>Call OI=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>Call OI: %{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -331,7 +302,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(255, 140, 0, 0.3)",
                     name="Put Volume",
-                    hovertemplate="Strike=%{customdata}<br>Put Volume=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>Put Volume: %{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -354,7 +325,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(30, 136, 229, 0.3)",
                     name="Call Volume",
-                    hovertemplate="Strike=%{customdata}<br>Call Volume=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>Call Volume: %{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -379,7 +350,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(154, 125, 247, 0.3)",
                     name="AG",
-                    hovertemplate="Strike=%{customdata}<br>AG=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>AG: %{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -402,7 +373,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(228, 197, 30, 0.3)",
                     name="PZ",
-                    hovertemplate="Strike=%{customdata}<br>PZ=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>PZ: %{y:.3f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -425,7 +396,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(31, 206, 84, 0.3)",
                     name="ER_Up",
-                    hovertemplate="Strike=%{customdata}<br>ER_Up=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>ER_Up: %{y:.3f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -448,7 +419,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(210, 23, 23, 0.3)",
                     name="ER_Down",
-                    hovertemplate="Strike=%{customdata}<br>ER_Down=%{y:.0f}<extra></extra>",
+                    hovertemplate="Strike: %{customdata}<br>ER_Down: %{y:.3f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -506,8 +477,6 @@ def render_netgex_bars(
     tick_text = [str(int(k)) if float(k).is_integer() else f"{k:.2f}" for k in Ks]
 
     fig.update_layout(
-        hovermode='closest',
-        barmode="overlay",
 
         template="plotly_dark",
         paper_bgcolor=BG_COLOR,
@@ -563,9 +532,9 @@ def render_netgex_bars(
         pass
 
     # Автомасштаб
-    fig.update_yaxes(autorange=True, fixedrange=True)
-    fig.update_xaxes(autorange=True, fixedrange=True)
+    fig.update_yaxes(autorange=True)
+    fig.update_xaxes(autorange=True)
 
-    # График без панели и без зума/панорамы, но с hover-подсказками
+    # Статичный график без зума/панорамы и без панели управления
     st.plotly_chart(fig, use_container_width=True, theme=None,
-                    config={'displayModeBar': False})
+                    config={'displayModeBar': False, 'staticPlot': True})
