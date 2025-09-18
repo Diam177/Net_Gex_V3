@@ -244,39 +244,44 @@ def render_key_levels(
                              line=dict(width=0), hoverinfo="skip", showlegend=False))
 
     # --- Price / VWAP (если есть) ---
+    present_series = set()
     if price_df is not None and not price_df.empty:
         pdf = price_df.copy()
         if "time" not in pdf.columns:
             pdf = pdf.reset_index().rename(columns={pdf.columns[0]: "time"})
         pdf["time"] = pd.to_datetime(pdf["time"])
         pdf = pdf[(pdf["time"] >= x_left) & (pdf["time"] <= x_right)]
-        # Price
-        if "price" in pdf.columns:
+        # Candlesticks if OHLC present
+        if set(["open","high","low","close"]).issubset(set(pdf.columns)):
+            fig.add_trace(go.Candlestick(
+                x=pdf["time"], open=pdf["open"], high=pdf["high"], low=pdf["low"], close=pdf["close"],
+                name="Price", showlegend=True,
+            ))
+            present_series.add("Price")
+        elif "price" in pdf.columns:
             fig.add_trace(go.Scatter(
                 x=pdf["time"], y=pd.to_numeric(pdf["price"], errors="coerce"),
-                mode="lines",
-                line=dict(width=1.2, color=COLOR_PRICE),
+                mode="lines", line=dict(width=1.2, color=COLOR_PRICE),
                 name="Price",
-                hovertemplate="Time: %{x|%H:%M}<br>Price: %{y:.2f}<extra></extra>",
             ))
+            present_series.add("Price")
         # VWAP
         if "vwap" in pdf.columns:
             vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
         elif set(["price","volume"]).issubset(set(pdf.columns)):
             vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
-            pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
+            pr  = pd.to_numeric(pdf.get("close", pdf.get("price")), errors="coerce").fillna(np.nan)
             cum_vol = vol.cumsum().replace(0, np.nan)
             vwap_series = (pr.mul(vol)).cumsum() / cum_vol
         else:
             vwap_series = None
         if vwap_series is not None:
             fig.add_trace(go.Scatter(
-                x=pdf["time"], y=vwap_series,
-                mode="lines",
+                x=pdf["time"], y=vwap_series, mode="lines",
                 line=dict(width=1.0, color=COLOR_VWAP, dash="solid"),
                 name="VWAP",
-                hovertemplate="Time: %{x|%H:%M}<br>VWAP: %{y:.2f}<extra></extra>",
             ))
+            present_series.add("VWAP")
     # --- Горизонтальные уровни ---
     color_map = {
         "Max Pos GEX": COLOR_MAX_POS_GEX,
@@ -290,8 +295,8 @@ def render_key_levels(
         "G-Flip": COLOR_GFLIP,
     }
 
-    # Пустые трейсы для фиксированной легенды (всегда показываем все серии из ТЗ)
-    for _name, _color in [
+        # Пустые трейсы для фиксированной легенды (добавляем только отсутствующие)
+    _legend_items = [
         ("Price", COLOR_PRICE),
         ("VWAP", COLOR_VWAP),
         ("Max Neg GEX", COLOR_MAX_NEG_GEX),
@@ -303,7 +308,10 @@ def render_key_levels(
         ("AG", COLOR_AG),
         ("PZ", COLOR_PZ),
         ("G-Flip", COLOR_GFLIP),
-    ]:
+    ]
+    for _name, _color in _legend_items:
+        if _name in present_series:
+            continue
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
                                  line=dict(color=_color, width=1.4),
                                  name=_name, hoverinfo="skip", showlegend=True))
