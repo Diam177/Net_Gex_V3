@@ -212,66 +212,61 @@ def render_netgex_bars(
             Ys[i]  # Net GEX value
         ])
     
-    # Фигура
     
-    # --- Net GEX bars (positive and negative separated but aligned on the same X) ---
-    pos_mask = (Ys >= 0.0)
-    neg_mask = (Ys <  0.0)
-    y_pos = [float(v) if bool(m) else None for v, m in zip(Ys, pos_mask)]
-    y_neg = [float(v) if bool(m) else None for v, m in zip(Ys, neg_mask)]
-
+# Фигура
     fig = go.Figure()
 
-    # Positive bars
+    # Определяем единицы измерения для подписи Net GEX в ховере
+    _unit_suffix = "M" if str(y_col).endswith("_M") else ""
+
+    # Разделяем положительные и отрицательные значения на два трека,
+    # чтобы цвет hover-таблички соответствовал цвету столбца (как на примерах).
+    pos_mask = (Ys >= 0)
+    neg_mask = ~pos_mask
+
+    def _subset(arr, mask, fill=None):
+        out = []
+        for a, m in zip(arr, mask):
+            out.append(a if m else fill)
+        return out
+
+    # customdata по точкам: [Strike, Call OI, Put OI, Call Vol, Put Vol, Net GEX]
+    # Для треков используем одну и ту же customdata, Plotly игнорирует элементы с y=None.
+    hover_tmpl = (
+        "<b>Strike: %{customdata[0]:.0f}</b><br>"
+        "Call OI: %{customdata[1]:,.0f}<br>"
+        "Put OI: %{customdata[2]:,.0f}<br>"
+        "Call Volume: %{customdata[3]:,.0f}<br>"
+        "Put Volume: %{customdata[4]:,.0f}<br>"
+        "Net GEX: %{customdata[5]:,.1f}"+ _unit_suffix +
+        "<extra></extra>"
+    )
+
+    # Положительные бары (синие)
     fig.add_trace(go.Bar(
         x=x_idx,
-        y=y_pos,
-        name="Net GEX (M$ / 1%)",
+        y=_subset(Ys, pos_mask),
+        name="Net GEX (>0)",
         marker_color=COLOR_POS,
         width=bar_width,
         customdata=customdata_list,
-        hovertemplate=(
-            "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>"
-            "Call OI: %{customdata[1]:,.0f}<br>"
-            "Put OI: %{customdata[2]:,.0f}<br>"
-            "Call Volume: %{customdata[3]:,.0f}<br>"
-            "Put Volume: %{customdata[4]:,.0f}<br>"
-            "Net GEX: %{y:,.1f}M"
-            "<extra></extra>"
-        ),
-        hoverlabel=dict(
-            bgcolor=COLOR_POS,
-            bordercolor="white",
-            font=dict(size=13, color="white")
-        ),
+        hovertemplate=hover_tmpl,
+        hoverlabel=dict(bgcolor=COLOR_POS, bordercolor="white",
+                        font=dict(size=13, color="white")),
     ))
-
-    # Negative bars
+    # Отрицательные бары (красные)
     fig.add_trace(go.Bar(
         x=x_idx,
-        y=y_neg,
-        name="Net GEX (M$ / 1%)",
+        y=_subset(Ys, neg_mask),
+        name="Net GEX (<0)",
         marker_color=COLOR_NEG,
         width=bar_width,
         customdata=customdata_list,
-        hovertemplate=(
-            "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>"
-            "Call OI: %{customdata[1]:,.0f}<br>"
-            "Put OI: %{customdata[2]:,.0f}<br>"
-            "Call Volume: %{customdata[3]:,.0f}<br>"
-            "Put Volume: %{customdata[4]:,.0f}<br>"
-            "Net GEX: %{y:,.1f}M"
-            "<extra></extra>"
-        ),
-        hoverlabel=dict(
-            bgcolor=COLOR_NEG,
-            bordercolor="white",
-            font=dict(size=13, color="white")
-        ),
+        hovertemplate=hover_tmpl,
+        hoverlabel=dict(bgcolor=COLOR_NEG, bordercolor="white",
+                        font=dict(size=13, color="white")),
     ))
-
-
-    # --- Put OI markers (toggle-controlled) ---
+# --- Put OI markers (toggle-controlled) ---
     try:
         if 'show_put_oi' in locals() and show_put_oi:
             # Суммируем финальный put_oi по страйкам и выравниваем по Ks
@@ -511,6 +506,8 @@ def render_netgex_bars(
     tick_text = [str(int(k)) if float(k).is_integer() else f"{k:.2f}" for k in Ks]
 
     fig.update_layout(
+        hovermode='closest',
+        barmode="overlay",
 
         template="plotly_dark",
         paper_bgcolor=BG_COLOR,
@@ -566,9 +563,9 @@ def render_netgex_bars(
         pass
 
     # Автомасштаб
-    fig.update_yaxes(autorange=True)
-    fig.update_xaxes(autorange=True)
+    fig.update_yaxes(autorange=True, fixedrange=True)
+    fig.update_xaxes(autorange=True, fixedrange=True)
 
-    # Статичный график без зума/панорамы и без панели управления
+    # График без панели и без зума/панорамы, но с hover-подсказками
     st.plotly_chart(fig, use_container_width=True, theme=None,
-                    config={'displayModeBar': False, 'staticPlot': True})
+                    config={'displayModeBar': False})
