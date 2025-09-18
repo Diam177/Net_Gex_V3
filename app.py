@@ -4,10 +4,47 @@ from __future__ import annotations
 
 import os
 import json
+import requests
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
 
+
+# --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
+def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
+    import pandas as pd
+    import pytz
+    t = (ticker or "").strip().upper()
+    if not t or not session_date_str:
+        return None
+    base = "https://api.polygon.io"
+    url = f"{base}/v2/aggs/ticker/{t}/range/1/minute/{session_date_str}/{session_date_str}?adjusted=true&sort=asc&limit=50000"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=timeout)
+        r.raise_for_status()
+        js = r.json()
+    except Exception:
+        return None
+    res = js.get("results") or []
+    if not res:
+        return None
+    tz = pytz.timezone("America/New_York")
+    # Build dataframe
+    times = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
+    price = [x.get("c") for x in res]
+    volume = [x.get("v") for x in res]
+    vwap_api = [x.get("vw") for x in res]
+    df = pd.DataFrame({"time": times, "price": pd.to_numeric(price, errors="coerce"),
+                       "volume": pd.to_numeric(volume, errors="coerce")})
+    if any(v is not None for v in vwap_api):
+        df["vwap"] = pd.to_numeric(vwap_api, errors="coerce")
+    else:
+        vol = df["volume"].fillna(0.0)
+        pr  = df["price"].fillna(method="ffill")
+        cum_vol = vol.cumsum().replace(0, pd.NA)
+        df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol
+    return df
 # --- Helpers to hide tables from main page ---
 def _st_hide_df(*args, **kwargs):
     # no-op: we suppress table rendering on main page per requirements
@@ -588,7 +625,10 @@ if raw_records:
                                     _ycol = "NetGEX_1pct_M" if "NetGEX_1pct_M" in df_final.columns else ("NetGEX_1pct" if "NetGEX_1pct" in df_final.columns else None)
                                     _spot_for_flip = float(pd.to_numeric(df_final.get("S"), errors="coerce").median()) if "S" in df_final.columns else None
                                     _gflip_val = _compute_gamma_flip_from_table(df_final, y_col=_ycol or "NetGEX_1pct", spot=_spot_for_flip)
-                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=None, session_date=None, toggle_key='key_levels_main')
+                                    import pytz, pandas as pd
+                                    _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                    _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
+                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
                                 except Exception as _kl_e:
                                     st.error('Не удалось отобразить чарт Key Levels')
                                     st.exception(_kl_e)
