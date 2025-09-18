@@ -626,18 +626,18 @@ if raw_records:
                                     _spot_for_flip = float(pd.to_numeric(df_final.get("S"), errors="coerce").median()) if "S" in df_final.columns else None
                                     _gflip_val = _compute_gamma_flip_from_table(df_final, y_col=_ycol or "NetGEX_1pct", spot=_spot_for_flip)
                                     
-# --- Snap G-Flip to nearest available strike from df_final['K'] (no math rounding) ---
-try:
-    import pandas as pd
-    _Ks = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final.columns) else []
-    if (_gflip_val is not None) and _Ks:
-        _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
-except Exception:
-    pass
+                                    # --- Snap G-Flip to nearest available strike from df_final['K'] (no math rounding) ---
+                                    try:
+                                        import pandas as pd
+                                        _Ks = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final.columns) else []
+                                        if (_gflip_val is not None) and _Ks:
+                                            _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
+                                    except Exception:
+                                        pass
                                     import pytz, pandas as pd
                                     _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
-                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
+                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
                                 except Exception as _kl_e:
                                     st.error('Не удалось отобразить чарт Key Levels')
                                     st.exception(_kl_e)
