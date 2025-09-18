@@ -306,7 +306,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(128, 0, 32, 0.3)",
                     name="Put OI",
-                    hovertemplate="Strike: %{customdata}<br>Put OI: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>Put OI=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -328,7 +328,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(46, 204, 113, 0.3)",
                     name="Call OI",
-                    hovertemplate="Strike: %{customdata}<br>Call OI: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>Call OI=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -351,7 +351,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(255, 140, 0, 0.3)",
                     name="Put Volume",
-                    hovertemplate="Strike: %{customdata}<br>Put Volume: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>Put Volume=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -374,7 +374,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(30, 136, 229, 0.3)",
                     name="Call Volume",
-                    hovertemplate="Strike: %{customdata}<br>Call Volume: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>Call Volume=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -399,7 +399,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(154, 125, 247, 0.3)",
                     name="AG",
-                    hovertemplate="Strike: %{customdata}<br>AG: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>AG=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -422,7 +422,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(228, 197, 30, 0.3)",
                     name="PZ",
-                    hovertemplate="Strike: %{customdata}<br>PZ: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>PZ=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -445,7 +445,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(31, 206, 84, 0.3)",
                     name="ER_Up",
-                    hovertemplate="Strike: %{customdata}<br>ER_Up: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>ER_Up=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -468,7 +468,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(210, 23, 23, 0.3)",
                     name="ER_Down",
-                    hovertemplate="Strike: %{customdata}<br>ER_Down: %{y:.0f}<extra></extra>",
+                    hovertemplate="Strike=%{customdata}<br>ER_Down=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
