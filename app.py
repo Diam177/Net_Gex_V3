@@ -15,7 +15,8 @@ def _st_hide_df(*args, **kwargs):
 def _st_hide_subheader(*args, **kwargs):
     # no-op: suppress section headers for tables
     return None
-from lib.netgex_chart import render_netgex_bars
+from lib.netgex_chart import render_netgex_bars, _compute_gamma_flip_from_table
+from lib.key_levels import render_key_levels
 
 # Project imports
 from lib.sanitize_window import sanitize_and_window_pipeline
@@ -25,7 +26,6 @@ from lib.tiker_data import (
     get_spot_price,
     PolygonError,
 )
-from lib.key_levels import render_key_levels_with_controls
 
 st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
@@ -565,12 +565,6 @@ if raw_records:
                         except Exception as _chart_em:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
-                        # --- Key Levels chart (Multi) ---
-                        try:
-                            render_key_levels_with_controls(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None)
-                        except Exception as _chart_klm:
-                            st.error('Не удалось отобразить чарт Key Levels (Multi)')
-                            st.exception(_chart_klm)
 
                     else:
                         # --- SINGLE режим: как было ---
@@ -588,12 +582,17 @@ if raw_records:
                                 except Exception as _chart_e:
                                     st.error('Не удалось отобразить чарт Net GEX')
                                     st.exception(_chart_e)
-                                # --- Key Levels chart ---
+                                # --- Key Levels chart (uses same final table & G-Flip from netgex_chart) ---
                                 try:
-                                    render_key_levels_with_controls(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None)
-                                except Exception as _chart_kl:
+                                    # Определяем столбец NetGEX и spot так же, как в netgex_chart
+                                    _ycol = "NetGEX_1pct_M" if "NetGEX_1pct_M" in df_final.columns else ("NetGEX_1pct" if "NetGEX_1pct" in df_final.columns else None)
+                                    _spot_for_flip = float(pd.to_numeric(df_final.get("S"), errors="coerce").median()) if "S" in df_final.columns else None
+                                    _gflip_val = _compute_gamma_flip_from_table(df_final, y_col=_ycol or "NetGEX_1pct", spot=_spot_for_flip)
+                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=None, session_date=None, toggle_key='key_levels_main')
+                                except Exception as _kl_e:
                                     st.error('Не удалось отобразить чарт Key Levels')
-                                    st.exception(_chart_kl)
+                                    st.exception(_kl_e)
+
                             else:
                                 st.info("Финальная таблица пуста для выбранной экспирации.")
             except Exception as _e:
