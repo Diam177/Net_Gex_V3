@@ -184,32 +184,6 @@ def render_netgex_bars(
     bar_width = 0.9
     colors = _np.where(Ys >= 0.0, COLOR_POS, COLOR_NEG)
     
-    # Подготовка данных для hover Net GEX
-    hover_data = {}
-    for k in Ks:
-        k_data = df_final[df_final["K"] == k]
-        if not k_data.empty:
-            hover_data[k] = {
-                "call_oi": k_data["call_oi"].sum() if "call_oi" in k_data.columns else 0,
-                "put_oi": k_data["put_oi"].sum() if "put_oi" in k_data.columns else 0,
-                "call_vol": k_data["call_vol"].sum() if "call_vol" in k_data.columns else 0,
-                "put_vol": k_data["put_vol"].sum() if "put_vol" in k_data.columns else 0,
-            }
-        else:
-            hover_data[k] = {"call_oi": 0, "put_oi": 0, "call_vol": 0, "put_vol": 0}
-    
-    customdata_list = []
-    for i, k in enumerate(Ks):
-        hd = hover_data.get(k, {})
-        customdata_list.append([
-            k,  # Strike
-            hd.get("call_oi", 0),  # Call OI
-            hd.get("put_oi", 0),   # Put OI  
-            hd.get("call_vol", 0),  # Call Volume
-            hd.get("put_vol", 0),   # Put Volume
-            Ys[i]  # Net GEX value
-        ])
-    
     # Подготовка данных для hover
     # Собираем данные по страйкам для всплывающей подсказки
     hover_data = {}
@@ -271,21 +245,11 @@ def render_netgex_bars(
                 df_put = df_final.groupby("K", as_index=False)["put_oi"].sum().sort_values("K").reset_index(drop=True)
                 _map_put = {float(k): float(v) for k, v in zip(df_put["K"].to_numpy(), df_put["put_oi"].to_numpy())}
                 y_put = [_map_put.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для Put OI hover
-                put_customdata = []
-                for i, k in enumerate(Ks):
-                    hd = hover_data.get(k, {})
-                    put_customdata.append([
-                        k,  # Strike
-                        hd.get("put_oi", 0),   # Put OI
-                    ])
-                
                 # Линия + точки, плавная, заливка к нулю правой оси (y2). Прозрачность заливки ~70% (alpha=0.3)
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_put,
-                    customdata=put_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#800020"),
@@ -293,16 +257,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(128, 0, 32, 0.3)",
                     name="Put OI",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "Put OI: %{customdata[1]:,.0f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#800020",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>Put OI=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -313,20 +268,10 @@ def render_netgex_bars(
                 df_call = df_final.groupby("K", as_index=False)["call_oi"].sum().sort_values("K").reset_index(drop=True)
                 _map_call = {float(k): float(v) for k, v in zip(df_call["K"].to_numpy(), df_call["call_oi"].to_numpy())}
                 y_call = [_map_call.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для Call OI hover
-                call_customdata = []
-                for i, k in enumerate(Ks):
-                    hd = hover_data.get(k, {})
-                    call_customdata.append([
-                        k,  # Strike
-                        hd.get("call_oi", 0),   # Call OI
-                    ])
-                
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_call,
-                    customdata=call_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#2ECC71"),
@@ -334,16 +279,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(46, 204, 113, 0.3)",
                     name="Call OI",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "Call OI: %{customdata[1]:,.0f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#2ECC71",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>Call OI=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -355,20 +291,10 @@ def render_netgex_bars(
                 df_pv = df_final.groupby("K", as_index=False)["put_vol"].sum().sort_values("K").reset_index(drop=True)
                 _map_pv = {float(k): float(v) for k, v in zip(df_pv["K"].to_numpy(), df_pv["put_vol"].to_numpy())}
                 y_pv = [_map_pv.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для Put Volume hover
-                put_vol_customdata = []
-                for i, k in enumerate(Ks):
-                    hd = hover_data.get(k, {})
-                    put_vol_customdata.append([
-                        k,  # Strike
-                        hd.get("put_vol", 0),   # Put Volume
-                    ])
-                
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_pv,
-                    customdata=put_vol_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#FF8C00"),
@@ -376,16 +302,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(255, 140, 0, 0.3)",
                     name="Put Volume",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "Put Volume: %{customdata[1]:,.0f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#FF8C00",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>Put Volume=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -397,20 +314,10 @@ def render_netgex_bars(
                 df_cv = df_final.groupby("K", as_index=False)["call_vol"].sum().sort_values("K").reset_index(drop=True)
                 _map_cv = {float(k): float(v) for k, v in zip(df_cv["K"].to_numpy(), df_cv["call_vol"].to_numpy())}
                 y_cv = [_map_cv.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для Call Volume hover
-                call_vol_customdata = []
-                for i, k in enumerate(Ks):
-                    hd = hover_data.get(k, {})
-                    call_vol_customdata.append([
-                        k,  # Strike
-                        hd.get("call_vol", 0),   # Call Volume
-                    ])
-                
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_cv,
-                    customdata=call_vol_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1E88E5"),
@@ -418,16 +325,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(30, 136, 229, 0.3)",
                     name="Call Volume",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "Call Volume: %{customdata[1]:,.0f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#1E88E5",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>Call Volume=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -441,20 +339,10 @@ def render_netgex_bars(
                 df_ag = df_final.groupby("K", as_index=False)[ag_col].sum().sort_values("K").reset_index(drop=True)
                 _map_ag = {float(k): float(v) for k, v in zip(df_ag["K"].to_numpy(), df_ag[ag_col].to_numpy())}
                 y_ag = [_map_ag.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для AG hover
-                ag_customdata = []
-                for i, k in enumerate(Ks):
-                    ag_val = _map_ag.get(float(k), 0)
-                    ag_customdata.append([
-                        k,  # Strike
-                        ag_val,   # AG value
-                    ])
-                
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_ag,
-                    customdata=ag_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#9A7DF7"),
@@ -462,16 +350,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(154, 125, 247, 0.3)",
                     name="AG",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "AG: %{customdata[1]:,.1f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#9A7DF7",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>AG=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -483,20 +362,10 @@ def render_netgex_bars(
                 df_pz = df_final.groupby("K", as_index=False)["PZ"].sum().sort_values("K").reset_index(drop=True)
                 _map_pz = {float(k): float(v) for k, v in zip(df_pz["K"].to_numpy(), df_pz["PZ"].to_numpy())}
                 y_pz = [_map_pz.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для PZ hover
-                pz_customdata = []
-                for i, k in enumerate(Ks):
-                    pz_val = _map_pz.get(float(k), 0)
-                    pz_customdata.append([
-                        k,  # Strike
-                        pz_val,   # PZ value
-                    ])
-                
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_pz,
-                    customdata=pz_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#E4C51E"),
@@ -504,16 +373,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(228, 197, 30, 0.3)",
                     name="PZ",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "PZ: %{customdata[1]:,.3f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#E4C51E",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>PZ=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -525,20 +385,10 @@ def render_netgex_bars(
                 df_eu = df_final.groupby("K", as_index=False)["ER_Up"].sum().sort_values("K").reset_index(drop=True)
                 _map_eu = {float(k): float(v) for k, v in zip(df_eu["K"].to_numpy(), df_eu["ER_Up"].to_numpy())}
                 y_eu = [_map_eu.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для ER_Up hover
-                er_up_customdata = []
-                for i, k in enumerate(Ks):
-                    er_up_val = _map_eu.get(float(k), 0)
-                    er_up_customdata.append([
-                        k,  # Strike
-                        er_up_val,   # ER_Up value
-                    ])
-                
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_eu,
-                    customdata=er_up_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1FCE54"),
@@ -546,16 +396,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(31, 206, 84, 0.3)",
                     name="ER_Up",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "ER_Up: %{customdata[1]:,.3f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#1FCE54",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>ER_Up=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
@@ -567,20 +408,10 @@ def render_netgex_bars(
                 df_ed = df_final.groupby("K", as_index=False)["ER_Down"].sum().sort_values("K").reset_index(drop=True)
                 _map_ed = {float(k): float(v) for k, v in zip(df_ed["K"].to_numpy(), df_ed["ER_Down"].to_numpy())}
                 y_ed = [_map_ed.get(float(k), None) for k in Ks]
-                
-                # Подготовка customdata для ER_Down hover
-                er_down_customdata = []
-                for i, k in enumerate(Ks):
-                    er_down_val = _map_ed.get(float(k), 0)
-                    er_down_customdata.append([
-                        k,  # Strike
-                        er_down_val,   # ER_Down value
-                    ])
-                
                 fig.add_trace(go.Scatter(
                     x=x_idx,
                     y=y_ed,
-                    customdata=er_down_customdata,
+                    customdata=Ks,
                     yaxis="y2",
                     mode="lines+markers",
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#D21717"),
@@ -588,16 +419,7 @@ def render_netgex_bars(
                     fill="tozeroy",
                     fillcolor="rgba(210, 23, 23, 0.3)",
                     name="ER_Down",
-                    hovertemplate=(
-                        "<b style='color:white'>Strike: %{customdata[0]:.0f}</b><br>" +
-                        "ER_Down: %{customdata[1]:,.3f}" +
-                        "<extra></extra>"
-                    ),
-                    hoverlabel=dict(
-                        bgcolor="#D21717",
-                        bordercolor="white",
-                        font=dict(size=13, color="white")
-                    ),
+                    hovertemplate="Strike=%{customdata}<br>ER_Down=%{y:.0f}<extra></extra>",
                 ))
     except Exception:
         pass
