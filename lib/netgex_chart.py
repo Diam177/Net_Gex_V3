@@ -69,9 +69,13 @@ COLOR_NEG = '#D9493A'    # красный
 COLOR_POS = '#60A5E7'    # бирюзовый
 COLOR_PRICE = '#E4A339'  # оранжевая линия цены
 try:
-    BG_COLOR = st.get_option('theme.backgroundColor') or '#111111'
+    _bg = st.get_option('theme.backgroundColor')
+    if not _bg:
+        _base = (st.get_option('theme.base') or 'dark').lower()
+        _bg = '#0E1117' if _base == 'dark' else '#FFFFFF'
 except Exception:
-    BG_COLOR = '#111111'
+    _bg = '#0E1117'
+BG_COLOR = _bg
 FG_COLOR = '#e0e0e0'
 GRID_COLOR = 'rgba(255,255,255,0.10)'
 
