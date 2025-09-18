@@ -231,7 +231,7 @@ def render_netgex_bars(
             "<extra></extra>"
         ),
         hoverlabel=dict(
-            bgcolor=colors,  # Цвет фона подсказки соответствует цвету столбика
+            bgcolor=COLOR_POS,  # Цвет фона подсказки соответствует цвету столбика
             bordercolor="white",
             font=dict(size=13, color="white")
         ),
@@ -255,7 +255,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#800020"),
                     marker=dict(size=6, color="#800020"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(128, 0, 32, 0.3)",
                     name="Put OI",
                     hovertemplate="Strike: %{customdata}<br>Put OI: %{y:.0f}<extra></extra>",
@@ -278,7 +278,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#2ECC71"),
                     marker=dict(size=6, color="#2ECC71"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(46, 204, 113, 0.3)",
                     name="Call OI",
                     hovertemplate="Strike: %{customdata}<br>Call OI: %{y:.0f}<extra></extra>",
@@ -302,7 +302,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#FF8C00"),
                     marker=dict(size=6, color="#FF8C00"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(255, 140, 0, 0.3)",
                     name="Put Volume",
                     hovertemplate="Strike: %{customdata}<br>Put Volume: %{y:.0f}<extra></extra>",
@@ -326,7 +326,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1E88E5"),
                     marker=dict(size=6, color="#1E88E5"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(30, 136, 229, 0.3)",
                     name="Call Volume",
                     hovertemplate="Strike: %{customdata}<br>Call Volume: %{y:.0f}<extra></extra>",
@@ -352,7 +352,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#9A7DF7"),
                     marker=dict(size=6, color="#9A7DF7"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(154, 125, 247, 0.3)",
                     name="AG",
                     hovertemplate="Strike: %{customdata}<br>AG: %{y:.0f}<extra></extra>",
@@ -376,7 +376,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#E4C51E"),
                     marker=dict(size=6, color="#E4C51E"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(228, 197, 30, 0.3)",
                     name="PZ",
                     hovertemplate="Strike: %{customdata}<br>PZ: %{y:.3f}<extra></extra>",
@@ -400,7 +400,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1FCE54"),
                     marker=dict(size=6, color="#1FCE54"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(31, 206, 84, 0.3)",
                     name="ER_Up",
                     hovertemplate="Strike: %{customdata}<br>ER_Up: %{y:.3f}<extra></extra>",
@@ -424,7 +424,7 @@ def render_netgex_bars(
                     line=dict(shape="spline", smoothing=1.0, width=1.5, color="#D21717"),
                     marker=dict(size=6, color="#D21717"),
                     fill="tozeroy",
-                    hoveron="points+fills",
+                    
                     fillcolor="rgba(210, 23, 23, 0.3)",
                     name="ER_Down",
                     hovertemplate="Strike: %{customdata}<br>ER_Down: %{y:.3f}<extra></extra>",
