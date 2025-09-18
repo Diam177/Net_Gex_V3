@@ -1,398 +1,422 @@
+
 # -*- coding: utf-8 -*-
 """
-key_levels.py — Key Levels чарт для отображения ключевых уровней.
+lib/key_levels.py — интрадей‑чарт «Key Levels» с горизонтальными уровнями из финальной таблицы.
 
-Отображает серии: Price, VWAP, Max Neg GEX, Max Pos GEX, Max Put OI, Max Call OI,
-Max Put Volume, Max Call Volume, AG, PZ, G-Flip
+Функция render_key_levels(
+    df_final,               # pandas.DataFrame финальной таблицы по страйкам (одна экспирация или агрегат multi)
+    ticker,                 # строка для заголовка/легенды
+    g_flip=None,            # опционально: значение G‑Flip, уже вычисленное в netgex_chart
+    price_df=None,          # опционально: DataFrame с колонками ['time', 'price', 'vwap'] (time — tz‑aware или naive UTC)
+    session_date=None,      # опционально: дата торгового дня (date/datetime/str 'YYYY-MM-DD'); по умолчанию — сегодня в ET
+    toggle_key=None,        # опциональный уникальный ключ для st.toggle
+):
+    - Берёт уровни из df_final: Max Neg/Pos GEX, Max Put/Call OI, Max Put/Call Volume, пик AG, пик PZ.
+    - G‑Flip берёт из параметра g_flip; если None — пытается вычислить как корень NetGEX(K)
+      через кусочно‑линейную интерполяцию (совместимо с netgex_chart._compute_gamma_flip_from_table).
+    - Рисует горизонтальные линии уровней поперёк интрадей оси времени (09:30—16:00 ET),
+      поверх простых серий Price (линия) и VWAP (линия), если price_df задан.
+    - Слева рядом со шкалой рисует белыми те значения, где есть уровень; остальные тики серые.
+    - Справа у правого края выводит подписи для совпадающих уровней («Max Pos GEX + Max Call OI»).
+    - Внизу под осью времени выводит дату (как на референс‑скриншоте).
 
-Зависимости: plotly>=5, pandas, streamlit, numpy
+Зависимости: plotly>=5, pandas, numpy, streamlit, pytz (tzlocal не обязателен).
 """
 
 from __future__ import annotations
-from typing import Optional, Dict, List, Tuple, Any
+from typing import Dict, Iterable, List, Optional, Tuple, Union
+import math
+import numpy as np
 import pandas as pd
 import streamlit as st
-import numpy as np
-from datetime import datetime
 
-# Import G-Flip calculation from netgex_chart
-from lib.netgex_chart import _compute_gamma_flip_from_table
+# --- Цвета (скопированы из netgex_chart.py) ---
+COLOR_PUT_OI    = "#800020"
+COLOR_CALL_OI   = "#2ECC71"
+COLOR_PUT_VOL   = "#FF8C00"
+COLOR_CALL_VOL  = "#1E88E5"
+COLOR_AG        = "#9A7DF7"
+COLOR_PZ        = "#E4C51E"
+COLOR_GFLIP     = "#AAAAAA"
 
-try:
-    import plotly.graph_objects as go
-except Exception as e:
-    raise RuntimeError("Требуется пакет 'plotly' (plotly>=5.22.0)") from e
+# Для Max Pos/Neg Net GEX и для цен/ввуп выберем аккуратные цвета, согласованные с референсом
+COLOR_MAX_POS_GEX = "#60A5E7"  # голубой
+COLOR_MAX_NEG_GEX = "#D9493A"  # красный
+COLOR_PRICE       = "#FFFFFF"  # белая линия цены
+COLOR_VWAP        = "#E4A339"  # оранжевая VWAP (как на скриншоте)
+BACKGROUND        = "#0E1117"  # тёмный фон
+AXIS_GRAY         = "#AAAAAA"  # серые деления шкал
+GRID_COLOR        = "rgba(255,255,255,0.05)"
 
-# Цвета серий (копируем из netgex_chart для консистентности)
-SERIES_COLORS = {
-    "Price": "#E4A339",           # оранжевый
-    "VWAP": "#60A5E7",           # бирюзовый
-    "Max Neg GEX": "#D9493A",    # красный
-    "Max Pos GEX": "#60A5E7",    # бирюзовый
-    "Max Put OI": "#800020",     # темно-красный
-    "Max Call OI": "#2ECC71",    # зеленый
-    "Max Put Volume": "#FF8C00",  # темно-оранжевый
-    "Max Call Volume": "#1E88E5", # синий
-    "AG": "#9A7DF7",             # фиолетовый
-    "PZ": "#E4C51E",             # желтый
-    "G-Flip": "#AAAAAA",         # серый
-    "Neg Net GEX #2": "#D9493A", # красный
-    "Neg Net GEX #3": "#D9493A", # красный
-    "AG #2": "#9A7DF7",          # фиолетовый
-    "AG #3": "#9A7DF7",          # фиолетовый
-}
+def _to_float_series(df: pd.DataFrame, col: str) -> pd.Series:
+    if df is None or col not in df.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(df[col], errors="coerce")
 
-# Символы для легенды
-SERIES_SYMBOLS = {
-    "Price": "⬤",
-    "VWAP": "―",
-    "Max Neg GEX": "······",
-    "Max Pos GEX": "⬤",
-    "Max Put OI": "―",
-    "Max Call OI": "―",
-    "Max Put Volume": "······",
-    "Max Call Volume": "······",
-    "AG": "―",
-    "PZ": "······",
-    "G-Flip": "- - -"
-}
+def _group_max_level(df: pd.DataFrame, value_col: str) -> Optional[float]:
+    """Возвращает strike K, на котором value_col достигает экстремума (max)."""
+    if df is None or df.empty or "K" not in df.columns or value_col not in df.columns:
+        return None
+    g = (
+        df[["K", value_col]]
+        .copy()
+        .assign(K=lambda x: pd.to_numeric(x["K"], errors="coerce"),
+                V=lambda x: pd.to_numeric(x[value_col], errors="coerce"))
+        .dropna()
+        .groupby("K", as_index=False)["V"].sum()
+        .sort_values("K")
+        .reset_index(drop=True)
+    )
+    if g.empty:
+        return None
+    i = int(np.nanargmax(g["V"].to_numpy()))
+    return float(g.iloc[i]["K"])
 
-# Цвета фона
-BG_COLOR = '#0E1117'
-FG_COLOR = '#FFFFFF'
-GRID_COLOR = 'rgba(255,255,255,0.05)'
-AXIS_INACTIVE = '#666666'
-AXIS_ACTIVE = '#FFFFFF'
+def _group_min_level(df: pd.DataFrame, value_col: str) -> Optional[float]:
+    """Возвращает strike K, где value_col минимален (min)."""
+    if df is None or df.empty or "K" not in df.columns or value_col not in df.columns:
+        return None
+    g = (
+        df[["K", value_col]]
+        .copy()
+        .assign(K=lambda x: pd.to_numeric(x["K"], errors="coerce"),
+                V=lambda x: pd.to_numeric(x[value_col], errors="coerce"))
+        .dropna()
+        .groupby("K", as_index=False)["V"].sum()
+        .sort_values("K")
+        .reset_index(drop=True)
+    )
+    if g.empty:
+        return None
+    i = int(np.nanargmin(g["V"].to_numpy()))
+    return float(g.iloc[i]["K"])
 
-def _generate_trading_session_timeline() -> Tuple[np.ndarray, List[str]]:
-    """Генерирует временную шкалу торговой сессии от 9:30 до 16:00"""
-    # Массив временных точек в минутах от начала дня
-    times = []
-    labels = []
-    
-    # От 9:30 (570 минут) до 16:00 (960 минут) с шагом 30 минут
-    for minutes in range(570, 961, 30):
-        hours = minutes // 60
-        mins = minutes % 60
-        times.append(minutes)
-        labels.append(f"{hours:02d}:{mins:02d}")
-    
-    return np.array(times), labels
+def _compute_gflip_piecewise(df_final: pd.DataFrame, y_col: str = "NetGEX_1pct", spot: Optional[float] = None) -> Optional[float]:
+    """Совместимо по смыслу с netgex_chart: ищем корень знакосмены NetGEX(K) между соседними страйками."""
+    if df_final is None or df_final.empty or "K" not in df_final.columns or y_col not in df_final.columns:
+        return None
+    base = df_final[["K", y_col]].copy()
+    base["K"] = pd.to_numeric(base["K"], errors="coerce")
+    base[y_col] = pd.to_numeric(base[y_col], errors="coerce")
+    base = base.dropna()
+    if base.empty:
+        return None
+    g = base.groupby("K", as_index=False)[y_col].sum().sort_values("K").reset_index(drop=True)
+    Ks = g["K"].to_numpy(dtype=float)
+    Ys = g[y_col].to_numpy(dtype=float)
+    if len(Ks) < 2:
+        return None
+    # Кандидаты: прямые нули + промежутки со сменой знака
+    cand: List[float] = [float(Ks[i]) for i, v in enumerate(Ys) if v == 0.0]
+    sign = np.sign(Ys)
+    idx = np.where(sign[:-1] * sign[1:] < 0)[0]
+    for i in idx:
+        K0, K1 = float(Ks[i]), float(Ks[i+1])
+        y0, y1 = float(Ys[i]), float(Ys[i+1])
+        if y1 != y0:
+            root = K0 - y0 * (K1 - K0) / (y1 - y0)
+            # ограничим внутри отрезка
+            root = max(min(root, K1), K0) if K1 >= K0 else max(min(root, K0), K1)
+            cand.append(float(root))
 
-def _extract_key_levels(df_final: pd.DataFrame) -> Dict[str, float]:
-    """Извлекает ключевые уровни из финальной таблицы"""
-    levels = {}
-    
-    if df_final is None or df_final.empty:
-        return levels
-    
-    # Price - текущая цена
-    if "S" in df_final.columns and df_final["S"].notna().any():
-        levels["Price"] = float(df_final["S"].dropna().iloc[0])
-    
-    # VWAP - взвешенная средняя цена
-    if "K" in df_final.columns:
-        # Пробуем с volume
-        if "call_vol" in df_final.columns and "put_vol" in df_final.columns:
-            total_vol = df_final["call_vol"].fillna(0) + df_final["put_vol"].fillna(0)
-            if total_vol.sum() > 0:
-                levels["VWAP"] = float((df_final["K"] * total_vol).sum() / total_vol.sum())
-        # Иначе используем OI
-        elif "call_oi" in df_final.columns and "put_oi" in df_final.columns:
-            total_oi = df_final["call_oi"].fillna(0) + df_final["put_oi"].fillna(0)
-            if total_oi.sum() > 0:
-                levels["VWAP"] = float((df_final["K"] * total_oi).sum() / total_oi.sum())
-    
-    # Max Neg GEX и Max Pos GEX
-    col = "NetGEX_1pct" if "NetGEX_1pct" in df_final.columns else ("NetGEX_1pct_M" if "NetGEX_1pct_M" in df_final.columns else None)
-    if col:
-        neg_data = df_final[df_final[col] < 0]
-        pos_data = df_final[df_final[col] > 0]
-        
-        # Max Neg GEX (наиболее отрицательное значение)
-        if not neg_data.empty:
-            min_idx = neg_data[col].idxmin()
-            levels["Max Neg GEX"] = float(df_final.loc[min_idx, "K"])
-            
-            # Дополнительные уровни Neg GEX
-            sorted_neg = neg_data.nsmallest(3, col)
-            if len(sorted_neg) > 1:
-                levels["Neg Net GEX #2"] = float(sorted_neg.iloc[1]["K"])
-            if len(sorted_neg) > 2:
-                levels["Neg Net GEX #3"] = float(sorted_neg.iloc[2]["K"])
-        
-        # Max Pos GEX (наиболее положительное значение)
-        if not pos_data.empty:
-            max_idx = pos_data[col].idxmax()
-            levels["Max Pos GEX"] = float(df_final.loc[max_idx, "K"])
-    
-    # Max Put OI
-    if "put_oi" in df_final.columns and df_final["put_oi"].sum() > 0:
-        max_idx = df_final["put_oi"].idxmax()
-        levels["Max Put OI"] = float(df_final.loc[max_idx, "K"])
-    
-    # Max Call OI
-    if "call_oi" in df_final.columns and df_final["call_oi"].sum() > 0:
-        max_idx = df_final["call_oi"].idxmax()
-        levels["Max Call OI"] = float(df_final.loc[max_idx, "K"])
-    
-    # Max Put Volume
-    if "put_vol" in df_final.columns and df_final["put_vol"].sum() > 0:
-        max_idx = df_final["put_vol"].idxmax()
-        levels["Max Put Volume"] = float(df_final.loc[max_idx, "K"])
-    
-    # Max Call Volume
-    if "call_vol" in df_final.columns and df_final["call_vol"].sum() > 0:
-        max_idx = df_final["call_vol"].idxmax()
-        levels["Max Call Volume"] = float(df_final.loc[max_idx, "K"])
-    
-    # AG - абсолютная гамма
-    ag_col = "AG_1pct" if "AG_1pct" in df_final.columns else ("AG_1pct_M" if "AG_1pct_M" in df_final.columns else None)
-    if ag_col and df_final[ag_col].sum() > 0:
-        sorted_ag = df_final.nlargest(3, ag_col)
-        if len(sorted_ag) > 0:
-            levels["AG"] = float(sorted_ag.iloc[0]["K"])
-        if len(sorted_ag) > 1:
-            levels["AG #2"] = float(sorted_ag.iloc[1]["K"])
-        if len(sorted_ag) > 2:
-            levels["AG #3"] = float(sorted_ag.iloc[2]["K"])
-    
-    # PZ - Power Zone
-    if "PZ" in df_final.columns and df_final["PZ"].sum() > 0:
-        max_idx = df_final["PZ"].idxmax()
-        levels["PZ"] = float(df_final.loc[max_idx, "K"])
-    
-    # G-Flip
-    y_col = "NetGEX_1pct_M" if "NetGEX_1pct_M" in df_final.columns else "NetGEX_1pct"
-    if y_col in df_final.columns:
-        spot = levels.get("Price")
-        g_flip = _compute_gamma_flip_from_table(df_final, y_col, spot)
-        if g_flip is not None:
-            levels["G-Flip"] = float(g_flip)
-    
-    return levels
+    if not cand:
+        return None
+    if spot is not None and np.isfinite(spot):
+        j = int(np.argmin(np.abs(np.array(cand) - float(spot))))
+        return float(cand[j])
+    # иначе ближайший к середине диапазона
+    mid = 0.5 * (float(Ks[0]) + float(Ks[-1]))
+    j = int(np.argmin(np.abs(np.array(cand) - mid)))
+    return float(cand[j])
 
-def _group_overlapping_levels(levels: Dict[str, float], threshold: float = 0.5) -> Dict[float, List[str]]:
-    """Группирует серии с близкими значениями для отображения меток"""
-    grouped = {}
-    
-    # Пропускаем вспомогательные уровни (с # в имени)
-    main_levels = {k: v for k, v in levels.items() if '#' not in k}
-    
-    for name, value in main_levels.items():
-        found = False
-        for group_val in grouped:
-            if abs(value - group_val) <= threshold:
-                grouped[group_val].append(name)
-                found = True
-                break
-        
-        if not found:
-            grouped[value] = [name]
-    
-    return grouped
+def _session_timerange(session_date: Optional[Union[str, pd.Timestamp]]) -> Tuple[pd.Timestamp, pd.Timestamp, pd.DatetimeIndex]:
+    """Возвращает (t0, t1, index) для 09:30–16:00 America/New_York."""
+    try:
+        import pytz
+        tz = pytz.timezone("America/New_York")
+    except Exception:
+        tz = None
+
+    if session_date is None:
+        session_date = pd.Timestamp.utcnow().tz_localize("UTC") if tz is None else pd.Timestamp.now(tz)
+    session_date = pd.to_datetime(session_date).date()
+    t0_naive = pd.Timestamp(year=session_date.year, month=session_date.month, day=session_date.day, hour=9, minute=30)
+    t1_naive = pd.Timestamp(year=session_date.year, month=session_date.month, day=session_date.day, hour=16, minute=0)
+    if tz is not None:
+        t0 = tz.localize(t0_naive)
+        t1 = tz.localize(t1_naive)
+    else:
+        t0 = t0_naive
+        t1 = t1_naive
+    idx = pd.date_range(t0, t1, freq="1min")
+    return t0, t1, idx
+
+def _format_date_for_footer(dt: pd.Timestamp) -> str:
+    return dt.strftime("%b %d, %Y")
+
+def _make_tick_annotations(fig, y_vals: Iterable[float], x_left, y_min, y_max):
+    """Рисует белые подписи слева для тех y, где есть уровни (чтобы отличать от серых тиков)."""
+    used = set()
+    for y in y_vals:
+        if not np.isfinite(y):
+            continue
+        y_ = float(y)
+        # избегаем дубликатов в пределах 0.05
+        key = round(y_, 2)
+        if key in used:
+            continue
+        used.add(key)
+        fig.add_annotation(
+            x=x_left, xref="x", y=y_, yref="y",
+            text=f"{y_:g}",
+            showarrow=False,
+            xanchor="right", yanchor="middle",
+            font=dict(size=10, color="#FFFFFF"),
+            align="right",
+        )
 
 def render_key_levels(
     df_final: pd.DataFrame,
     ticker: str,
-    spot: Optional[float] = None,
-    toggle_key: Optional[str] = None
+    g_flip: Optional[float] = None,
+    price_df: Optional[pd.DataFrame] = None,
+    session_date: Optional[Union[str, pd.Timestamp]] = None,
+    toggle_key: Optional[str] = None,
 ) -> None:
-    """Рендерит Key Levels чарт"""
-    
-    if df_final is None or df_final.empty:
+    import plotly.graph_objects as go
+
+    if df_final is None or getattr(df_final, "empty", True):
         st.info("Нет данных для графика Key Levels.")
         return
-    
-    # Получаем ключевые уровни
-    levels = _extract_key_levels(df_final)
-    if not levels:
-        st.warning("Не удалось извлечь ключевые уровни из данных.")
+    if "K" not in df_final.columns:
+        st.warning("В финальной таблице отсутствует столбец 'K'.")
         return
-    
-    # Группируем близкие уровни
-    grouped = _group_overlapping_levels(levels)
-    
-    # Временная шкала
-    times, time_labels = _generate_trading_session_timeline()
-    
-    # Создаем фигуру
-    fig = go.Figure()
-    
-    # Уникальные значения уровней для настройки осей
-    all_values = list(levels.values())
-    if all_values:
-        y_min = min(all_values) * 0.995
-        y_max = max(all_values) * 1.005
-    else:
-        y_min, y_max = 640, 660
-    
-    # Активные уровни (те, для которых есть линии)
-    active_levels = set(grouped.keys())
-    
-    # Добавляем линии для каждого уровня
-    legend_entries = []
-    for level_value, series_names in grouped.items():
-        # Цвет первой серии в группе
-        main_series = series_names[0]
-        color = SERIES_COLORS.get(main_series, '#FFFFFF')
-        
-        # Определяем стиль линии
-        if main_series in ["Price", "VWAP", "AG", "Max Call OI", "Max Put OI"]:
-            dash_style = 'solid'
-        elif main_series == "G-Flip":
-            dash_style = 'dash'
-        else:
-            dash_style = 'dot'
-        
-        # Основная линия
-        fig.add_trace(go.Scatter(
-            x=times,
-            y=[level_value] * len(times),
-            mode='lines',
-            line=dict(color=color, width=1.5, dash=dash_style),
-            name=', '.join(series_names),
-            showlegend=True,
-            hovertemplate=f"{'<br>'.join(series_names)}: {level_value:.2f}<extra></extra>"
-        ))
-        
-        # Метка справа для групп с несколькими сериями
-        if len(series_names) > 1:
-            # Сокращаем имена для компактности
-            short_names = []
-            for s in series_names:
-                if "Max" in s:
-                    parts = s.split()
-                    short_names.append(f"{parts[1]} {parts[2]}" if len(parts) > 2 else s)
-                else:
-                    short_names.append(s)
-            
-            fig.add_annotation(
-                x=times[-1],
-                y=level_value,
-                text=' + '.join(short_names),
-                xanchor='left',
-                yanchor='middle',
-                xshift=5,
-                font=dict(size=9, color=color),
-                showarrow=False
-            )
-    
-    # Настройка layout
-    fig.update_layout(
-        title=dict(
-            text=f"<b>Key Levels</b>",
-            x=0.01,
-            y=0.99,
-            xanchor='left',
-            yanchor='top',
-            font=dict(size=14, color=FG_COLOR)
-        ),
-        hovermode='closest',
-        template="plotly_dark",
-        paper_bgcolor=BG_COLOR,
-        plot_bgcolor=BG_COLOR,
-        margin=dict(l=60, r=100, t=30, b=50),
-        showlegend=True,
-        legend=dict(
-            orientation="h",
-            yanchor="top",
-            y=1.12,
-            xanchor="left",
-            x=0,
-            font=dict(size=10, color=FG_COLOR),
-            bgcolor='rgba(0,0,0,0)',
-            borderwidth=0
-        ),
-        xaxis=dict(
-            title="Time",
-            tickmode='array',
-            tickvals=times[::2],  # Каждая вторая метка
-            ticktext=time_labels[::2],
-            showgrid=True,
-            gridcolor=GRID_COLOR,
-            zeroline=False,
-            tickfont=dict(size=10, color=FG_COLOR),
-            titlefont=dict(size=11, color=FG_COLOR)
-        ),
-        yaxis=dict(
-            title="Price",
-            range=[y_min, y_max],
-            showgrid=True,
-            gridcolor=GRID_COLOR,
-            zeroline=False,
-            tickfont=dict(size=10),
-            titlefont=dict(size=11, color=FG_COLOR),
-            # Цвет меток в зависимости от активности
-            tickmode='auto'
-        ),
-        height=400
-    )
-    
-    # Форматируем цвет меток оси Y
-    # К сожалению, Plotly не позволяет напрямую задавать разные цвета для разных tick labels
-    # Но мы можем использовать аннотации для имитации этого эффекта
-    
-    # Добавляем текущую дату под графиком
-    current_date = datetime.now().strftime("Sep %d, %Y")
-    fig.add_annotation(
-        xref="paper",
-        yref="paper",
-        x=0.5,
-        y=-0.08,
-        text=current_date,
-        showarrow=False,
-        font=dict(size=10, color=FG_COLOR),
-        xanchor="center"
-    )
-    
-    # Отображаем график
-    st.plotly_chart(fig, use_container_width=True, theme=None,
-                    config={'displayModeBar': False})
 
-def render_key_levels_with_controls(
-    df_final: pd.DataFrame,
-    ticker: str,
-    spot: Optional[float] = None
-) -> None:
-    """Отображает Key Levels чарт с контролами в сайдбаре"""
-    
-    # Заголовок секции
-    st.header("Key Levels")
-    
-    # Контролы в сайдбаре
-    with st.sidebar:
-        st.subheader("Key Levels — Controls")
-        
-        # Интервал
-        interval = st.selectbox(
-            "Interval",
-            ["1m", "5m", "15m", "30m", "1h"],
-            index=0,
-            key="key_levels_interval"
+    # --- Вычисляем уровни ---
+    cols = df_final.columns
+    # что брать для AG/NetGEX — *_1pct или *_1pct_M
+    y_ag  = "AG_1pct_M"     if "AG_1pct_M"     in cols else ("AG_1pct"     if "AG_1pct"     in cols else None)
+    y_ng  = "NetGEX_1pct_M" if "NetGEX_1pct_M" in cols else ("NetGEX_1pct" if "NetGEX_1pct" in cols else None)
+    # OI/Vol
+    has_call_oi = "call_oi" in cols
+    has_put_oi  = "put_oi"  in cols
+    has_call_vol= "call_vol" in cols
+    has_put_vol = "put_vol"  in cols
+    has_pz      = "PZ" in cols
+
+    level_map: Dict[str, Optional[float]] = {}
+    if y_ng:
+        level_map["Max Pos GEX"] = _group_max_level(df_final, y_ng)
+        level_map["Max Neg GEX"] = _group_min_level(df_final, y_ng)
+    if has_put_oi:
+        level_map["Max Put OI"] = _group_max_level(df_final, "put_oi")
+    if has_call_oi:
+        level_map["Max Call OI"] = _group_max_level(df_final, "call_oi")
+    if has_put_vol:
+        level_map["Max Put Volume"] = _group_max_level(df_final, "put_vol")
+    if has_call_vol:
+        level_map["Max Call Volume"] = _group_max_level(df_final, "call_vol")
+    if y_ag:
+        level_map["AG"] = _group_max_level(df_final, y_ag)
+    if has_pz:
+        level_map["PZ"] = _group_max_level(df_final, "PZ")
+
+    # G‑Flip
+    spot = float(pd.to_numeric(df_final.get("S"), errors="coerce").median()) if "S" in cols else None
+    if g_flip is None:
+        g_flip = _compute_gflip_piecewise(df_final, y_col=(y_ng or "NetGEX_1pct"), spot=spot)
+    if g_flip is not None and np.isfinite(g_flip):
+        level_map["G-Flip"] = float(g_flip)
+
+    # --- Временная ось ---
+    t0, t1, t_idx = _session_timerange(session_date)
+    x_left = t0
+    x_right = t1
+
+    # --- Готовим фигуру ---
+    fig = go.Figure()
+    fig.update_layout(
+        paper_bgcolor=BACKGROUND,
+        plot_bgcolor=BACKGROUND,
+        margin=dict(l=60, r=110, t=40, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
+    )
+    # Серые тики по Y
+    fig.update_yaxes(
+        tickfont=dict(color=AXIS_GRAY, size=10),
+        gridcolor=GRID_COLOR,
+        zeroline=False,
+        title_text="Price",
+        titlefont=dict(color="#FFFFFF", size=11),
+    )
+    fig.update_xaxes(
+        tickformat="%H:%M",
+        tickfont=dict(color=AXIS_GRAY, size=10),
+        gridcolor=GRID_COLOR,
+        zeroline=False,
+        title_text="Time",
+        titlefont=dict(color="#FFFFFF", size=11),
+        range=[x_left, x_right],
+    )
+
+    # --- Price / VWAP (если даны) ---
+    show_price = st.toggle("Price", value=True, key=(f"{toggle_key}__price" if toggle_key else "kl_price"))
+    show_vwap  = st.toggle("VWAP",  value=True, key=(f"{toggle_key}__vwap"  if toggle_key else "kl_vwap"))
+    if price_df is not None and not price_df.empty:
+        pdf = price_df.copy()
+        if "time" not in pdf.columns:
+            # попробуем распознать индекс как время
+            pdf = pdf.reset_index().rename(columns={pdf.columns[0]: "time"})
+        pdf["time"] = pd.to_datetime(pdf["time"])
+        pdf = pdf[(pdf["time"] >= x_left) & (pdf["time"] <= x_right)]
+        if show_price and "price" in pdf.columns:
+            fig.add_trace(go.Scatter(
+                x=pdf["time"], y=pd.to_numeric(pdf["price"], errors="coerce"),
+                mode="lines",
+                line=dict(width=1.2, color=COLOR_PRICE),
+                name="Price",
+                hovertemplate="Time: %{x|%H:%M}<br>Price: %{y:.2f}<extra></extra>",
+            ))
+        if show_vwap:
+            if "vwap" in pdf.columns:
+                vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
+            elif {"price","volume"}.issubset(set(pdf.columns)):
+                # простая онлайн‑оценка vwap
+                vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
+                pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
+                cum_vol = vol.cumsum().replace(0, np.nan)
+                vwap_series = (pr.mul(vol)).cumsum() / cum_vol
+            else:
+                vwap_series = None
+            if vwap_series is not None:
+                fig.add_trace(go.Scatter(
+                    x=pdf["time"], y=vwap_series,
+                    mode="lines",
+                    line=dict(width=1.0, color=COLOR_VWAP, dash="solid"),
+                    name="VWAP",
+                    hovertemplate="Time: %{x|%H:%M}<br>VWAP: %{y:.2f}<extra></extra>",
+                ))
+
+    # --- Горизонтальные уровни ---
+    # Цвета по легендам
+    color_map = {
+        "Max Pos GEX": COLOR_MAX_POS_GEX,
+        "Max Neg GEX": COLOR_MAX_NEG_GEX,
+        "Max Put OI": COLOR_PUT_OI,
+        "Max Call OI": COLOR_CALL_OI,
+        "Max Put Volume": COLOR_PUT_VOL,
+        "Max Call Volume": COLOR_CALL_VOL,
+        "AG": COLOR_AG,
+        "PZ": COLOR_PZ,
+        "G-Flip": COLOR_GFLIP,
+    }
+
+    # Сгруппируем совпадающие значения (±0.05) для подписи справа
+    eps = 0.05
+    groups: Dict[float, List[str]] = {}
+    for name, val in level_map.items():
+        if val is None or not np.isfinite(val):
+            continue
+        y = float(val)
+        # поиск существующей группы
+        found_key = None
+        for key in list(groups.keys()):
+            if abs(y - key) <= eps:
+                found_key = key
+                break
+        if found_key is None:
+            groups[y] = [name]
+        else:
+            groups[found_key].append(name)
+
+    # Диапазон Y — вокруг мин/макс уровней (добавим небольшой паддинг)
+    all_levels = [float(v) for v in groups.keys()]
+    if all_levels:
+        y_min = min(all_levels) - 3
+        y_max = max(all_levels) + 3
+    else:
+        # фолбэк — по S
+        S_vals = pd.to_numeric(df_final.get("S"), errors="coerce").dropna().tolist()
+        if S_vals:
+            s = float(np.median(S_vals))
+            y_min, y_max = s - 10.0, s + 10.0
+        else:
+            y_min, y_max = 0.0, 1.0
+    fig.update_yaxes(range=[y_min, y_max])
+
+    # Линии и легенды
+    for name, members in groups.items():
+        y = float(name)
+        # для тех серий, что входят в эту линию, добавим по одному trace с легендой (покажется один раз)
+        # для визуала рисуем одну линию цветом первой серии (или G-Flip цветом для G-Flip)
+        labels_sorted = sorted(members, key=lambda s: s)
+        # определим цвет: если среди members есть G-Flip — берём серый; иначе по первому приоритету
+        if "G-Flip" in labels_sorted:
+            color = COLOR_GFLIP
+        else:
+            # приоритет: Max Pos/Neg, затем AG/PZ, затем OI/Vol
+            prio = ["Max Neg GEX", "Max Pos GEX", "AG", "PZ", "Max Put OI", "Max Call OI", "Max Put Volume", "Max Call Volume"]
+            pick = None
+            for p in prio:
+                if p in labels_sorted:
+                    pick = p; break
+            pick = pick or labels_sorted[0]
+            color = color_map.get(pick, "#CCCCCC")
+
+        fig.add_shape(
+            type="line",
+            x0=x_left, x1=x_right, xref="x",
+            y0=y, y1=y, yref="y",
+            line=dict(color=color, width=1.4, dash="solid"),
+            layer="below",
         )
-        
-        # Лимиты цены
-        st.text("Limit")
-        col1, col2 = st.columns(2)
-        with col1:
-            limit_min = st.number_input(
-                "",
-                min_value=0,
-                value=640,
-                step=10,
-                key="key_levels_limit_min",
-                label_visibility="collapsed"
-            )
-        with col2:
-            limit_max = st.number_input(
-                "",
-                min_value=0,
-                value=660,
-                step=10,
-                key="key_levels_limit_max",
-                label_visibility="collapsed"
-            )
-    
-    # Рендерим чарт
-    render_key_levels(df_final, ticker, spot)
+        # Добавим «фиктивный» trace для легенды со списком входящих серий
+        legend_name = ", ".join(labels_sorted) if len(labels_sorted) <= 2 else " + ".join(labels_sorted)
+        fig.add_trace(go.Scatter(
+            x=[x_left, x_right], y=[y, y],
+            mode="lines",
+            line=dict(width=0),  # линия прозрачная — только для легенды
+            name=legend_name,
+            hoverinfo="skip",
+            showlegend=True,
+        ))
+
+    # Подписи справа: объединяем названия серий на этой линии
+    x_annot = x_right
+    for y, members in sorted(groups.items(), key=lambda kv: kv[0], reverse=True):
+        text = " + ".join(sorted(members))
+        # Для читаемости добавим слегка контрастный прямоугольник позади текста — через bgcolor
+        fig.add_annotation(
+            x=x_annot, xref="x",
+            y=float(y), yref="y",
+            text=text,
+            showarrow=False,
+            xanchor="left", yanchor="middle",
+            align="left",
+            font=dict(size=10, color="#FFFFFF"),
+            bgcolor="rgba(0,0,0,0.35)",
+            bordercolor="rgba(255,255,255,0.15)",
+            borderwidth=0.5,
+        )
+
+    # Белые подписи‑тиков слева там, где лежат уровни
+    _make_tick_annotations(fig, groups.keys(), x_left, y_min, y_max)
+
+    # Заголовок (слева вверху) — тикер
+    fig.add_annotation(
+        x=0, xref="paper", y=1.12, yref="paper",
+        text=str(ticker),
+        showarrow=False, xanchor="left", yanchor="bottom",
+        font=dict(size=12, color="#FFFFFF"),
+    )
+
+    # Дата под осью
+    fig.add_annotation(
+        x=0.5, xref="paper", y=-0.18, yref="paper",
+        text=_format_date_for_footer(pd.to_datetime(x_left)),
+        showarrow=False, xanchor="center", yanchor="top",
+        font=dict(size=10, color="#FFFFFF"),
+    )
+
+    # Рендер
+    st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
