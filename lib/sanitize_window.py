@@ -413,20 +413,15 @@ def rebuild_iv_and_greeks(df_marked: pd.DataFrame, cfg: SanitizerConfig = Saniti
 
         # Пересчёт греков по скорректированной IV
         is_call = (g["side"].values == "C")
-
-T_vec = np.asarray(g["T"].values, dtype=float)
-T_floor_calc = 5.0 / (252.0 * 390.0)  # ≈ 5 минут в долях года
-T_eff = np.where(np.isfinite(T_vec) & (T_vec > 0.0), T_vec, T_floor_calc)
-
-gamma_c, vega_c, delta_c = _bs_greeks_gamma_vega_delta(
-    S=g["S"].values,
-    K=g["K"].values,
-    T=T_eff,
-    iv=iv_filled,
-    r=cfg.r,
-    q=cfg.q,
-    is_call=is_call
-)
+        gamma_c, vega_c, delta_c = _bs_greeks_gamma_vega_delta(
+            S=g["S"].values,
+            K=g["K"].values,
+            T=g["T"].values,
+            iv=iv_filled,
+            r=cfg.r,
+            q=cfg.q,
+            is_call=is_call
+        )
         df.loc[idx, "gamma_corr"] = gamma_c
         df.loc[idx, "vega_corr"]  = vega_c
         df.loc[idx, "delta_corr"] = delta_c
