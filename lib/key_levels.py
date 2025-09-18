@@ -19,18 +19,15 @@ lib/key_levels.py — интрадей‑чарт «Key Levels» с горизо
     - Слева рядом со шкалой рисует белыми те значения, где есть уровень; остальные тики серые.
     - Справа у правого края выводит подписи для совпадающих уровней («Max Pos GEX + Max Call OI»).
     - Внизу под осью времени выводит дату (как на референс‑скриншоте).
-
-Зависимости: plotly>=5, pandas, numpy, streamlit, pytz (tzlocal не обязателен).
 """
 
 from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Tuple, Union
-import math
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# --- Цвета (скопированы из netgex_chart.py) ---
+# --- Цвета (совместимые с netgex_chart.py) ---
 COLOR_PUT_OI    = "#800020"
 COLOR_CALL_OI   = "#2ECC71"
 COLOR_PUT_VOL   = "#FF8C00"
@@ -39,13 +36,12 @@ COLOR_AG        = "#9A7DF7"
 COLOR_PZ        = "#E4C51E"
 COLOR_GFLIP     = "#AAAAAA"
 
-# Для Max Pos/Neg Net GEX и для цен/ввуп выберем аккуратные цвета, согласованные с референсом
 COLOR_MAX_POS_GEX = "#60A5E7"  # голубой
 COLOR_MAX_NEG_GEX = "#D9493A"  # красный
 COLOR_PRICE       = "#FFFFFF"  # белая линия цены
-COLOR_VWAP        = "#E4A339"  # оранжевая VWAP (как на скриншоте)
-BACKGROUND        = "#0E1117"  # тёмный фон
-AXIS_GRAY         = "#AAAAAA"  # серые деления шкал
+COLOR_VWAP        = "#E4A339"  # оранжевая VWAP
+BACKGROUND        = "#0E1117"
+AXIS_GRAY         = "#AAAAAA"
 GRID_COLOR        = "rgba(255,255,255,0.05)"
 
 def _to_float_series(df: pd.DataFrame, col: str) -> pd.Series:
@@ -54,7 +50,6 @@ def _to_float_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
 def _group_max_level(df: pd.DataFrame, value_col: str) -> Optional[float]:
-    """Возвращает strike K, на котором value_col достигает экстремума (max)."""
     if df is None or df.empty or "K" not in df.columns or value_col not in df.columns:
         return None
     g = (
@@ -73,7 +68,6 @@ def _group_max_level(df: pd.DataFrame, value_col: str) -> Optional[float]:
     return float(g.iloc[i]["K"])
 
 def _group_min_level(df: pd.DataFrame, value_col: str) -> Optional[float]:
-    """Возвращает strike K, где value_col минимален (min)."""
     if df is None or df.empty or "K" not in df.columns or value_col not in df.columns:
         return None
     g = (
@@ -92,7 +86,6 @@ def _group_min_level(df: pd.DataFrame, value_col: str) -> Optional[float]:
     return float(g.iloc[i]["K"])
 
 def _compute_gflip_piecewise(df_final: pd.DataFrame, y_col: str = "NetGEX_1pct", spot: Optional[float] = None) -> Optional[float]:
-    """Совместимо по смыслу с netgex_chart: ищем корень знакосмены NetGEX(K) между соседними страйками."""
     if df_final is None or df_final.empty or "K" not in df_final.columns or y_col not in df_final.columns:
         return None
     base = df_final[["K", y_col]].copy()
@@ -106,7 +99,6 @@ def _compute_gflip_piecewise(df_final: pd.DataFrame, y_col: str = "NetGEX_1pct",
     Ys = g[y_col].to_numpy(dtype=float)
     if len(Ks) < 2:
         return None
-    # Кандидаты: прямые нули + промежутки со сменой знака
     cand: List[float] = [float(Ks[i]) for i, v in enumerate(Ys) if v == 0.0]
     sign = np.sign(Ys)
     idx = np.where(sign[:-1] * sign[1:] < 0)[0]
@@ -115,28 +107,23 @@ def _compute_gflip_piecewise(df_final: pd.DataFrame, y_col: str = "NetGEX_1pct",
         y0, y1 = float(Ys[i]), float(Ys[i+1])
         if y1 != y0:
             root = K0 - y0 * (K1 - K0) / (y1 - y0)
-            # ограничим внутри отрезка
             root = max(min(root, K1), K0) if K1 >= K0 else max(min(root, K0), K1)
             cand.append(float(root))
-
     if not cand:
         return None
     if spot is not None and np.isfinite(spot):
         j = int(np.argmin(np.abs(np.array(cand) - float(spot))))
         return float(cand[j])
-    # иначе ближайший к середине диапазона
     mid = 0.5 * (float(Ks[0]) + float(Ks[-1]))
     j = int(np.argmin(np.abs(np.array(cand) - mid)))
     return float(cand[j])
 
 def _session_timerange(session_date: Optional[Union[str, pd.Timestamp]]) -> Tuple[pd.Timestamp, pd.Timestamp, pd.DatetimeIndex]:
-    """Возвращает (t0, t1, index) для 09:30–16:00 America/New_York."""
     try:
         import pytz
         tz = pytz.timezone("America/New_York")
     except Exception:
         tz = None
-
     if session_date is None:
         session_date = pd.Timestamp.utcnow().tz_localize("UTC") if tz is None else pd.Timestamp.now(tz)
     session_date = pd.to_datetime(session_date).date()
@@ -154,14 +141,12 @@ def _session_timerange(session_date: Optional[Union[str, pd.Timestamp]]) -> Tupl
 def _format_date_for_footer(dt: pd.Timestamp) -> str:
     return dt.strftime("%b %d, %Y")
 
-def _make_tick_annotations(fig, y_vals: Iterable[float], x_left, y_min, y_max):
-    """Рисует белые подписи слева для тех y, где есть уровни (чтобы отличать от серых тиков)."""
+def _make_tick_annotations(fig, y_vals: Iterable[float], x_left):
     used = set()
     for y in y_vals:
         if not np.isfinite(y):
             continue
         y_ = float(y)
-        # избегаем дубликатов в пределах 0.05
         key = round(y_, 2)
         if key in used:
             continue
@@ -194,10 +179,8 @@ def render_key_levels(
 
     # --- Вычисляем уровни ---
     cols = df_final.columns
-    # что брать для AG/NetGEX — *_1pct или *_1pct_M
     y_ag  = "AG_1pct_M"     if "AG_1pct_M"     in cols else ("AG_1pct"     if "AG_1pct"     in cols else None)
     y_ng  = "NetGEX_1pct_M" if "NetGEX_1pct_M" in cols else ("NetGEX_1pct" if "NetGEX_1pct" in cols else None)
-    # OI/Vol
     has_call_oi = "call_oi" in cols
     has_put_oi  = "put_oi"  in cols
     has_call_vol= "call_vol" in cols
@@ -230,8 +213,7 @@ def render_key_levels(
 
     # --- Временная ось ---
     t0, t1, t_idx = _session_timerange(session_date)
-    x_left = t0
-    x_right = t1
+    x_left, x_right = t0, t1
 
     # --- Готовим фигуру ---
     fig = go.Figure()
@@ -241,7 +223,6 @@ def render_key_levels(
         margin=dict(l=60, r=110, t=40, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
     )
-    # Серые тики по Y
     fig.update_yaxes(
         tickfont=dict(color=AXIS_GRAY, size=10),
         gridcolor=GRID_COLOR,
@@ -259,13 +240,12 @@ def render_key_levels(
         range=[x_left, x_right],
     )
 
-    # --- Price / VWAP (если даны) ---
+    # --- Price / VWAP (если есть) ---
     show_price = st.toggle("Price", value=True, key=(f"{toggle_key}__price" if toggle_key else "kl_price"))
     show_vwap  = st.toggle("VWAP",  value=True, key=(f"{toggle_key}__vwap"  if toggle_key else "kl_vwap"))
     if price_df is not None and not price_df.empty:
         pdf = price_df.copy()
         if "time" not in pdf.columns:
-            # попробуем распознать индекс как время
             pdf = pdf.reset_index().rename(columns={pdf.columns[0]: "time"})
         pdf["time"] = pd.to_datetime(pdf["time"])
         pdf = pdf[(pdf["time"] >= x_left) & (pdf["time"] <= x_right)]
@@ -281,7 +261,6 @@ def render_key_levels(
             if "vwap" in pdf.columns:
                 vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
             elif {"price","volume"}.issubset(set(pdf.columns)):
-                # простая онлайн‑оценка vwap
                 vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
                 pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
                 cum_vol = vol.cumsum().replace(0, np.nan)
@@ -298,7 +277,6 @@ def render_key_levels(
                 ))
 
     # --- Горизонтальные уровни ---
-    # Цвета по легендам
     color_map = {
         "Max Pos GEX": COLOR_MAX_POS_GEX,
         "Max Neg GEX": COLOR_MAX_NEG_GEX,
@@ -311,6 +289,24 @@ def render_key_levels(
         "G-Flip": COLOR_GFLIP,
     }
 
+    # Пустые трейсы для фиксированной легенды (всегда показываем все серии из ТЗ)
+    for _name, _color in [
+        ("Price", COLOR_PRICE),
+        ("VWAP", COLOR_VWAP),
+        ("Max Neg GEX", COLOR_MAX_NEG_GEX),
+        ("Max Pos GEX", COLOR_MAX_POS_GEX),
+        ("Max Put OI", COLOR_PUT_OI),
+        ("Max Call OI", COLOR_CALL_OI),
+        ("Max Put Volume", COLOR_PUT_VOL),
+        ("Max Call Volume", COLOR_CALL_VOL),
+        ("AG", COLOR_AG),
+        ("PZ", COLOR_PZ),
+        ("G-Flip", COLOR_GFLIP),
+    ]:
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
+                                 line=dict(color=_color, width=1.4),
+                                 name=_name, hoverinfo="skip", showlegend=True))
+
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
     groups: Dict[float, List[str]] = {}
@@ -318,7 +314,6 @@ def render_key_levels(
         if val is None or not np.isfinite(val):
             continue
         y = float(val)
-        # поиск существующей группы
         found_key = None
         for key in list(groups.keys()):
             if abs(y - key) <= eps:
@@ -329,14 +324,13 @@ def render_key_levels(
         else:
             groups[found_key].append(name)
 
-    # Диапазон Y — вокруг мин/макс уровней (добавим небольшой паддинг)
+    # Диапазон Y
     all_levels = [float(v) for v in groups.keys()]
     if all_levels:
         y_min = min(all_levels) - 3
         y_max = max(all_levels) + 3
     else:
-        # фолбэк — по S
-        S_vals = pd.to_numeric(df_final.get("S"), errors="coerce").dropna().tolist()
+        S_vals = pd.to_numeric(df_final.get("S"), errors="coerce").dropna().tolist() if "S" in df_final.columns else []
         if S_vals:
             s = float(np.median(S_vals))
             y_min, y_max = s - 10.0, s + 10.0
@@ -344,52 +338,27 @@ def render_key_levels(
             y_min, y_max = 0.0, 1.0
     fig.update_yaxes(range=[y_min, y_max])
 
-    # Линии и легенды
-    for name, members in groups.items():
-        y = float(name)
-        # для тех серий, что входят в эту линию, добавим по одному trace с легендой (покажется один раз)
-        # для визуала рисуем одну линию цветом первой серии (или G-Flip цветом для G-Flip)
+    # Линии и подписи справа
+    for y, members in sorted(groups.items(), key=lambda kv: kv[0]):
         labels_sorted = sorted(members, key=lambda s: s)
-        # определим цвет: если среди members есть G-Flip — берём серый; иначе по первому приоритету
         if "G-Flip" in labels_sorted:
             color = COLOR_GFLIP
         else:
-            # приоритет: Max Pos/Neg, затем AG/PZ, затем OI/Vol
             prio = ["Max Neg GEX", "Max Pos GEX", "AG", "PZ", "Max Put OI", "Max Call OI", "Max Put Volume", "Max Call Volume"]
-            pick = None
-            for p in prio:
-                if p in labels_sorted:
-                    pick = p; break
-            pick = pick or labels_sorted[0]
+            pick = next((p for p in prio if p in labels_sorted), labels_sorted[0])
             color = color_map.get(pick, "#CCCCCC")
 
         fig.add_shape(
             type="line",
             x0=x_left, x1=x_right, xref="x",
-            y0=y, y1=y, yref="y",
+            y0=float(y), y1=float(y), yref="y",
             line=dict(color=color, width=1.4, dash="solid"),
             layer="below",
         )
-        # Добавим «фиктивный» trace для легенды со списком входящих серий
-        legend_name = ", ".join(labels_sorted) if len(labels_sorted) <= 2 else " + ".join(labels_sorted)
-        fig.add_trace(go.Scatter(
-            x=[x_left, x_right], y=[y, y],
-            mode="lines",
-            line=dict(width=0),  # линия прозрачная — только для легенды
-            name=legend_name,
-            hoverinfo="skip",
-            showlegend=True,
-        ))
-
-    # Подписи справа: объединяем названия серий на этой линии
-    x_annot = x_right
-    for y, members in sorted(groups.items(), key=lambda kv: kv[0], reverse=True):
-        text = " + ".join(sorted(members))
-        # Для читаемости добавим слегка контрастный прямоугольник позади текста — через bgcolor
         fig.add_annotation(
-            x=x_annot, xref="x",
+            x=x_right, xref="x",
             y=float(y), yref="y",
-            text=text,
+            text=" + ".join(labels_sorted),
             showarrow=False,
             xanchor="left", yanchor="middle",
             align="left",
@@ -399,10 +368,10 @@ def render_key_levels(
             borderwidth=0.5,
         )
 
-    # Белые подписи‑тиков слева там, где лежат уровни
-    _make_tick_annotations(fig, groups.keys(), x_left, y_min, y_max)
+    # Белые подписи‑тиков слева
+    _make_tick_annotations(fig, groups.keys(), x_left)
 
-    # Заголовок (слева вверху) — тикер
+    # Заголовок (тикер)
     fig.add_annotation(
         x=0, xref="paper", y=1.12, yref="paper",
         text=str(ticker),
@@ -418,5 +387,4 @@ def render_key_levels(
         font=dict(size=10, color="#FFFFFF"),
     )
 
-    # Рендер
     st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
