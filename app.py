@@ -94,20 +94,26 @@ def _get_api_key() -> str | None:
 
 # --- UI: Controls -------------------------------------------------------------
 
-
-
 api_key = _get_api_key()
 if not api_key:
     st.error("POLYGON_API_KEY не задан в Streamlit Secrets или переменных окружения.")
     st.stop()
 
-col1, col2, col3 = st.columns([1.2, 1, 1])
 
-with col1:
-    ticker = st.text_input("Тикер", value=st.session_state.get("ticker", "SPY")).strip().upper()
-    st.session_state["ticker"] = ticker
 
-with col2:
+# --- Input state helpers ------------------------------------------------------
+if "ticker" not in st.session_state:
+    st.session_state["ticker"] = "SPY"
+
+def _normalize_ticker():
+    t = st.session_state.get("ticker", "")
+    st.session_state["ticker"] = (t or "").strip().upper()
+
+# --- Controls moved to sidebar ----------------------------------------------
+with st.sidebar:
+    st.text_input("Тикер", key="ticker", on_change=_normalize_ticker)
+    ticker = st.session_state.get("ticker", "")
+
     # Получаем список будущих экспираций под выбранный тикер
     expirations: list[str] = st.session_state.get(f"expirations:{ticker}", [])
     if not expirations and ticker:
@@ -133,11 +139,9 @@ with col2:
         else:
             selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
             weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
-
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
-
 
 
 # --- Data fetch ---------------------------------------------------------------
@@ -171,18 +175,23 @@ if snapshot_js:
 else:
     st.sidebar.info("Выберите тикер и дату экспирации, чтобы загрузить snapshot и скачать JSON.")
 
+# --- Download tables button placeholder (below raw JSON) ---------------------
+dl_tables_container = st.sidebar.empty()
+
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
 if ticker:
     try:
         S, ts_ms, src = get_spot_price(ticker, api_key)
+        # spot caption hidden per UI request
     except Exception:
         S = None
 # 3) из snapshot (fallback)
 if S is None and raw_records:
     S = _infer_spot_from_snapshot(raw_records)
     if S:
-        pass
+        # spot fallback caption hidden per UI request
+
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
     try:
@@ -319,8 +328,7 @@ if raw_records:
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
-                            st.sidebar.download_button(
-        "Скачать таблицы",
+                            dl_tables_container.download_button("Скачать таблицы",
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
@@ -434,7 +442,7 @@ if raw_records:
                         return bio
                     exp_str = expiration if 'expiration' in locals() else 'exp'
                     zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
-                    st.sidebar.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+                    dl_tables_container.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
                 except Exception as _e_zip_single:
                     st.warning('Не удалось подготовить ZIP с таблицами (single).')
                     st.exception(_e_zip_single)
