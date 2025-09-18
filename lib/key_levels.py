@@ -234,20 +234,24 @@ def render_key_levels(
         tickfont=dict(color=AXIS_GRAY, size=10),
         gridcolor=GRID_COLOR,
         zeroline=False,
+        type="date",
         title=dict(text="Time", font=dict(color="#FFFFFF", size=11)),
         range=[x_left, x_right],
     )
 
+    # Принудительно закрепим тип оси X как временной: добавим «пустой» временной трейс
+    fig.add_trace(go.Scatter(x=[x_left, x_right], y=[None, None], mode="lines",
+                             line=dict(width=0), hoverinfo="skip", showlegend=False))
+
     # --- Price / VWAP (если есть) ---
-    show_price = st.toggle("Price", value=True, key=(f"{toggle_key}__price" if toggle_key else "kl_price"))
-    show_vwap  = st.toggle("VWAP",  value=True, key=(f"{toggle_key}__vwap"  if toggle_key else "kl_vwap"))
     if price_df is not None and not price_df.empty:
         pdf = price_df.copy()
         if "time" not in pdf.columns:
             pdf = pdf.reset_index().rename(columns={pdf.columns[0]: "time"})
         pdf["time"] = pd.to_datetime(pdf["time"])
         pdf = pdf[(pdf["time"] >= x_left) & (pdf["time"] <= x_right)]
-        if show_price and "price" in pdf.columns:
+        # Price
+        if "price" in pdf.columns:
             fig.add_trace(go.Scatter(
                 x=pdf["time"], y=pd.to_numeric(pdf["price"], errors="coerce"),
                 mode="lines",
@@ -255,25 +259,24 @@ def render_key_levels(
                 name="Price",
                 hovertemplate="Time: %{x|%H:%M}<br>Price: %{y:.2f}<extra></extra>",
             ))
-        if show_vwap:
-            if "vwap" in pdf.columns:
-                vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
-            elif {"price","volume"}.issubset(set(pdf.columns)):
-                vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
-                pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
-                cum_vol = vol.cumsum().replace(0, np.nan)
-                vwap_series = (pr.mul(vol)).cumsum() / cum_vol
-            else:
-                vwap_series = None
-            if vwap_series is not None:
-                fig.add_trace(go.Scatter(
-                    x=pdf["time"], y=vwap_series,
-                    mode="lines",
-                    line=dict(width=1.0, color=COLOR_VWAP, dash="solid"),
-                    name="VWAP",
-                    hovertemplate="Time: %{x|%H:%M}<br>VWAP: %{y:.2f}<extra></extra>",
-                ))
-
+        # VWAP
+        if "vwap" in pdf.columns:
+            vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
+        elif set(["price","volume"]).issubset(set(pdf.columns)):
+            vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
+            pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
+            cum_vol = vol.cumsum().replace(0, np.nan)
+            vwap_series = (pr.mul(vol)).cumsum() / cum_vol
+        else:
+            vwap_series = None
+        if vwap_series is not None:
+            fig.add_trace(go.Scatter(
+                x=pdf["time"], y=vwap_series,
+                mode="lines",
+                line=dict(width=1.0, color=COLOR_VWAP, dash="solid"),
+                name="VWAP",
+                hovertemplate="Time: %{x|%H:%M}<br>VWAP: %{y:.2f}<extra></extra>",
+            ))
     # --- Горизонтальные уровни ---
     color_map = {
         "Max Pos GEX": COLOR_MAX_POS_GEX,
