@@ -176,15 +176,13 @@ S: float | None = None
 if ticker:
     try:
         S, ts_ms, src = get_spot_price(ticker, api_key)
-        ")
     except Exception:
         S = None
 # 3) из snapshot (fallback)
 if S is None and raw_records:
     S = _infer_spot_from_snapshot(raw_records)
     if S:
-        ")
-
+        pass
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
     try:
@@ -321,8 +319,7 @@ if raw_records:
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
-                            with st.sidebar:
-    st.download_button(
+                            st.sidebar.download_button(
         "Скачать таблицы",
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
@@ -437,8 +434,7 @@ if raw_records:
                         return bio
                     exp_str = expiration if 'expiration' in locals() else 'exp'
                     zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
-                    with st.sidebar:
-    st.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+                    st.sidebar.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
                 except Exception as _e_zip_single:
                     st.warning('Не удалось подготовить ZIP с таблицами (single).')
                     st.exception(_e_zip_single)
