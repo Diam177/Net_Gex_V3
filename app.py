@@ -17,15 +17,10 @@ def _st_hide_subheader(*args, **kwargs):
     return None
 from lib.netgex_chart import render_netgex_bars
 
-# Optional: Key Levels chart
-try:
-    from lib.key_levels import render_key_levels as _render_key_levels
-except Exception:
-    _render_key_levels = None
-
 # Project imports
 from lib.sanitize_window import sanitize_and_window_pipeline
 from lib.tiker_data import (
+from lib.key_levels import render_key_levels_with_controls
     list_future_expirations,
     download_snapshot_json,
     get_spot_price,
@@ -99,8 +94,6 @@ def _get_api_key() -> str | None:
 
 
 # --- UI: Controls -------------------------------------------------------------
-st.sidebar.markdown("### Действия")
-st.markdown("## Главная · Выбор тикера/экспирации и просмотр df_raw")
 
 api_key = _get_api_key()
 if not api_key:
@@ -151,7 +144,6 @@ with st.sidebar:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
 
-st.divider()
 
 # --- Data fetch ---------------------------------------------------------------
 raw_records: List[Dict] | None = None
@@ -184,19 +176,23 @@ if snapshot_js:
 else:
     st.sidebar.info("Выберите тикер и дату экспирации, чтобы загрузить snapshot и скачать JSON.")
 
+# --- Download tables button placeholder (below raw JSON) ---------------------
+dl_tables_container = st.sidebar.empty()
+
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
 if ticker:
     try:
         S, ts_ms, src = get_spot_price(ticker, api_key)
-        st.caption(f"Spot {S} (источник: {src})")
+        # spot caption hidden per UI request
     except Exception:
         S = None
 # 3) из snapshot (fallback)
 if S is None and raw_records:
     S = _infer_spot_from_snapshot(raw_records)
     if S:
-        st.caption(f"Spot ~{S:.2f} (оценка по ATM-страйкам из snapshot)")
+        # spot fallback caption hidden per UI request
+        pass
 
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
@@ -334,8 +330,7 @@ if raw_records:
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
-                            st.download_button(
-                                "Скачать таблицы",
+                            dl_tables_container.download_button("Скачать таблицы",
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
@@ -449,7 +444,7 @@ if raw_records:
                         return bio
                     exp_str = expiration if 'expiration' in locals() else 'exp'
                     zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
-                    st.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+                    dl_tables_container.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
                 except Exception as _e_zip_single:
                     st.warning('Не удалось подготовить ZIP с таблицами (single).')
                     st.exception(_e_zip_single)
@@ -569,24 +564,13 @@ if raw_records:
                             render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
                         except Exception as _chart_em:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
-
-# --- Key Levels chart (below the main chart) ---
-if '_render_key_levels' in globals() and _render_key_levels and 'df_final' in locals():
-    try:
-        # Prefer side-effect renderer
-        _render_key_levels(df_final=df_final, S=S if 'S' in locals() else None)
-    except TypeError:
-        # Fallback: if function returns a Plotly figure
-        try:
-            _fig_kl = _render_key_levels(df_final, S if 'S' in locals() else None)
-            if _fig_kl is not None:
-                st.plotly_chart(_fig_kl, use_container_width=True, config={"displayModeBar": False})
-        except Exception:
-            pass
-    except Exception:
-        pass
-
                             st.exception(_chart_em)
+                        # --- Key Levels chart (Multi) ---
+                        try:
+                            render_key_levels_with_controls(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None)
+                        except Exception as _chart_klm:
+                            st.error('Не удалось отобразить чарт Key Levels (Multi)')
+                            st.exception(_chart_klm)
 
                     else:
                         # --- SINGLE режим: как было ---
@@ -603,24 +587,13 @@ if '_render_key_levels' in globals() and _render_key_levels and 'df_final' in lo
                                     render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
                                 except Exception as _chart_e:
                                     st.error('Не удалось отобразить чарт Net GEX')
-
-# --- Key Levels chart (below the main chart) ---
-if '_render_key_levels' in globals() and _render_key_levels and 'df_final' in locals():
-    try:
-        # Prefer side-effect renderer
-        _render_key_levels(df_final=df_final, S=S if 'S' in locals() else None)
-    except TypeError:
-        # Fallback: if function returns a Plotly figure
-        try:
-            _fig_kl = _render_key_levels(df_final, S if 'S' in locals() else None)
-            if _fig_kl is not None:
-                st.plotly_chart(_fig_kl, use_container_width=True, config={"displayModeBar": False})
-        except Exception:
-            pass
-    except Exception:
-        pass
-
                                     st.exception(_chart_e)
+                                # --- Key Levels chart ---
+                                try:
+                                    render_key_levels_with_controls(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None)
+                                except Exception as _chart_kl:
+                                    st.error('Не удалось отобразить чарт Key Levels')
+                                    st.exception(_chart_kl)
                             else:
                                 st.info("Финальная таблица пуста для выбранной экспирации.")
             except Exception as _e:
