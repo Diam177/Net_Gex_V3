@@ -227,16 +227,14 @@ def render_key_levels(
         tickfont=dict(color=AXIS_GRAY, size=10),
         gridcolor=GRID_COLOR,
         zeroline=False,
-        title_text="Price",
-        titlefont=dict(color="#FFFFFF", size=11),
+        title=dict(text="Price", font=dict(color="#FFFFFF", size=11)),
     )
     fig.update_xaxes(
         tickformat="%H:%M",
         tickfont=dict(color=AXIS_GRAY, size=10),
         gridcolor=GRID_COLOR,
         zeroline=False,
-        title_text="Time",
-        titlefont=dict(color="#FFFFFF", size=11),
+        title=dict(text="Time", font=dict(color="#FFFFFF", size=11)),
         range=[x_left, x_right],
     )
 
