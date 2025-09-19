@@ -238,6 +238,7 @@ def render_key_levels(
         paper_bgcolor=BACKGROUND,
         plot_bgcolor=BACKGROUND,
         margin=dict(l=60, r=110, t=40, b=60),
+        height=800,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
     )
     fig.update_yaxes(
