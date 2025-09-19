@@ -217,11 +217,11 @@ def render_key_levels(
 
     # --- Готовим фигуру ---
     fig = go.Figure()
-    fig.update_layout(
+    fig.update_layout(dragmode=False, 
         paper_bgcolor=BACKGROUND,
         plot_bgcolor=BACKGROUND,
         margin=dict(l=60, r=110, t=40, b=60),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10), itemclick="toggle", itemdoubleclick="toggleothers"),
     )
     fig.update_yaxes(
         tickfont=dict(color=AXIS_GRAY, size=10),
@@ -237,6 +237,7 @@ def render_key_levels(
         type="date",
         title=dict(text="Time", font=dict(color="#FFFFFF", size=11)),
         range=[x_left, x_right],
+        fixedrange=True,
     )
 
     # Принудительно закрепим тип оси X как временной: добавим «пустой» временной трейс
@@ -244,44 +245,42 @@ def render_key_levels(
                              line=dict(width=0), hoverinfo="skip", showlegend=False))
 
     # --- Price / VWAP (если есть) ---
-    present_series = set()
     if price_df is not None and not price_df.empty:
         pdf = price_df.copy()
         if "time" not in pdf.columns:
             pdf = pdf.reset_index().rename(columns={pdf.columns[0]: "time"})
         pdf["time"] = pd.to_datetime(pdf["time"])
         pdf = pdf[(pdf["time"] >= x_left) & (pdf["time"] <= x_right)]
-        # Candlesticks if OHLC present
-        if set(["open","high","low","close"]).issubset(set(pdf.columns)):
-            fig.add_trace(go.Candlestick(
-                x=pdf["time"], open=pdf["open"], high=pdf["high"], low=pdf["low"], close=pdf["close"],
-                name="Price", showlegend=True,
-            ))
-            present_series.add("Price")
-        elif "price" in pdf.columns:
+        # Price
+        if "price" in pdf.columns:
             fig.add_trace(go.Scatter(
                 x=pdf["time"], y=pd.to_numeric(pdf["price"], errors="coerce"),
-                mode="lines", line=dict(width=1.2, color=COLOR_PRICE),
+                mode="lines",
+                line=dict(width=1.2, color=COLOR_PRICE),
                 name="Price",
+                hovertemplate="Time: %{x|%H:%M}<br>Price: %{y:.2f}<extra></extra>",
             ))
-            present_series.add("Price")
         # VWAP
         if "vwap" in pdf.columns:
             vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
         elif set(["price","volume"]).issubset(set(pdf.columns)):
             vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
-            pr  = pd.to_numeric(pdf.get("close", pdf.get("price")), errors="coerce").fillna(np.nan)
+            pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
             cum_vol = vol.cumsum().replace(0, np.nan)
             vwap_series = (pr.mul(vol)).cumsum() / cum_vol
         else:
             vwap_series = None
         if vwap_series is not None:
             fig.add_trace(go.Scatter(
-                x=pdf["time"], y=vwap_series, mode="lines",
+                x=pdf["time"], y=vwap_series,
+                mode="lines",
                 line=dict(width=1.0, color=COLOR_VWAP, dash="solid"),
                 name="VWAP",
+                hovertemplate="Time: %{x|%H:%M}<br>VWAP: %{y:.2f}<extra></extra>",
             ))
-            present_series.add("VWAP")
+    else:
+        fig.add_annotation(x=0.5, xref="paper", y=0.5, yref="paper", text="Market closed", showarrow=False, xanchor="center", yanchor="middle", font=dict(size=16, color="#AAAAAA"))
+
     # --- Горизонтальные уровни ---
     color_map = {
         "Max Pos GEX": COLOR_MAX_POS_GEX,
@@ -295,26 +294,8 @@ def render_key_levels(
         "G-Flip": COLOR_GFLIP,
     }
 
-        # Пустые трейсы для фиксированной легенды (добавляем только отсутствующие)
-    _legend_items = [
-        ("Price", COLOR_PRICE),
-        ("VWAP", COLOR_VWAP),
-        ("Max Neg GEX", COLOR_MAX_NEG_GEX),
-        ("Max Pos GEX", COLOR_MAX_POS_GEX),
-        ("Max Put OI", COLOR_PUT_OI),
-        ("Max Call OI", COLOR_CALL_OI),
-        ("Max Put Volume", COLOR_PUT_VOL),
-        ("Max Call Volume", COLOR_CALL_VOL),
-        ("AG", COLOR_AG),
-        ("PZ", COLOR_PZ),
-        ("G-Flip", COLOR_GFLIP),
-    ]
-    for _name, _color in _legend_items:
-        if _name in present_series:
-            continue
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
-                                 line=dict(color=_color, width=1.4),
-                                 name=_name, hoverinfo="skip", showlegend=True))
+    # Плейсхолдеры легенды отключены
+
 
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
@@ -345,7 +326,12 @@ def render_key_levels(
             y_min, y_max = s - 10.0, s + 10.0
         else:
             y_min, y_max = 0.0, 1.0
-    fig.update_yaxes(range=[y_min, y_max])
+    
+        # Все значения страйков из окна по оси Y
+        _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist()
+        _Ks_all = sorted(float(k) for k in _Ks_all)
+        _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
+        fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks], fixedrange=True)
 
     # Линии и подписи справа
     for y, members in sorted(groups.items(), key=lambda kv: kv[0]):
@@ -357,20 +343,15 @@ def render_key_levels(
             pick = next((p for p in prio if p in labels_sorted), labels_sorted[0])
             color = color_map.get(pick, "#CCCCCC")
 
-        fig.add_shape(
-            type="line",
-            x0=x_left, x1=x_right, xref="x",
-            y0=float(y), y1=float(y), yref="y",
-            line=dict(color=color, width=1.4, dash="solid"),
-            layer="below",
-        )
+        fig.add_trace(go.Scatter(x=[x_left, x_right], y=[float(y), float(y)], mode="lines", line=dict(color=color, width=1.4, dash="solid"), name=" + ".join(labels_sorted), showlegend=True))
         fig.add_annotation(
             x=x_right, xref="x",
             y=float(y), yref="y",
             text=" + ".join(labels_sorted),
             showarrow=False,
-            xanchor="left", yanchor="middle",
-            align="left",
+            xanchor="right", yanchor="bottom",
+            align="right",
+            yshift=6,
             font=dict(size=10, color="#FFFFFF"),
             bgcolor="rgba(0,0,0,0.35)",
             bordercolor="rgba(255,255,255,0.15)",
@@ -378,7 +359,7 @@ def render_key_levels(
         )
 
     # Белые подписи‑тиков слева
-    _make_tick_annotations(fig, groups.keys(), x_left)
+    _make_tick_annotations(fig, _y_ticks, x_left)
 
     # Заголовок (тикер)
     fig.add_annotation(
@@ -390,7 +371,7 @@ def render_key_levels(
 
     # Дата под осью
     fig.add_annotation(
-        x=0.5, xref="paper", y=-0.18, yref="paper",
+        x=0.5, xref="paper", y=-0.12, yref="paper",
         text=_format_date_for_footer(pd.to_datetime(x_left)),
         showarrow=False, xanchor="center", yanchor="top",
         font=dict(size=10, color="#FFFFFF"),
