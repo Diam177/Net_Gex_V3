@@ -290,24 +290,7 @@ def render_key_levels(
         "G-Flip": COLOR_GFLIP,
     }
 
-    # Пустые трейсы для фиксированной легенды (всегда показываем все серии из ТЗ)
-    for _name, _color in [
-        ("Price", COLOR_PRICE),
-        ("VWAP", COLOR_VWAP),
-        ("Max Neg GEX", COLOR_MAX_NEG_GEX),
-        ("Max Pos GEX", COLOR_MAX_POS_GEX),
-        ("Max Put OI", COLOR_PUT_OI),
-        ("Max Call OI", COLOR_CALL_OI),
-        ("Max Put Volume", COLOR_PUT_VOL),
-        ("Max Call Volume", COLOR_CALL_VOL),
-        ("AG", COLOR_AG),
-        ("PZ", COLOR_PZ),
-        ("G-Flip", COLOR_GFLIP),
-    ]:
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
-                                 line=dict(color=_color, width=1.4),
-                                 name=_name, hoverinfo="skip", showlegend=True))
-
+    # Плейсхолдеры легенды удалены
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
     groups: Dict[float, List[str]] = {}
