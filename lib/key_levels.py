@@ -27,21 +27,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-
-# Фиксированный порядок легенды для всех трейсов (глобально)
-LEGEND_RANK = {
-    "Price": 10,
-    "VWAP": 20,
-    "G-Flip": 30,
-    "N1": 40,
-    "P1": 50,
-    "Put OI": 60,
-    "Call OI": 70,
-    "Put Vol": 80,
-    "Call Vol": 90,
-    "AG": 100,
-    "PZ": 110,
-}
 # --- Цвета (совместимые с netgex_chart.py) ---
 COLOR_PUT_OI    = "#800020"
 COLOR_CALL_OI   = "#2ECC71"
@@ -185,8 +170,6 @@ def render_key_levels(
 ) -> None:
     import plotly.graph_objects as go
 
-
-
     if df_final is None or getattr(df_final, "empty", True):
         st.info("Нет данных для графика Key Levels.")
         return
@@ -237,8 +220,7 @@ def render_key_levels(
     fig.update_layout(
         paper_bgcolor=BACKGROUND,
         plot_bgcolor=BACKGROUND,
-        margin=dict(l=60, r=110, t=40, b=90),
-        height=800,
+        margin=dict(l=60, r=110, t=40, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
     )
     fig.update_yaxes(
@@ -257,9 +239,6 @@ def render_key_levels(
         range=[x_left, x_right],
     )
 
-    # Disable range slider under X-axis
-    fig.update_xaxes(rangeslider=dict(visible=False))
-
     # Принудительно закрепим тип оси X как временной: добавим «пустой» временной трейс
     fig.add_trace(go.Scatter(x=[x_left, x_right], y=[None, None], mode="lines",
                              line=dict(width=0), hoverinfo="skip", showlegend=False))
@@ -271,27 +250,18 @@ def render_key_levels(
             pdf = pdf.reset_index().rename(columns={pdf.columns[0]: "time"})
         pdf["time"] = pd.to_datetime(pdf["time"])
         pdf = pdf[(pdf["time"] >= x_left) & (pdf["time"] <= x_right)]
-        # Price (Candles if OHLC available)
-        has_ohlc = {"open","high","low","close"}.issubset(set(pdf.columns))
-        if has_ohlc:
-            fig.add_trace(go.Candlestick(
-                x=pdf["time"], open=pd.to_numeric(pdf["open"], errors="coerce"),
-                high=pd.to_numeric(pdf["high"], errors="coerce"),
-                low=pd.to_numeric(pdf["low"], errors="coerce"),
-                close=pd.to_numeric(pdf["close"], errors="coerce"),
-                name="Price", showlegend=True, legendrank=LEGEND_RANK.get("Price", 10),
-                increasing_line_width=1, decreasing_line_width=1,
-            ))
-        elif "price" in pdf.columns:
+        # Стабилизация VWAP: сортировка и удаление дубликатов по времени
+        pdf = pdf.sort_values("time").drop_duplicates(subset="time", keep="last")
+        # Price
+        if "price" in pdf.columns:
             fig.add_trace(go.Scatter(
                 x=pdf["time"], y=pd.to_numeric(pdf["price"], errors="coerce"),
                 mode="lines",
                 line=dict(width=1.2, color=COLOR_PRICE),
                 name="Price",
                 hovertemplate="Time: %{x|%H:%M}<br>Price: %{y:.2f}<extra></extra>",
-                showlegend=True, legendrank=LEGEND_RANK.get("Price", 10),
             ))
-# VWAP
+        # VWAP
         if "vwap" in pdf.columns:
             vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
         elif set(["price","volume"]).issubset(set(pdf.columns)):
@@ -306,7 +276,7 @@ def render_key_levels(
                 x=pdf["time"], y=vwap_series,
                 mode="lines",
                 line=dict(width=1.0, color=COLOR_VWAP, dash="solid"),
-                name="VWAP", showlegend=True, legendrank=LEGEND_RANK.get("VWAP", 20),
+                name="VWAP",
                 hovertemplate="Time: %{x|%H:%M}<br>VWAP: %{y:.2f}<extra></extra>",
             ))
     # --- Горизонтальные уровни ---
@@ -329,8 +299,8 @@ def render_key_levels(
         "Max Pos GEX": "P1",
         "Max Put OI": "Put OI",
         "Max Call OI": "Call OI",
-        "Max Put Volume": "Put Vol",
-        "Max Call Volume": "Call Vol",
+        "Max Put Volume": "Put Volume",
+        "Max Call Volume": "Call Volume",
         "AG": "AG",
         "PZ": "PZ",
         "G-Flip": "G-Flip",
@@ -382,24 +352,6 @@ def render_key_levels(
     _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []
     _Ks_all = sorted(float(k) for k in _Ks_all)
     _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
-    
-    # Расширяем диапазон на ±2 шага страйка, если уровни не на крайних страйках окна
-    try:
-        Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
-        if len(Ks) >= 2:
-            diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
-            step = diffs[0] if diffs else None
-            minK, maxK = Ks[0], Ks[-1]
-            level_vals = [float(v) for v in (level_map or {}).values() if v is not None and np.isfinite(v)]
-            on_edge = any(abs(v - minK) < 1e-6 or abs(v - maxK) < 1e-6 for v in level_vals)
-            if step and not on_edge:
-                y_min = float(min(y_min, minK - 2*step))
-                y_max = float(max(y_max, maxK + 2*step))
-                extra_ticks = [minK - 2*step, minK - step, maxK + step, maxK + 2*step]
-                _y_ticks = sorted(set([k for k in Ks if (k >= y_min) and (k <= y_max)] + extra_ticks))
-    except Exception:
-        pass
-
     fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
 
     # Линии и подписи справа
@@ -420,19 +372,17 @@ def render_key_levels(
             fig.add_trace(go.Scatter(
                 x=[x_left, x_right], y=[float(y), float(y)],
                 mode="lines",
-                line=dict(color=_clr, width=1.4, dash=("dash" if _orig in {"AG","PZ","G-Flip"} else "solid")),
+                line=dict(color=_clr, width=1.4, dash="solid"),
                 name=_nm, showlegend=True,
-                legendrank=LEGEND_RANK.get(display_name_map.get(_orig, _orig), 999),
             ))
-        # Сводная подпись справа (над линией, у правого края)
+        # Сводная подпись справа остаётся
         fig.add_annotation(
-            x=1.0, xref="paper",
+            x=x_right, xref="x",
             y=float(y), yref="y",
             text=" + ".join([display_name_map.get(n,n) for n in labels_sorted]),
             showarrow=False,
-            xanchor="right", yanchor="bottom",
-            yshift=6,
-            align="right",
+            xanchor="left", yanchor="middle",
+            align="left",
             font=dict(size=10, color="#FFFFFF"),
             bgcolor="rgba(0,0,0,0.35)",
             borderwidth=0.5,
@@ -451,27 +401,10 @@ def render_key_levels(
 
     # Дата под осью
     fig.add_annotation(
-        x=0.0, xref="paper", y=-0.12, yref="paper",
+        x=0.5, xref="paper", y=-0.18, yref="paper",
         text=_format_date_for_footer(pd.to_datetime(x_left)),
-        showarrow=False, xanchor="left", yanchor="top",
+        showarrow=False, xanchor="center", yanchor="top",
         font=dict(size=10, color="#FFFFFF"),
     )
 
-    # Оверлей "Market closed" после 16:00 ET
-    try:
-        import pytz
-        tz = pytz.timezone("America/New_York")
-        now_et = pd.Timestamp.now(tz)
-        if now_et > x_right:
-            fig.add_annotation(x=0.5, y=0.5, xref="paper", yref="paper", text="Market closed",
-                                showarrow=False, opacity=0.85,
-                                font=dict(size=28, color="#888888"))
-    except Exception:
-        pass
-
-    # Запрет масштабирования
-    fig.update_xaxes(fixedrange=True)
-    fig.update_yaxes(fixedrange=True)
-
-    st.plotly_chart(fig, use_container_width=True, theme=None,
-                    config={"displayModeBar": False, "scrollZoom": False})
+    st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
