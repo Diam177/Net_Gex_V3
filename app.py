@@ -31,17 +31,32 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
         return None
     tz = pytz.timezone("America/New_York")
     # Build dataframe
-    times = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
-    price = [x.get("c") for x in res]
-    volume = [x.get("v") for x in res]
-    vwap_api = [x.get("vw") for x in res]
-    df = pd.DataFrame({"time": times, "price": pd.to_numeric(price, errors="coerce"),
-                       "volume": pd.to_numeric(volume, errors="coerce")})
+    times   = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
+    price   = [x.get("c") for x in res]
+    volume  = [x.get("v") for x in res]
+    vwap_api= [x.get("vw") for x in res]
+    opens   = [x.get("o") for x in res]
+    highs   = [x.get("h") for x in res]
+    lows    = [x.get("l") for x in res]
+    closes  = [x.get("c") for x in res]
+    df = pd.DataFrame({
+        "time":   times,
+        "price":  pd.to_numeric(price,  errors="coerce"),
+        "volume": pd.to_numeric(volume, errors="coerce"),
+    })
+    # Add OHLC columns (used by candlesticks)
+    try:
+        df["open"]  = pd.to_numeric(opens,  errors="coerce")
+        df["high"]  = pd.to_numeric(highs,  errors="coerce")
+        df["low"]   = pd.to_numeric(lows,   errors="coerce")
+        df["close"] = pd.to_numeric(closes, errors="coerce")
+    except Exception:
+        pass
+    # VWAP: prefer API field 'vw', else compute cumulative
     if any(v is not None for v in vwap_api):
         vw = pd.Series(pd.to_numeric(vwap_api, errors="coerce"), index=df.index)
         vol = df["volume"].fillna(0.0)
         cum_vol = vol.cumsum().replace(0, pd.NA)
-        # Session VWAP: cumulative (bar_vw * volume) / cumulative volume
         df["vwap"] = (vw * vol).cumsum() / cum_vol
     else:
         vol = df["volume"].fillna(0.0)
