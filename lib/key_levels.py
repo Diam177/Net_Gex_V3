@@ -257,6 +257,9 @@ def render_key_levels(
         range=[x_left, x_right],
     )
 
+    # Disable range slider under X-axis
+    fig.update_xaxes(rangeslider=dict(visible=False))
+
     # Принудительно закрепим тип оси X как временной: добавим «пустой» временной трейс
     fig.add_trace(go.Scatter(x=[x_left, x_right], y=[None, None], mode="lines",
                              line=dict(width=0), hoverinfo="skip", showlegend=False))
