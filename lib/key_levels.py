@@ -27,6 +27,21 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+
+# Фиксированный порядок легенды для всех трейсов (глобально)
+LEGEND_RANK = {
+    "Price": 10,
+    "VWAP": 20,
+    "G-Flip": 30,
+    "N1": 40,
+    "P1": 50,
+    "Put OI": 60,
+    "Call OI": 70,
+    "Put Vol": 80,
+    "Call Vol": 90,
+    "AG": 100,
+    "PZ": 110,
+}
 # --- Цвета (совместимые с netgex_chart.py) ---
 COLOR_PUT_OI    = "#800020"
 COLOR_CALL_OI   = "#2ECC71"
@@ -169,6 +184,8 @@ def render_key_levels(
     toggle_key: Optional[str] = None,
 ) -> None:
     import plotly.graph_objects as go
+
+
 
     if df_final is None or getattr(df_final, "empty", True):
         st.info("Нет данных для графика Key Levels.")
@@ -314,21 +331,6 @@ def render_key_levels(
         "PZ": "PZ",
         "G-Flip": "G-Flip",
     }
-    # Ранги для фиксированного порядка легенды
-    LEGEND_RANK = {
-        "Price": 10,
-        "VWAP": 20,
-        "G-Flip": 30,
-        "N1": 40,
-        "P1": 50,
-        "Put OI": 60,
-        "Call OI": 70,
-        "Put Vol": 80,
-        "Call Vol": 90,
-        "AG": 100,
-        "PZ": 110,
-    }
-
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
