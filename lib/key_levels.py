@@ -327,11 +327,11 @@ def render_key_levels(
         else:
             y_min, y_max = 0.0, 1.0
     
-        # Все значения страйков из окна по оси Y
-        _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist()
-        _Ks_all = sorted(float(k) for k in _Ks_all)
-        _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
-        fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks], fixedrange=True)
+    # Все значения страйков из окна по оси Y
+    _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist()
+    _Ks_all = sorted(float(k) for k in _Ks_all)
+    _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
+    fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks], fixedrange=True)
 
     # Линии и подписи справа
     for y, members in sorted(groups.items(), key=lambda kv: kv[0]):
