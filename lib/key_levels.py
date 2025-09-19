@@ -271,6 +271,7 @@ def render_key_levels(
             pdf = pdf.reset_index().rename(columns={pdf.columns[0]: "time"})
         pdf["time"] = pd.to_datetime(pdf["time"])
         pdf = pdf[(pdf["time"] >= x_left) & (pdf["time"] <= x_right)]
+        pdf = pdf.sort_values("time").drop_duplicates(subset=["time"], keep="last")
         # Price (Candles if OHLC available)
         has_ohlc = {"open","high","low","close"}.issubset(set(pdf.columns))
         if has_ohlc:
