@@ -93,12 +93,12 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     if not expiration_date:
         raise ValueError("expiration_date не задана")
 
-    base = f"{POLYGON_BASE}/v3/snapshot/options/{t}?expiration_date={expiration_date}"
+    base = f"{POLYGON_BASE}/v3/snapshot/options/{t}?expiration_date={expiration_date}&limit=250"
     headers = _headers(api_key)
 
     all_results: List[dict] = []
     # Первая попытка — без limit (чтобы избежать известной ошибки 'Limit ... max')
-    for page in _get_with_cursor(base, headers, timeout, max_pages):
+    for page in _get_with_cursor(base, headers, timeout, 10000):
         results = page.get("results") or []
         all_results.extend(results)
 
