@@ -222,7 +222,6 @@ def render_key_levels(
         plot_bgcolor=BACKGROUND,
         margin=dict(l=60, r=110, t=40, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
-        dragmode=False,
     )
     fig.update_yaxes(
         tickfont=dict(color=AXIS_GRAY, size=10),
@@ -238,7 +237,6 @@ def render_key_levels(
         type="date",
         title=dict(text="Time", font=dict(color="#FFFFFF", size=11)),
         range=[x_left, x_right],
-        fixedrange=True,
     )
 
     # Принудительно закрепим тип оси X как временной: добавим «пустой» временной трейс
@@ -279,17 +277,7 @@ def render_key_levels(
                 name="VWAP",
                 hovertemplate="Time: %{x|%H:%M}<br>VWAP: %{y:.2f}<extra></extra>",
             ))
-
-    else:
-        # Рынок закрыт — центральная надпись
-        fig.add_annotation(
-        x=0.5, xref="paper",
-        y=0.5, yref="paper",
-        text="Market closed",
-        showarrow=False,
-        font=dict(size=20, color="rgba(128,128,128,0.85)")
-        )
-        # --- Горизонтальные уровни ---
+    # --- Горизонтальные уровни ---
     color_map = {
         "Max Pos GEX": COLOR_MAX_POS_GEX,
         "Max Neg GEX": COLOR_MAX_NEG_GEX,
@@ -301,40 +289,24 @@ def render_key_levels(
         "PZ": COLOR_PZ,
         "G-Flip": COLOR_GFLIP,
     }
-# Отображаемые имена серий для легенды и правых подписей
-display_name_map = {
-    "Max Neg GEX": "N1",
-    "Max Pos GEX": "P1",
-    "Max Put OI": "Put OI",
-    "Max Call OI": "Call OI",
-    "Max Put Volume": "Put Vol",
-    "Max Call Volume": "Call Vol",
-    "AG": "AG",
-    "PZ": "PZ",
-    "G-Flip": "G-Flip",
-    "Price": "Price",
-    "VWAP": "VWAP",
-}
-
 
     
-# Плейсхолдеры легенды в нужном порядке (без Price/VWAP, чтобы не дублировать)
-_legend_order = ["G-Flip", "Max Neg GEX", "Max Pos GEX",
-                 "Max Put OI", "Max Call OI", "Max Put Volume", "Max Call Volume",
-                 "AG", "PZ"]
-for _name in _legend_order:
-    _val = level_map.get(_name, None)
-    if _val is None or not np.isfinite(_val):
-        continue
-    _disp = display_name_map.get(_name, _name)
-    _clr = color_map.get(_name, "#CCCCCC")
-    _nm = f"{_disp} ({float(_val):g})"
-    fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines",
-                             line=dict(color=_clr, width=1.4),
-                             name=_nm, hoverinfo="skip", showlegend=True))
-
+    # Отображаемые имена серий в легенде
+    display_name_map = {
+        "Max Neg GEX": "N1",
+        "Max Pos GEX": "P1",
+        "Max Put OI": "Put OI",
+        "Max Call OI": "Call OI",
+        "Max Put Volume": "Put Volume",
+        "Max Call Volume": "Call Volume",
+        "AG": "AG",
+        "PZ": "PZ",
+        "G-Flip": "G-Flip",
+    }
+    # Сгруппируем совпадающие значения (±0.05) для подписи справа
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
+    used_strikes = set()
     groups: Dict[float, List[str]] = {}
     for name, val in level_map.items():
         if val is None or not np.isfinite(val):
@@ -349,11 +321,13 @@ for _name in _legend_order:
             groups[y] = [name]
         else:
             groups[found_key].append(name)
+        used_strikes.add(y)
 
-    
-    # Диапазон Y
     all_levels = [float(v) for v in groups.keys()]
-    # Базовые границы по использованным уровням
+    if all_levels:
+        y_min = min(all_levels)
+        y_max = max(all_levels)
+    all_levels = [float(v) for v in groups.keys()]
     if all_levels:
         y_min = min(all_levels)
         y_max = max(all_levels)
@@ -365,35 +339,20 @@ for _name in _legend_order:
         else:
             y_min, y_max = 0.0, 1.0
 
-    # Расширение на ±2 страйка, если крайние уровни не на краях окна
-    _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []
-    _Ks_all = sorted(float(k) for k in _Ks_all)
-    if _Ks_all:
-        _kmin, _kmax = _Ks_all[0], _Ks_all[-1]
-        # индексы ближайших страйков к y_min/y_max
-        i_low = min(range(len(_Ks_all)), key=lambda i: abs(_Ks_all[i]-y_min))
-        i_high = min(range(len(_Ks_all)), key=lambda i: abs(_Ks_all[i]-y_max))
-        if y_min > _kmin + 1e-9:
-            i_low = max(0, i_low - 2)
-            y_min = _Ks_all[i_low]
-        else:
-            y_min = _kmin
-        if y_max < _kmax - 1e-9:
-            i_high = min(len(_Ks_all)-1, i_high + 2)
-            y_max = _Ks_all[i_high]
-        else:
-            y_max = _kmax
-
-    # Если цена выходит за пределы — расширяем под цену
+    # Если цена выходит за пределы — расширяем до экстремумов цены
     if price_df is not None and not price_df.empty and ("price" in price_df.columns):
         _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
         if not _pr.empty:
             y_min = float(min(y_min, _pr.min()))
             y_max = float(max(y_max, _pr.max()))
 
-    # Тики — все страйки из окна в финальном диапазоне; запрет масштабирования
-    _y_ticks = [k for k in _Ks_all if (k >= y_min - 1e-9) and (k <= y_max + 1e-9)]
-    fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks], fixedrange=True)
+    # Тики: все страйки из df_final внутри окна
+    _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []
+    _Ks_all = sorted(float(k) for k in _Ks_all)
+    _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
+    fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
+
+    # Линии и подписи справа
     for y, members in sorted(groups.items(), key=lambda kv: kv[0]):
         labels_sorted = sorted(members, key=lambda s: s)
         if "G-Flip" in labels_sorted:
@@ -403,28 +362,32 @@ for _name in _legend_order:
             pick = next((p for p in prio if p in labels_sorted), labels_sorted[0])
             color = color_map.get(pick, "#CCCCCC")
 
-        fig.add_shape(
-            type="line",
-            x0=x_left, x1=x_right, xref="x",
-            y0=float(y), y1=float(y), yref="y",
-            line=dict(color=color, width=1.4, dash=("dot" if any(lbl in ["AG","PZ","G-Flip"] for lbl in labels_sorted) else "solid")),
-            layer="below",
-        )
+        # Отдельные трейсы по сериям — для кликабельной легенды и имён с уровнем
+        for _orig in labels_sorted:
+            _disp = display_name_map.get(_orig, _orig)
+            _clr = COLOR_GFLIP if _orig == "G-Flip" else color_map.get(_orig, color)
+            _nm = f"{_disp} ({float(y):g})" if _orig not in ["Price","VWAP"] else _disp
+            fig.add_trace(go.Scatter(
+                x=[x_left, x_right], y=[float(y), float(y)],
+                mode="lines",
+                line=dict(color=_clr, width=1.4, dash="solid"),
+                name=_nm, showlegend=True,
+            ))
+        # Сводная подпись справа остаётся
         fig.add_annotation(
             x=x_right, xref="x",
             y=float(y), yref="y",
-            text=" + ".join([display_name_map.get(n, n) for n in labels_sorted]),
+            text=" + ".join([display_name_map.get(n,n) for n in labels_sorted]),
             showarrow=False,
             xanchor="left", yanchor="middle",
             align="left",
             font=dict(size=10, color="#FFFFFF"),
             bgcolor="rgba(0,0,0,0.35)",
-            bordercolor="rgba(255,255,255,0.15)",
             borderwidth=0.5,
         )
 
     # Белые подписи‑тиков слева
-    _make_tick_annotations(fig, groups.keys(), x_left)
+    _make_tick_annotations(fig, used_strikes, x_left)
 
     # Заголовок (тикер)
     fig.add_annotation(
@@ -436,9 +399,9 @@ for _name in _legend_order:
 
     # Дата под осью
     fig.add_annotation(
-        x=0, xref="paper", y=-0.18, yref="paper",
+        x=0.5, xref="paper", y=-0.18, yref="paper",
         text=_format_date_for_footer(pd.to_datetime(x_left)),
-        showarrow=False, xanchor="left", yanchor="top",
+        showarrow=False, xanchor="center", yanchor="top",
         font=dict(size=10, color="#FFFFFF"),
     )
 
