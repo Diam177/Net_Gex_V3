@@ -221,7 +221,7 @@ def render_key_levels(
         paper_bgcolor=BACKGROUND,
         plot_bgcolor=BACKGROUND,
         margin=dict(l=60, r=110, t=40, b=60),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
+        legend=dict(traceorder="normal", orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0, font=dict(size=10)),
     )
     fig.update_yaxes(
         tickfont=dict(color=AXIS_GRAY, size=10),
@@ -297,13 +297,28 @@ def render_key_levels(
         "Max Pos GEX": "P1",
         "Max Put OI": "Put OI",
         "Max Call OI": "Call OI",
-        "Max Put Volume": "Put Volume",
-        "Max Call Volume": "Call Volume",
+        "Max Put Volume": "Put Vol",
+        "Max Call Volume": "Call Vol",
         "AG": "AG",
         "PZ": "PZ",
         "G-Flip": "G-Flip",
     }
-    # Сгруппируем совпадающие значения (±0.05) для подписи справа
+    
+# Stable legend order ranks
+LEGEND_RANK = {
+    "Price": 10,
+    "VWAP": 20,
+    "G-Flip": 30,
+    "N1": 40,
+    "P1": 50,
+    "Put OI": 60,
+    "Call OI": 70,
+    "Put Vol": 80,
+    "Call Vol": 90,
+    "AG": 100,
+    "PZ": 110,
+}
+# Сгруппируем совпадающие значения (±0.05) для подписи справа
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
     used_strikes = set()
@@ -404,5 +419,110 @@ def render_key_levels(
         showarrow=False, xanchor="center", yanchor="top",
         font=dict(size=10, color="#FFFFFF"),
     )
+
+# >>> PATCH: enforce legend order, styles, ET session range, overlay, and axis locks
+try:
+    import pandas as pd
+    # 1) Legend ranks and dash styles for specific lines
+    if 'fig' in locals():
+        # Rename any pre-existing traces if needed
+        for _tr in list(getattr(fig, 'data', [])):
+            _nm = getattr(_tr, 'name', '') or ''
+            if _nm == "Put Volume":
+                _tr.name = "Put Vol"
+            elif _nm == "Call Volume":
+                _tr.name = "Call Vol"
+        for _tr in list(getattr(fig, 'data', [])):
+            _nm = getattr(_tr, 'name', '') or ''
+            if _nm in ("AG", "PZ", "G-Flip"):
+                # make sure it's dotted
+                try:
+                    _line = dict(_tr.line.to_plotly_json()) if hasattr(_tr.line, "to_plotly_json") else dict(_tr.line)
+                except Exception:
+                    _line = {}
+                _line["dash"] = "dot"
+                _tr.line = _line
+            if _nm in LEGEND_RANK:
+                try:
+                    _tr.legendrank = LEGEND_RANK[_nm]
+                except Exception:
+                    pass
+
+        # Stabilize legend order
+        fig.update_layout(legend=dict(traceorder="normal"))
+        # Disable zoom/pan
+        fig.update_xaxes(fixedrange=True)
+        fig.update_yaxes(fixedrange=True)
+
+        # 2) Force X range to current ET session 09:30–16:00
+        _now_et = pd.Timestamp.now(tz="America/New_York")
+        _t0 = _now_et.normalize() + pd.Timedelta(hours=9, minutes=30)
+        _t1 = _now_et.normalize() + pd.Timedelta(hours=16)
+        fig.update_xaxes(range=[_t0, _t1])
+
+        # 3) Market closed overlay if outside RTH
+        if (_now_et < _t0) or (_now_et > _t1):
+            fig.add_annotation(
+                x=0.5, xref="paper", y=0.5, yref="paper",
+                text="Market closed",
+                showarrow=False, xanchor="center", yanchor="middle",
+                font=dict(size=28, color="rgba(128,128,128,0.85)"),
+            )
+
+        # 4) Current ET date under Time, left-aligned
+        try:
+            # Try not to duplicate if already present: check any annotation equal text
+            _today_txt = _now_et.strftime("%b %d, %Y")
+            _has_date = any((getattr(a,'text',None)==_today_txt) for a in list(getattr(fig.layout, 'annotations', []) or []))
+        except Exception:
+            _has_date = False
+            _today_txt = None
+        if not _has_date:
+            fig.add_annotation(
+                x=0.0, xref="paper", y=-0.18, yref="paper",
+                text=_today_txt or _now_et.strftime("%b %d, %Y"),
+                showarrow=False, xanchor="left", yanchor="top",
+                font=dict(size=10, color="#FFFFFF"),
+            )
+
+        # 5) Y-axis: add ±2 strikes if edge-free (best-effort; requires df_final['K'])
+        try:
+            if 'df_final' in locals() and 'K' in df_final.columns:
+                _Ks_all = pd.to_numeric(df_final['K'], errors='coerce').dropna().unique().tolist()
+                _Ks_all = sorted(float(k) for k in _Ks_all)
+                if _Ks_all:
+                    _yr = getattr(fig.layout.yaxis, 'range', None)
+                    if _yr and len(_yr)==2:
+                        y_min, y_max = float(_yr[0]), float(_yr[1])
+                        # displayed min/max strikes within current window
+                        _cand_min = [k for k in _Ks_all if k >= y_min]
+                        _cand_max = [k for k in _Ks_all if k <= y_max]
+                        disp_min = _cand_min[0] if _cand_min else _Ks_all[0]
+                        disp_max = _cand_max[-1] if _cand_max else _Ks_all[-1]
+                        # detect if any horizontal line equals the window edges
+                        _on_edge = False
+                        for _tr in list(getattr(fig, 'data', [])):
+                            try:
+                                _y = getattr(_tr, 'y', None)
+                                if _y is not None and len(_y)>=2 and float(_y[0])==float(_y[-1]):
+                                    _yv = float(_y[0])
+                                    if abs(_yv-disp_min) < 1e-9 or abs(_yv-disp_max) < 1e-9:
+                                        _on_edge = True
+                                        break
+                            except Exception:
+                                pass
+                        if not _on_edge:
+                            i_min = max(0, _Ks_all.index(disp_min)-2)
+                            i_max = min(len(_Ks_all)-1, _Ks_all.index(disp_max)+2)
+                            y0_new, y1_new = _Ks_all[i_min], _Ks_all[i_max]
+                            _ticks = [k for k in _Ks_all if y0_new <= k <= y1_new]
+                            fig.update_yaxes(range=[y0_new, y1_new], tickmode="array",
+                                             tickvals=_ticks, ticktext=[f"{v:g}" for v in _ticks])
+        except Exception:
+            pass
+except Exception:
+    # ensure no crash on patch
+    pass
+# <<< PATCH END
 
     st.plotly_chart(fig, use_container_width=True, theme=None, config={"displayModeBar": False})
