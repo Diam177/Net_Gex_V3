@@ -421,14 +421,15 @@ def render_key_levels(
                 name=_nm, showlegend=True,
                 legendrank=LEGEND_RANK.get(display_name_map.get(_orig, _orig), 999),
             ))
-        # Сводная подпись справа остаётся
+        # Сводная подпись справа (над линией, у правого края)
         fig.add_annotation(
-            x=x_right, xref="x",
+            x=1.0, xref="paper",
             y=float(y), yref="y",
             text=" + ".join([display_name_map.get(n,n) for n in labels_sorted]),
             showarrow=False,
-            xanchor="left", yanchor="middle",
-            align="left",
+            xanchor="right", yanchor="bottom",
+            yshift=6,
+            align="right",
             font=dict(size=10, color="#FFFFFF"),
             bgcolor="rgba(0,0,0,0.35)",
             borderwidth=0.5,
