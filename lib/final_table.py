@@ -44,40 +44,134 @@ class FinalTableConfig:
     day_high: Optional[float] = None
     day_low: Optional[float] = None
     advanced_mode: bool = False  # NEW: Флаг для улучшенного режима
-    market_cap: float = 654.8e9  # NEW: Для normalization
-    adv: float = 70e6  # NEW
+    market_cap: float = 654.8e9  # NEW: Для normalization (пример SPY)
+    adv: float = 70e6  # NEW: Average daily volume
 
-# ... (оригинальные helpers)
+# --------- helpers ---------
 
-def build_final_tables_from_corr(
-    df_corr: pd.DataFrame,
-    windows: Dict[str, np.ndarray],
-    cfg: FinalTableConfig = FinalTableConfig(),
-) -> Dict[str, pd.DataFrame]:
+def _window_strikes(df_corr: pd.DataFrame, exp: str, windows: Dict[str, np.ndarray]) -> np.ndarray:
+    Ks = np.array(sorted(df_corr.loc[df_corr["exp"] == exp, "K"].unique()), dtype=float)
+    idx = np.array(windows.get(exp, []), dtype=int)
+    if Ks.size == 0:
+        return Ks
+    if idx.size == 0 or idx.max() >= Ks.size or idx.min() < 0:
+        return Ks
+    return Ks[idx]
+
+
+def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
+    """
+    Конструирует all_series_ctx-словарь для power_zone_er из df_corr по конкретной экспирации.
+    Возвращает dict с одним ключом exp -> контекст (совместимо с compute_power_zone_and_er).
+    """
+    g = df_corr[df_corr["exp"] == exp].copy()
+    if g.empty:
+        return {}
+
+    # Страйки и сортировка
+    Ks = np.array(sorted(g["K"].unique()), dtype=float)
+    # OI / Volume по сторонам
+    agg_oi = g.groupby(["K", "side"], as_index=False)["oi"].sum()
+    agg_vol = g.groupby(["K", "side"], as_index=False)["vol"].sum()
+    pivot_oi = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
+    pivot_vol = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
+    call_oi = {float(k): float(v) for k, v in pivot_oi.get("C", pd.Series(dtype=float)).items()}
+    put_oi  = {float(k): float(v) for k, v in pivot_oi.get("P", pd.Series(dtype=float)).items()}
+    call_vol= {float(k): float(v) for k, v in pivot_vol.get("C", pd.Series(dtype=float)).items()}
+    put_vol = {float(k): float(v) for k, v in pivot_vol.get("P", pd.Series(dtype=float)).items()}
+
+    # IV по сторонам (исправленная)
+    iv_call = g[g["side"]=="C"].groupby("K")["iv_corr"].median().to_dict()
+    iv_put  = g[g["side"]=="P"].groupby("K")["iv_corr"].median().to_dict()
+
+    # Dollar gamma на 1% * OI по сторонам (из df_corr) — построим для формы профиля
+    g["dg1pct_row"] = np.where(
+        np.isfinite(g["gamma_corr"]) & (g["gamma_corr"] > 0) &
+        np.isfinite(g["S"]) & np.isfinite(g["mult"]) &
+        np.isfi...(truncated 1514 characters)...каждой экспирации:
+    exp, K, S, F, call_oi, put_oi, dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct,
+    AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down
+    """
     results: Dict[str, pd.DataFrame] = {}
 
-    # IMPROVED: Передаём advanced_mode в config для netgex и power_zone
-    net_cfg = NetGEXAGConfig(scale=cfg.scale_millions, advanced_mode=cfg.advanced_mode, market_cap=cfg.market_cap, adv=cfg.adv)
+    # IMPROVED: Настраиваем configs с advanced_mode
+    net_cfg = NetGEXAGConfig(scale=cfg.scale_millions, aggregate="none", advanced_mode=cfg.advanced_mode, market_cap=cfg.market_cap, adv=cfg.adv)
 
+    # Пройдём по экспирациям, для каждой построим таблицу NetGEX/AG и добавим PZ/ER
     for exp in sorted(df_corr["exp"].dropna().unique()):
-        # 1) таблица NetGEX/AG по окну с новым config
+        # 1) таблица NetGEX/AG по окну
         net_tbl = compute_netgex_ag_per_expiry(
             df_corr, exp, windows=windows,
-            cfg=net_cfg  # IMPROVED
+            cfg=net_cfg  # IMPROVED: Новый config
         )
-        # ... (оригинальный код для vol добавления)
+        # 1.b) добавим объёмы по сторонам из df_corr
+        g_exp = df_corr[df_corr["exp"] == exp].copy()
+        agg_vol = g_exp.groupby(["K","side"], as_index=False)["vol"].sum()
+        pv = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
+        call_vol_map = {float(k): float(v) for k, v in pv.get("C", pd.Series(dtype=float)).items()}
+        put_vol_map  = {float(k): float(v) for k, v in pv.get("P", pd.Series(dtype=float)).items()}
+        net_tbl["call_vol"] = net_tbl["K"].map(call_vol_map).fillna(0.0)
+        net_tbl["put_vol"]  = net_tbl["K"].map(put_vol_map).fillna(0.0)
 
-        # 3) PZ/ER с advanced_mode
+        if net_tbl.empty:
+            results[exp] = net_tbl
+            continue
+
+        # 2) strikes окна и контекст для PZ/ER
+        strikes_eval = _window_strikes(df_corr, exp, windows)
+        series_ctx_map = _series_ctx_from_corr(df_corr, exp)
+        if exp not in series_ctx_map:
+            # если не удалось собрать контекст — вернём без PZ/ER
+            net_tbl["PZ"] = 0.0; net_tbl["ER_Up"] = 0.0; net_tbl["ER_Down"] = 0.0
+            results[exp] = net_tbl
+            continue
+
+        # 3) PZ/ER по формуле проекта с advanced_mode
         pz, er_up, er_down = compute_power_zone_and_er(
-            S=...,
-            strikes_eval=...,
-            all_series_ctx=...,
+            S=float(np.nanmedian(df_corr.loc[df_corr["exp"]==exp, "S"].values)),
+            strikes_eval=strikes_eval,
+            all_series_ctx=[series_ctx_map[exp]],
             day_high=cfg.day_high,
             day_low=cfg.day_low,
-            advanced_mode=cfg.advanced_mode  # NEW
+            advanced_mode=cfg.advanced_mode  # NEW: Передаём флаг
         )
-        # ... (оригинальный mapping)
+
+        # 4) привязка PZ/ER к таблице по K
+        pz_map   = {float(k): float(v) for k, v in zip(strikes_eval, pz)}
+        erup_map = {float(k): float(v) for k, v in zip(strikes_eval, er_up)}
+        erdn_map = {float(k): float(v) for k, v in zip(strikes_eval, er_down)}
+        net_tbl["PZ"]      = net_tbl["K"].map(pz_map).fillna(0.0)
+        net_tbl["ER_Up"]   = net_tbl["K"].map(erup_map).fillna(0.0)
+        net_tbl["ER_Down"] = net_tbl["K"].map(erdn_map).fillna(0.0)
+
+        # Упорядочим колонки
+        cols = ["exp","K","S"] + (["F"] if "F" in net_tbl.columns else []) + \
+               ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
+        if "AG_1pct_M" in net_tbl.columns:
+            cols += ["AG_1pct_M","NetGEX_1pct_M"]
+        if cfg.advanced_mode:  # NEW: Дополнительные колонки
+            cols += ["NetGEX_norm", "NetGEX_std"]
+        cols += ["PZ","ER_Up","ER_Down"]
+        net_tbl = net_tbl[cols].sort_values("K").reset_index(drop=True)
+
+        results[exp] = net_tbl
 
     return results
 
-# ... (остальной оригинальный код для process_from_raw, передавать cfg)
+
+def process_from_raw(
+    raw_records: List[dict],
+    S: float,
+    sanitizer_cfg: Optional[dict] = None,
+    final_cfg: FinalTableConfig = FinalTableConfig(),
+) -> Dict[str, pd.DataFrame]:
+    """
+    Полный цикл: сырые записи -> санитайз -> окна -> NetGEX/AG -> PZ/ER -> финальные таблицы.
+    Возвращает словарь {exp: DataFrame}.
+    """
+    sanitizer_cfg = sanitizer_cfg or {}
+    s_cfg = SanitizerConfig(**sanitizer_cfg)
+    res = sanitize_and_window_pipeline(raw_records, S=S, cfg=s_cfg)
+    df_corr = res["df_corr"]; windows = res["windows"]
+
+    return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
