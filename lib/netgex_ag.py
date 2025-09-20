@@ -1,3 +1,4 @@
+
 """
 netgex_ag.py — расчёт Net GEX и AG из "исправленных" данных (df_corr), опциональная агрегация.
 Единицы: $ на 1% движения (и млн $ при scale=1e6).
@@ -10,20 +11,10 @@ from typing import Dict, Optional, List
 import numpy as np
 import pandas as pd
 
-# NEW imports
-from scipy.interpolate import CubicSpline
-from scipy.optimize import root_scalar
-import numpy.random as rnd  # Для bootstrap (замена sklearn)
-
 @dataclass
 class NetGEXAGConfig:
     scale: float = 1e6       # млн $ на 1% движения
     aggregate: str = "none"  # 'none' | 'sum' | 'sum_union'
-    advanced_mode: bool = False  # NEW: Флаг для улучшенного режима
-    market_cap: float = 654.8e9  # Пример для SPY, configurable
-    adv: float = 70e6  # Average daily volume shares
-    decay_theta: float = 0.5  # Decay rate, fitted default
-    n_bootstrap: int = 1000  # Для CI
 
 def _ensure_required_columns(df: pd.DataFrame) -> None:
     req = {"exp","K","side","oi","gamma_corr","S","mult"}
@@ -81,50 +72,70 @@ def compute_netgex_ag_per_expiry(df_corr: pd.DataFrame, exp: str,
         pivot["AG_1pct_M"]     = pivot["AG_1pct"]/cfg.scale
         pivot["NetGEX_1pct_M"] = pivot["NetGEX_1pct"]/cfg.scale
 
-    # IMPROVED: Advanced mode
-    if cfg.advanced_mode:
-        # Bootstrap for CI (using numpy random)
-        netgex_boot = []
-        for _ in range(cfg.n_bootstrap):
-            idx_boot = rnd.choice(len(g), len(g), replace=True)
-            g_boot = g.iloc[idx_boot]
-            # Пересчитать dg_row и agg как выше
-            dg_row_boot = ...  # Повторить расчёт
-            # ... (аналогично, получить boot NetGEX)
-            netgex_boot.append(boot_netgex)
-
-        netgex_mean = np.mean(netgex_boot, axis=0)
-        netgex_std = np.std(netgex_boot, axis=0)
-        pivot['NetGEX_mean'] = netgex_mean
-        pivot['NetGEX_std'] = netgex_std
-
-        # Normalization
-        adv_factor = cfg.adv / 1e6
-        pivot['NetGEX_norm'] = netgex_mean / (cfg.market_cap * adv_factor)
-
-        # G-Flip with cubic spline
-        Ks = pivot['K'].values.astype(float)
-        if len(Ks) > 2:
-            spline = CubicSpline(Ks, pivot['NetGEX_norm'].values)
-            try:
-                gflip = root_scalar(spline, bracket=[min(Ks), max(Ks)]).root
-                pivot['GFlip'] = gflip  # Или добавить как отдельную колонку/аттрибут
-            except:
-                pass
-
     pivot.insert(0,"exp",exp)
     cols=["exp","K","S"] + (["F"] if "F" in pivot.columns else []) + ["call_oi","put_oi","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
     if "AG_1pct_M" in pivot.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
-    if cfg.advanced_mode: cols += ["NetGEX_norm", "NetGEX_std"]
     pivot = pivot[cols].sort_values("K").reset_index(drop=True)
     return pivot
 
-# ... (остальной оригинальный код для compute_netgex_ag с аналогичными правками для aggregation: weighted sum with decay)
 def compute_netgex_ag(df_corr: pd.DataFrame, windows: Optional[Dict[str, np.ndarray]]=None,
                       cfg: NetGEXAGConfig=NetGEXAGConfig()):
-    # ORIGINAL ...
-    if cfg.advanced_mode:
-        # Weighted aggregation with decay
-        # Вычислить T_exp, w = exp(-cfg.decay_theta * T_exp) * (OI / total_OI)
-        # Затем base["NetGEX_1pct"] = sum weighted
-    # ...
+    _ensure_required_columns(df_corr)
+    results = {}
+    for exp in sorted(df_corr["exp"].dropna().unique()):
+        results[exp] = compute_netgex_ag_per_expiry(df_corr, exp, windows=windows, cfg=cfg)
+    if cfg.aggregate=="none":
+        return results
+
+    frames = []
+    with_F = any(("F" in d.columns) for d in results.values())
+    for exp, df in results.items():
+        keep = ["K","S","AG_1pct","NetGEX_1pct"]
+        if with_F and "F" in df.columns: keep.insert(2,"F")
+        df2 = df[keep].copy(); df2["exp"]=exp
+        frames.append(df2)
+
+    if not frames:
+        return pd.DataFrame(columns=["K","S","AG_1pct","NetGEX_1pct","AG_1pct_M","NetGEX_1pct_M"])
+
+    if cfg.aggregate=="sum":
+        common_K = set(frames[0]["K"].unique())
+        for df in frames[1:]: common_K &= set(df["K"].unique())
+        common_K = sorted(common_K)
+        if not common_K:
+            return pd.DataFrame(columns=["K","S","AG_1pct","NetGEX_1pct","AG_1pct_M","NetGEX_1pct_M"])
+        base = pd.DataFrame({"K": common_K})
+        base["S"] = float(np.nanmedian(pd.concat(frames)["S"].values))
+        if with_F: base["F"] = float(np.nanmedian(pd.concat(frames).get("F", pd.Series(dtype=float)).values)) if any("F" in df.columns for df in frames) else np.nan
+        base["AG_1pct"]=0.0; base["NetGEX_1pct"]=0.0
+        for df in frames:
+            m = df[df["K"].isin(common_K)].groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
+            base = base.merge(m, left_on="K", right_index=True, how="left", suffixes=("","_add")).fillna(0.0)
+            base["AG_1pct"] += base.pop("AG_1pct_add")
+            base["NetGEX_1pct"] += base.pop("NetGEX_1pct_add")
+        if cfg.scale and cfg.scale>0:
+            base["AG_1pct_M"] = base["AG_1pct"]/cfg.scale
+            base["NetGEX_1pct_M"] = base["NetGEX_1pct"]/cfg.scale
+        cols=["K","S"] + (["F"] if "F" in base.columns else []) + ["AG_1pct","NetGEX_1pct"]
+        if "AG_1pct_M" in base.columns: cols+=["AG_1pct_M","NetGEX_1pct_M"]
+        return base[cols].sort_values("K").reset_index(drop=True)
+
+    if cfg.aggregate=="sum_union":
+        all_K = sorted(set().union(*[set(df["K"].unique()) for df in frames]))
+        base = pd.DataFrame({"K": all_K})
+        base["S"] = float(np.nanmedian(pd.concat(frames)["S"].values))
+        if with_F: base["F"] = float(np.nanmedian(pd.concat(frames).get("F", pd.Series(dtype=float)).values)) if any("F" in df.columns for df in frames) else np.nan
+        base["AG_1pct"]=0.0; base["NetGEX_1pct"]=0.0
+        for df in frames:
+            m = df.groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
+            base = base.merge(m, left_on="K", right_index=True, how="left", suffixes=("","_add")).fillna(0.0)
+            base["AG_1pct"] += base.pop("AG_1pct_add")
+            base["NetGEX_1pct"] += base.pop("NetGEX_1pct_add")
+        if cfg.scale and cfg.scale>0:
+            base["AG_1pct_M"] = base["AG_1pct"]/cfg.scale
+            base["NetGEX_1pct_M"] = base["NetGEX_1pct"]/cfg.scale
+        cols=["K","S"] + (["F"] if "F" in base.columns else []) + ["AG_1pct","NetGEX_1pct"]
+        if "AG_1pct_M" in base.columns: cols+=["AG_1pct_M","NetGEX_1pct_M"]
+        return base[cols].sort_values("K").reset_index(drop=True)
+
+    raise ValueError(f"Unknown aggregate mode: {cfg.aggregate!r}")
