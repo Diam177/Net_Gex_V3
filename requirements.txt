@@ -5,6 +5,3 @@ numpy>=1.26
 pyarrow>=16.0
 plotly>=5.20.0
 python-dateutil>=2.9
-scipy>=1.10.0  # NEW: для optimizations и SABR
-torch>=2.0.0   # NEW: для ML fitting
-hmmlearn>=0.3.0  # NEW: для HMM в power_zone_er (если нет, заменить manual)
