@@ -168,7 +168,7 @@ def _normalize_ticker():
 
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
-    st.text_input("Тикер", key="ticker", on_change=_normalize_ticker)
+    st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
     ticker = st.session_state.get("ticker", "")
 
     # Получаем список будущих экспираций под выбранный тикер
@@ -184,11 +184,11 @@ with st.sidebar:
     if expirations:
         # по умолчанию ближайшая дата — первая в списке
         default_idx = 0
-        sel = st.selectbox("Дата экспирации", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
+        sel = st.selectbox("Expiration date", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
 
         # --- Режим агрегации экспираций ---
-        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
+        mode_exp = st.radio("Expiration mode", ["Single","Multi"], index=0, horizontal=True)
         selected_exps = []
         weight_mode = "равные"
         if mode_exp == "Single":
@@ -221,7 +221,7 @@ if snapshot_js:
         raw_bytes = json.dumps(snapshot_js, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         fname = f"{ticker}_{expiration}.json"
         st.sidebar.download_button(
-            label="Скачать сырой JSON (Polygon)",
+            label="Download JSON",
             data=raw_bytes,
             file_name=fname,
             mime="application/json",
@@ -386,7 +386,7 @@ if raw_records:
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
-                            dl_tables_container.download_button("Скачать таблицы",
+                            dl_tables_container.download_button("Download tables",
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
