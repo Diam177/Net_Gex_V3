@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 final_table.py — единая сборка финальной таблицы по страйкам окна:
@@ -43,9 +44,7 @@ class FinalTableConfig:
     # Параметры для Power Zone / ER (оставляем значения по умолчанию из power_zone_er)
     day_high: Optional[float] = None
     day_low: Optional[float] = None
-    advanced_mode: bool = False  # NEW: Флаг для улучшенного режима
-    market_cap: float = 654.8e9  # NEW: Для normalization (пример SPY)
-    adv: float = 70e6  # NEW: Average daily volume
+
 
 # --------- helpers ---------
 
@@ -88,21 +87,56 @@ def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
     g["dg1pct_row"] = np.where(
         np.isfinite(g["gamma_corr"]) & (g["gamma_corr"] > 0) &
         np.isfinite(g["S"]) & np.isfinite(g["mult"]) &
-        np.isfi...(truncated 1514 characters)...каждой экспирации:
+        np.isfinite(g["oi"]) & (g["oi"] > 0),
+        g["gamma_corr"].to_numpy() * (g["S"].to_numpy()**2) * 0.01 * g["mult"].to_numpy() * g["oi"].to_numpy(),
+        0.0
+    )
+    agg_dg = g.groupby(["K","side"], as_index=False)["dg1pct_row"].sum()
+    p_dg = agg_dg.pivot_table(index="K", columns="side", values="dg1pct_row", aggfunc="sum").fillna(0.0)
+    dg_call = p_dg.get("C", pd.Series(dtype=float)).reindex(Ks, fill_value=0.0).to_numpy()
+    dg_put  = p_dg.get("P", pd.Series(dtype=float)).reindex(Ks, fill_value=0.0).to_numpy()
+
+    # gamma_abs_share / gamma_net_share — возьмём форму профилей от долларовой гаммы:
+    # Важно: compute_power_zone_and_er далее нормализует эти ряды, поэтому абсолютный масштаб не критичен.
+    gamma_abs_share = (dg_call + dg_put)  # прокси AG-профиля
+    gamma_net_share = (dg_call - dg_put)  # прокси NetGEX-профиля
+
+    # Время до экспирации (медиана T)
+    T_med = float(np.nanmedian(g["T"].values)) if len(g) else 0.0
+
+    ctx = {
+        "strikes": Ks.tolist(),
+        "gamma_abs_share": gamma_abs_share,
+        "gamma_net_share": gamma_net_share,
+        "call_oi": call_oi,
+        "put_oi": put_oi,
+        "call_vol": call_vol,
+        "put_vol": put_vol,
+        "iv_call": iv_call,
+        "iv_put": iv_put,
+        "T": T_med,
+    }
+    return {exp: ctx}
+
+
+def build_final_tables_from_corr(
+    df_corr: pd.DataFrame,
+    windows: Dict[str, np.ndarray],
+    cfg: FinalTableConfig = FinalTableConfig(),
+) -> Dict[str, pd.DataFrame]:
+    """
+    Собирает финальные таблицы по каждой экспирации:
     exp, K, S, F, call_oi, put_oi, dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct,
     AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down
     """
     results: Dict[str, pd.DataFrame] = {}
-
-    # IMPROVED: Настраиваем configs с advanced_mode
-    net_cfg = NetGEXAGConfig(scale=cfg.scale_millions, aggregate="none", advanced_mode=cfg.advanced_mode, market_cap=cfg.market_cap, adv=cfg.adv)
 
     # Пройдём по экспирациям, для каждой построим таблицу NetGEX/AG и добавим PZ/ER
     for exp in sorted(df_corr["exp"].dropna().unique()):
         # 1) таблица NetGEX/AG по окну
         net_tbl = compute_netgex_ag_per_expiry(
             df_corr, exp, windows=windows,
-            cfg=net_cfg  # IMPROVED: Новый config
+            cfg=NetGEXAGConfig(scale=cfg.scale_millions, aggregate="none")
         )
         # 1.b) добавим объёмы по сторонам из df_corr
         g_exp = df_corr[df_corr["exp"] == exp].copy()
@@ -126,14 +160,13 @@ def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
             results[exp] = net_tbl
             continue
 
-        # 3) PZ/ER по формуле проекта с advanced_mode
+        # 3) PZ/ER по формуле проекта
         pz, er_up, er_down = compute_power_zone_and_er(
             S=float(np.nanmedian(df_corr.loc[df_corr["exp"]==exp, "S"].values)),
             strikes_eval=strikes_eval,
             all_series_ctx=[series_ctx_map[exp]],
             day_high=cfg.day_high,
             day_low=cfg.day_low,
-            advanced_mode=cfg.advanced_mode  # NEW: Передаём флаг
         )
 
         # 4) привязка PZ/ER к таблице по K
@@ -149,8 +182,6 @@ def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
                ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
         if "AG_1pct_M" in net_tbl.columns:
             cols += ["AG_1pct_M","NetGEX_1pct_M"]
-        if cfg.advanced_mode:  # NEW: Дополнительные колонки
-            cols += ["NetGEX_norm", "NetGEX_std"]
         cols += ["PZ","ER_Up","ER_Down"]
         net_tbl = net_tbl[cols].sort_values("K").reset_index(drop=True)
 
