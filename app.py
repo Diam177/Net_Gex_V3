@@ -194,8 +194,8 @@ with st.sidebar:
         if mode_exp == "Single":
             selected_exps = [expiration]
         else:
-            selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
-            weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
+            selected_exps = st.multiselect("Select expiration", options=expirations, default=expirations[:2])
+            weight_mode = st.selectbox("Weighting", ["equal","1/T","1/√T"], index=2)
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
