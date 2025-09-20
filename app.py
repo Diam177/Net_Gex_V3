@@ -81,6 +81,7 @@ from lib.tiker_data import (
     get_spot_price,
     PolygonError,
 )
+from lib.final_table import FinalTableConfig, build_final_tables_from_corr, process_from_raw  # IMPROVED: Импорт configs
 
 st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
@@ -174,8 +175,40 @@ with st.sidebar:
     advanced_mode = st.checkbox("Advanced Mode (улучшенные расчёты)", value=False)
 
     # Получаем список будущих экспираций под выбранный тикер
-    # ... (оригинальный код для expirations и т.д.)
+    try:
+        expirations = list_future_expirations(ticker, api_key)
+    except Exception as e:
+        expirations = []
+        st.warning(f"Не удалось получить экспирации: {e}")
 
-# В process_from_raw или build_final_tables: 
-# final_cfg = FinalTableConfig(..., advanced_mode=advanced_mode)
-# ... (остальной оригинальный код app.py, с передачей advanced_mode в cfg)
+    expiration = st.selectbox("Экспирация", expirations) if expirations else None
+
+    if expiration:
+        try:
+            raw_json = download_snapshot_json(ticker, expiration, api_key)
+            raw_records = _coerce_results(raw_json)
+            st.session_state["raw_records"] = raw_records
+
+            # Spot price fallback
+            spot = get_spot_price(ticker, api_key)[0]
+            st.session_state["spot"] = spot
+        except Exception as e:
+            st.error(f"Ошибка загрузки данных: {e}")
+
+# --- Pipeline ---
+if "raw_records" in st.session_state:
+    try:
+        raw_records = st.session_state["raw_records"]
+        S = st.session_state["spot"]
+
+        # IMPROVED: Настраиваем config с advanced_mode
+        final_cfg = FinalTableConfig(advanced_mode=advanced_mode, market_cap=654.8e9, adv=70e6)  # Пример params, можно input
+
+        # ... (оригинальный пайплайн с process_from_raw или build_final_tables, передавая final_cfg)
+
+        # Для чартов: render_netgex_bars и render_key_levels (без изменений)
+    except Exception as e:
+        st.error("Ошибка пайплайна sanitize/window.")
+        st.exception(e)
+
+# ... (остальной оригинальный код)
