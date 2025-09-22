@@ -473,5 +473,11 @@ def render_key_levels(
     fig.update_xaxes(fixedrange=True)
     fig.update_yaxes(fixedrange=True)
 
+    fig.add_annotation(
+        xref='paper', yref='paper',
+        x=0.0, y=1.0, xanchor='left', yanchor='top',
+        text=str(ticker), showarrow=False,
+        font=dict(size=14)
+    )
     st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={"displayModeBar": False, "scrollZoom": False})
