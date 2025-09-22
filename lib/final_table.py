@@ -32,7 +32,7 @@ from lib.netgex_ag import (
     NetGEXAGConfig,
     compute_netgex_ag_per_expiry,
 )
-from lib.power_zone_er import compute_power_zone_and_er
+from lib.power_zone_er import compute_power_zone
 
 
 # --------- конфиг ---------
@@ -156,12 +156,12 @@ def build_final_tables_from_corr(
         series_ctx_map = _series_ctx_from_corr(df_corr, exp)
         if exp not in series_ctx_map:
             # если не удалось собрать контекст — вернём без PZ/ER
-            net_tbl["PZ"] = 0.0; net_tbl["ER_Up"] = 0.0; net_tbl["ER_Down"] = 0.0
+            net_tbl["PZ"] = 0.0
             results[exp] = net_tbl
             continue
 
         # 3) PZ/ER по формуле проекта
-        pz, er_up, er_down = compute_power_zone_and_er(
+        pz = compute_power_zone(
             S=float(np.nanmedian(df_corr.loc[df_corr["exp"]==exp, "S"].values)),
             strikes_eval=strikes_eval,
             all_series_ctx=[series_ctx_map[exp]],
@@ -171,18 +171,14 @@ def build_final_tables_from_corr(
 
         # 4) привязка PZ/ER к таблице по K
         pz_map   = {float(k): float(v) for k, v in zip(strikes_eval, pz)}
-        erup_map = {float(k): float(v) for k, v in zip(strikes_eval, er_up)}
-        erdn_map = {float(k): float(v) for k, v in zip(strikes_eval, er_down)}
         net_tbl["PZ"]      = net_tbl["K"].map(pz_map).fillna(0.0)
-        net_tbl["ER_Up"]   = net_tbl["K"].map(erup_map).fillna(0.0)
-        net_tbl["ER_Down"] = net_tbl["K"].map(erdn_map).fillna(0.0)
 
         # Упорядочим колонки
         cols = ["exp","K","S"] + (["F"] if "F" in net_tbl.columns else []) + \
                ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
         if "AG_1pct_M" in net_tbl.columns:
             cols += ["AG_1pct_M","NetGEX_1pct_M"]
-        cols += ["PZ","ER_Up","ER_Down"]
+        cols += ["PZ"]
         net_tbl = net_tbl[cols].sort_values("K").reset_index(drop=True)
 
         results[exp] = net_tbl
