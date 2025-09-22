@@ -168,7 +168,7 @@ def _normalize_ticker():
 
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
-    st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
+    st.text_input("Тикер", key="ticker", on_change=_normalize_ticker)
     ticker = st.session_state.get("ticker", "")
 
     # Получаем список будущих экспираций под выбранный тикер
@@ -184,18 +184,18 @@ with st.sidebar:
     if expirations:
         # по умолчанию ближайшая дата — первая в списке
         default_idx = 0
-        sel = st.selectbox("Expiration date", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
+        sel = st.selectbox("Дата экспирации", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
 
         # --- Режим агрегации экспираций ---
-        mode_exp = st.radio("Expiration mode", ["Single","Multi"], index=0, horizontal=True)
+        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
         selected_exps = []
         weight_mode = "равные"
         if mode_exp == "Single":
             selected_exps = [expiration]
         else:
-            selected_exps = st.multiselect("Select expiration", options=expirations, default=expirations[:2])
-            weight_mode = st.selectbox("Weighting", ["equal","1/T","1/√T"], index=2)
+            selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
+            weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
@@ -221,7 +221,7 @@ if snapshot_js:
         raw_bytes = json.dumps(snapshot_js, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         fname = f"{ticker}_{expiration}.json"
         st.sidebar.download_button(
-            label="Download JSON",
+            label="Скачать сырой JSON (Polygon)",
             data=raw_bytes,
             file_name=fname,
             mime="application/json",
@@ -386,7 +386,7 @@ if raw_records:
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
-                            dl_tables_container.download_button("Download tables",
+                            dl_tables_container.download_button("Скачать таблицы",
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
@@ -508,7 +508,7 @@ if raw_records:
             try:
                 from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
                 from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
-                from lib.power_zone_er import compute_power_zone_and_er
+                from lib.power_zone_er import compute_power_zone
                 import numpy as np
                 import pandas as pd
                 import math
@@ -595,7 +595,7 @@ if raw_records:
                                 all_ctx.append(ctx)
 
                         strikes_eval = base["K"].astype(float).tolist()
-                        pz, er_up, er_down = compute_power_zone_and_er(
+                        pz = compute_power_zone(
                             S=S_med,
                             strikes_eval=strikes_eval,
                             all_series_ctx=all_ctx,
@@ -604,13 +604,11 @@ if raw_records:
                         )
                         # маппинг на таблицу
                         base["PZ"] = pd.Series(pz, index=base.index).astype(float)
-                        base["ER_Up"] = pd.Series(er_up, index=base.index).astype(float)
-                        base["ER_Down"] = pd.Series(er_down, index=base.index).astype(float)
 
                         # порядок колонок
                         cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","AG_1pct","NetGEX_1pct"]
                         if "AG_1pct_M" in base.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
-                        cols += ["PZ","ER_Up","ER_Down"]
+                        cols += ["PZ"]
                         df_final_multi = base[cols].sort_values("K").reset_index(drop=True)
 
                         _st_hide_subheader()
