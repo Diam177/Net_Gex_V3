@@ -33,7 +33,7 @@ from typing import Iterable, Tuple, Dict, Any, List, Optional
 import numpy as _np
 
 
-def compute_power_zone_and_er(
+def compute_power_zone(
     S: float,
     strikes_eval: Iterable[float],
     all_series_ctx: Iterable[Dict[str, Any]],
@@ -49,15 +49,14 @@ def compute_power_zone_and_er(
     c_vol_log: float = 4.0,
     d_star: float = 2.0,
     eps: float = 1e-6,
-) -> Tuple[_np.ndarray, _np.ndarray, _np.ndarray]:
-    """Точная реализация из проекта (см. compute.py: compute_power_zone_and_er)."""
-
+) -> _np.ndarray:
+    """Вычисление Power Zone (PZ) по оценочной сетке. Возвращает массив длины len(strikes_eval)."""
     # Преобразуем вход
     strikes_eval = _np.asarray(list(strikes_eval), dtype=float)
     n_eval = len(strikes_eval)
     all_series_ctx = list(all_series_ctx)
     if n_eval == 0 or not all_series_ctx:
-        return (_np.zeros(0, dtype=float), _np.zeros(0, dtype=float), _np.zeros(0, dtype=float))
+        return _np.zeros(0, dtype=float)
 
     # --- Веса по экспирациям (time weighting) ---
     # tau ~ позиция в сессии: 0.5 (mid-session) если реального времени нет
@@ -217,62 +216,4 @@ def compute_power_zone_and_er(
         mass_vals += w_e * Wd_eval * (c["AG_hat"][pick] * c["Stab_hat"][pick] * c["Act_hat"][pick])
     max_mass = float(_np.nanmax(mass_vals)) if n_eval > 0 else 0.0
     pz_norm = (mass_vals / max_mass) if max_mass > 0 else _np.zeros_like(mass_vals)
-
-    # --- Барьеры/направление для ER ---
-    G_vals = _np.zeros(n_eval, dtype=float)
-    V_vals = _np.zeros(n_eval, dtype=float)
-    D_vals = _np.zeros(n_eval, dtype=float)
-    for w_e, c in zip(W_time, prep):
-        Ks = c["Ks"]; AG_loc = c["AG_loc"]
-        idx_near = _np.searchsorted(Ks, strikes_eval).clip(1, len(Ks)-1)
-        left = idx_near - 1; right = idx_near
-        pick = _np.where(_np.abs(Ks[left] - strikes_eval) <= _np.abs(Ks[right] - strikes_eval), left, right)
-        G_vals += w_e * AG_loc[pick]
-        vol_vec = c["vol_vec"]
-        V_vals += w_e * vol_vec[pick]
-        diff_vec: List[float] = []
-        call_vol_dict = c["call_vol_dict"]; put_vol_dict = c["put_vol_dict"]
-        call_oi_dict  = c["call_oi_dict"];  put_oi_dict  = c["put_oi_dict"]
-        for kk in strikes_eval:
-            i = int(_np.argmin(_np.abs(Ks - kk)))
-            k0 = Ks[i]
-            cv = call_vol_dict.get(k0, 0.0); pv = put_vol_dict.get(k0, 0.0)
-            if cv == 0 and pv == 0:
-                dv = call_oi_dict.get(k0, 0.0) - put_oi_dict.get(k0, 0.0)
-            else:
-                dv = cv - pv
-            diff_vec.append(dv)
-        D_vals += w_e * _np.asarray(diff_vec, dtype=float)
-
-    # Нормировки
-    G_norm = _np.zeros_like(G_vals); V_norm = _np.zeros_like(V_vals); D_norm = _np.zeros_like(D_vals)
-    g_max = float(_np.nanmax(G_vals)) if _np.any(_np.isfinite(G_vals)) else 0.0
-    v_max = float(_np.nanmax(V_vals)) if _np.any(_np.isfinite(V_vals)) else 0.0
-    d_max = float(_np.nanmax(_np.abs(D_vals))) if _np.any(_np.isfinite(D_vals)) else 0.0
-    if g_max > 0: G_norm = G_vals / g_max
-    if v_max > 0: V_norm = V_vals / v_max
-    if d_max > 0: D_norm = D_vals / d_max
-
-    # Режим гаммы: short vs long (по сумме gamma_net_share)
-    total_net_gamma = 0.0
-    for s in all_series_ctx:
-        gnet = s.get("gamma_net_share")
-        if gnet is not None:
-            try:
-                total_net_gamma += float(_np.sum(_np.asarray(gnet, dtype=float)))
-            except Exception:
-                pass
-    theta = float(theta_short_gamma) if total_net_gamma < 0 else 0.0
-
-    # Итоговые ER метрики
-    denom = eps + (G_norm ** alpha_g) * (V_norm ** alpha_v)
-    denom_safe = _np.where(denom > eps, denom, eps)
-    er_up_vals   = Wd_eval / denom_safe * (1.0 + theta * D_norm)
-    er_down_vals = Wd_eval / denom_safe * (1.0 - theta * D_norm)
-
-    up_max   = float(_np.nanmax(er_up_vals))   if _np.any(_np.isfinite(er_up_vals))   else 0.0
-    down_max = float(_np.nanmax(er_down_vals)) if _np.any(_np.isfinite(er_down_vals)) else 0.0
-    er_up_norm   = (er_up_vals   / up_max)   if up_max   > 0 else _np.zeros_like(er_up_vals)
-    er_down_norm = (er_down_vals / down_max) if down_max > 0 else _np.zeros_like(er_down_vals)
-
-    return (pz_norm, er_up_norm, er_down_norm)
+    return pz_norm
