@@ -369,15 +369,15 @@ if raw_records:
                                 # aggregated final table for Multi (used by chart)
                                 try:
                                     if 'df_final_multi' in locals() and df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
-                                        zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
-                                        zf.writestr("final_table.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
+                                        zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False)
+            zf.writestr("final_table.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
                                 # aggregated final table (sum) used by chart
                                 try:
                                     if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
-                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
-                                        zf.writestr("final_table.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
+                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False)
+            zf.writestr("final_table.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
 
@@ -473,7 +473,7 @@ if raw_records:
                 # Кнопка скачивания ZIP со всеми таблицами (single)
                 try:
                     import io, zipfile
-                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                    from final_table import build_final_tables_from_corr, FinalTableConfig
                     def _zip_single_tables(res_dict, df_corr_single, windows_single, exp_str):
                         bio = io.BytesIO()
                         with zipfile.ZipFile(bio, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
@@ -508,7 +508,7 @@ if raw_records:
                     st.exception(_e_zip_single)
             # 7) Финальная таблица (по df_corr + windows)
             try:
-                from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
+                from final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
                 from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
                 from lib.power_zone_er import compute_power_zone
                 import numpy as np
@@ -578,15 +578,6 @@ if raw_records:
                         piv_oi = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
                         base["call_oi"] = piv_oi.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
                         base["put_oi"]  = piv_oi.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
-                        # 4b) call_vol / put_vol (сумма по сериям, если vol доступен)
-                        try:
-                            if 'vol' in g.columns:
-                                agg_vol = g.groupby(['K','side'], as_index=False)['vol'].sum()
-                                piv_vol = agg_vol.pivot_table(index='K', columns='side', values='vol', aggfunc='sum').fillna(0.0)
-                                base['call_vol'] = piv_vol.get('C', pd.Series(dtype=float)).reindex(base['K'], fill_value=0.0).to_numpy()
-                                base['put_vol']  = piv_vol.get('P', pd.Series(dtype=float)).reindex(base['K'], fill_value=0.0).to_numpy()
-                        except Exception:
-                            pass
 
                         # 5) масштаб в млн $
                         if scale_val and scale_val>0:
@@ -619,7 +610,6 @@ if raw_records:
                         # порядок колонок
                         cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","AG_1pct","NetGEX_1pct"]
                         if "AG_1pct_M" in base.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
-                        if "call_vol" in base.columns and "put_vol" in base.columns: cols += ["call_vol","put_vol"]
                         cols += ["PZ"]
                         df_final_multi = base[cols].sort_values("K").reset_index(drop=True)
 
@@ -631,30 +621,6 @@ if raw_records:
                         except Exception as _chart_em:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
-
-                        # --- Key Levels chart (Multi) ---
-                        try:
-                            import pandas as pd, pytz
-                            _ycol = 'NetGEX_1pct_M' if 'NetGEX_1pct_M' in df_final_multi.columns else 'NetGEX_1pct'
-                            _spot_for_flip = float(pd.to_numeric(df_final_multi.get('S'), errors='coerce').median()) if 'S' in df_final_multi.columns else None
-                            _gflip_val = _compute_gamma_flip_from_table(df_final_multi, y_col=_ycol, spot=_spot_for_flip)
-                            if _gflip_val is not None and 'K' in df_final_multi.columns:
-                                _Ks = pd.to_numeric(df_final_multi['K'], errors='coerce').dropna().tolist()
-                                if _Ks:
-                                    _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
-                            _session_date_str = pd.Timestamp.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d')
-                            _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get('POLYGON_API_KEY', ''))
-                            render_key_levels(
-                                df_final=df_final_multi,
-                                ticker=ticker,
-                                g_flip=_gflip_val,
-                                price_df=_price_df,
-                                session_date=_session_date_str,
-                                toggle_key='key_levels_multi',
-                            )
-                        except Exception as _klm_e:
-                            st.error('Не удалось отобразить чарт Key Levels (Multi)')
-                            st.exception(_klm_e)
 
                     else:
                         # --- SINGLE режим: как было ---
