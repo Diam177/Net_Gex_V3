@@ -358,7 +358,7 @@ if raw_records:
                                         zf.writestr(f"{exp_key}/{name}.csv", csv_bytes)
                                 # write per-exp finals
                                 try:
-                                    from final_table import build_final_tables_from_corr, FinalTableConfig
+                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
                                     finals = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
                                     for exp_key, fin in (finals or {}).items():
                                         if fin is None or getattr(fin, "empty", True):
@@ -370,14 +370,12 @@ if raw_records:
                                 try:
                                     if 'df_final_multi' in locals() and df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
                                         zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
-            zf.writestr("final_table.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
                                 # aggregated final table (sum) used by chart
                                 try:
                                     if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
                                         zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
-            zf.writestr("final_table.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
 
@@ -473,7 +471,7 @@ if raw_records:
                 # Кнопка скачивания ZIP со всеми таблицами (single)
                 try:
                     import io, zipfile
-                    from final_table import build_final_tables_from_corr, FinalTableConfig
+                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
                     def _zip_single_tables(res_dict, df_corr_single, windows_single, exp_str):
                         bio = io.BytesIO()
                         with zipfile.ZipFile(bio, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
@@ -508,7 +506,7 @@ if raw_records:
                     st.exception(_e_zip_single)
             # 7) Финальная таблица (по df_corr + windows)
             try:
-                from final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
+                from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
                 from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
                 from lib.power_zone_er import compute_power_zone
                 import numpy as np
