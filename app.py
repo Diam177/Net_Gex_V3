@@ -369,14 +369,14 @@ if raw_records:
                                 # aggregated final table for Multi (used by chart)
                                 try:
                                     if 'df_final_multi' in locals() and df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
-                                        zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False)
+                                        zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
             zf.writestr("final_table.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
                                 # aggregated final table (sum) used by chart
                                 try:
                                     if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
-                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False)
+                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
             zf.writestr("final_table.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
