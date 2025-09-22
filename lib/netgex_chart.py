@@ -134,7 +134,7 @@ def render_netgex_bars(
     </style>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns(10, gap="small")
+    col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8, gap="small")
     with col1:
         show = st.toggle("Net GEX", value=True,
                          key=(toggle_key or f"netgex_toggle_{ticker}"))
@@ -164,14 +164,7 @@ def render_netgex_bars(
         show_pz = st.toggle("PZ", value=False,
                       key=(f"{toggle_key}__pz" if toggle_key else f"pz_toggle_{ticker}")
 )
-    with col9:
-        show_er_up = st.toggle("ER_Up", value=False,
-                      key=(f"{toggle_key}__er_up" if toggle_key else f"erup_toggle_{ticker}")
-)
-    with col10:
-        show_er_down = st.toggle("ER_Down", value=False,
-                      key=(f"{toggle_key}__er_down" if toggle_key else f"erdown_toggle_{ticker}")
-)
+
 
     if not show:
         return
@@ -273,7 +266,7 @@ def render_netgex_bars(
         hoverlabel=dict(bgcolor=COLOR_NEG, bordercolor="white",
                         font=dict(size=13, color="white")),
     ))
-# --- Put OI markers (toggle-controlled) ---
+# --- Put OI markers
     try:
         if 'show_put_oi' in locals() and show_put_oi:
             # Суммируем финальный put_oi по страйкам и выравниваем по Ks
@@ -297,7 +290,7 @@ def render_netgex_bars(
                 ))
     except Exception:
         pass
-    # --- Call OI markers (toggle-controlled) ---
+    # --- Call OI markers
     try:
         if 'show_call_oi' in locals() and show_call_oi:
             if ("K" in df_final.columns) and ("call_oi" in df_final.columns):
@@ -320,7 +313,7 @@ def render_netgex_bars(
     except Exception:
         pass
 
-    # --- Put Volume markers (toggle-controlled) ---
+    # --- Put Volume markers
     try:
         if 'show_put_vol' in locals() and show_put_vol:
             if ("K" in df_final.columns) and ("put_vol" in df_final.columns):
@@ -343,7 +336,7 @@ def render_netgex_bars(
     except Exception:
         pass
 
-    # --- Call Volume markers (toggle-controlled) ---
+    # --- Call Volume markers
     try:
         if 'show_call_vol' in locals() and show_call_vol:
             if ("K" in df_final.columns) and ("call_vol" in df_final.columns):
@@ -366,7 +359,7 @@ def render_netgex_bars(
     except Exception:
         pass
 
-    # --- AG markers (toggle-controlled) ---
+    # --- AG markers
     try:
         if 'show_ag' in locals() and show_ag:
             # предпочитаем AG_1pct, иначе AG_1pct_M
@@ -391,7 +384,7 @@ def render_netgex_bars(
     except Exception:
         pass
 
-    # --- PZ markers (toggle-controlled) ---
+    # --- PZ markers
     try:
         if 'show_pz' in locals() and show_pz:
             if ("K" in df_final.columns) and ("PZ" in df_final.columns):
@@ -413,52 +406,7 @@ def render_netgex_bars(
                 ))
     except Exception:
         pass
-
-    # --- ER_Up markers (toggle-controlled) ---
-    try:
-        if 'show_er_up' in locals() and show_er_up:
-            if ("K" in df_final.columns) and ("ER_Up" in df_final.columns):
-                df_eu = df_final.groupby("K", as_index=False)["ER_Up"].sum().sort_values("K").reset_index(drop=True)
-                _map_eu = {float(k): float(v) for k, v in zip(df_eu["K"].to_numpy(), df_eu["ER_Up"].to_numpy())}
-                y_eu = [_map_eu.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_eu,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#1FCE54"),
-                    marker=dict(size=6, color="#1FCE54"),
-                    fill="tozeroy",
-                    fillcolor="rgba(31, 206, 84, 0.3)",
-                    name="ER_Up",
-                    hovertemplate="Strike: %{customdata}<br>ER_Up: %{y:.3f}<extra></extra>",
-                ))
-    except Exception:
-        pass
-
-    # --- ER_Down markers (toggle-controlled) ---
-    try:
-        if 'show_er_down' in locals() and show_er_down:
-            if ("K" in df_final.columns) and ("ER_Down" in df_final.columns):
-                df_ed = df_final.groupby("K", as_index=False)["ER_Down"].sum().sort_values("K").reset_index(drop=True)
-                _map_ed = {float(k): float(v) for k, v in zip(df_ed["K"].to_numpy(), df_ed["ER_Down"].to_numpy())}
-                y_ed = [_map_ed.get(float(k), None) for k in Ks]
-                fig.add_trace(go.Scatter(
-                    x=x_idx,
-                    y=y_ed,
-                    customdata=Ks,
-                    yaxis="y2",
-                    mode="lines+markers",
-                    line=dict(shape="spline", smoothing=1.0, width=1.5, color="#D21717"),
-                    marker=dict(size=6, color="#D21717"),
-                    fill="tozeroy",
-                    fillcolor="rgba(210, 23, 23, 0.3)",
-                    name="ER_Down",
-                    hovertemplate="Strike: %{customdata}<br>ER_Down: %{y:.3f}<extra></extra>",
-                ))
-    except Exception:
-        pass
+    # --- removed ER markers ---
 
 
 
