@@ -358,7 +358,7 @@ if raw_records:
                                         zf.writestr(f"{exp_key}/{name}.csv", csv_bytes)
                                 # write per-exp finals
                                 try:
-                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig, build_final_sum_from_corr
                                     finals = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
                                     for exp_key, fin in (finals or {}).items():
                                         if fin is None or getattr(fin, "empty", True):
@@ -606,10 +606,23 @@ if raw_records:
                         base["PZ"] = pd.Series(pz, index=base.index).astype(float)
 
                         # порядок колонок
-                        cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","AG_1pct","NetGEX_1pct"]
-                        if "AG_1pct_M" in base.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
-                        cols += ["PZ"]
-                        df_final_multi = base[cols].sort_values("K").reset_index(drop=True)
+                        df_final_multi = build_final_sum_from_corr(
+    df_corr=df_corr,
+    windows=windows,
+    selected_exps=exp_list,
+    weight_mode=weight_mode,
+    cfg=final_cfg,
+)
+try:
+    if df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
+        st.sidebar.download_button(
+            "Скачать суммарную таблицу (Multi)",
+            data=df_final_multi.to_csv(index=False).encode("utf-8"),
+            file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
+            mime="text/csv",
+        )
+except Exception:
+    pass
 
                         _st_hide_subheader()
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
