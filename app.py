@@ -543,7 +543,31 @@ if raw_records:
                         weights = {e: w_raw[e]/w_sum for e in exp_list}
                         # Build aggregated final table via library function (Single-like window selection)
                         try:
-                            from lib.final_table import build_final_sum_from_corr, FinalTableConfig
+                            try:
+                                from lib.final_table import build_final_sum_from_corr, FinalTableConfig  # prefer package version
+                            except Exception:
+                                import importlib.util, pathlib, sys
+                                _candidates = [
+                                    pathlib.Path(__file__).parent / 'lib' / 'final_table.py',
+                                    pathlib.Path(__file__).parent / 'final_table.py',
+                                    pathlib.Path.cwd() / 'lib' / 'final_table.py',
+                                    pathlib.Path('/mnt/data/final_table.py'),
+                                ]
+                                _loaded = False
+                                for _cand in _candidates:
+                                    try:
+                                        if _cand.exists():
+                                            _spec = importlib.util.spec_from_file_location('final_table_dyn', str(_cand))
+                                            _mod = importlib.util.module_from_spec(_spec)
+                                            _spec.loader.exec_module(_mod)
+                                            build_final_sum_from_corr = _mod.build_final_sum_from_corr
+                                            FinalTableConfig = getattr(_mod, 'FinalTableConfig', None) or _mod.FinalTableConfig
+                                            _loaded = True
+                                            break
+                                    except Exception:
+                                        continue
+                                if not _loaded:
+                                    raise
                             df_final_multi = build_final_sum_from_corr(
                                 df_corr_multi,
                                 windows_multi,
@@ -562,6 +586,8 @@ if raw_records:
                             final_sum_df = df_final_multi
                             __multi_aggregated = True
                         except Exception as _agg_e:
+                            st.warning('Не удалось собрать суммарную финальную таблицу (Multi) через build_final_sum_from_corr. Перехожу к резервной логике.')
+                            st.exception(_agg_e)
                             st.warning('Не удалось собрать суммарную финальную таблицу (Multi) через build_final_sum_from_corr. Перехожу к резервной логике.')
                             st.exception(_agg_e)
 
