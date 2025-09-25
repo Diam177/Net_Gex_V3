@@ -567,8 +567,7 @@ if raw_records:
 
 
                         # 2) NetGEX/AG профили по каждой экспирации
-                        if not ('__multi_aggregated' in locals() and __multi_aggregated):
-                            per_exp = {}
+                        per_exp = {}
                         for e in exp_list:
                             nt = compute_netgex_ag_per_expiry(df_corr_multi, e, windows=windows_multi, cfg=NetGEXAGConfig(scale=scale_val, aggregate="none"))
                             per_exp[e] = nt[["K","AG_1pct","NetGEX_1pct"] + ([c for c in ["S","F"] if c in nt.columns])].copy()
