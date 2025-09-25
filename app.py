@@ -607,23 +607,22 @@ if raw_records:
 
                         # порядок колонок
                         df_final_multi = build_final_sum_from_corr(
-    df_corr=df_corr,
-    windows=windows,
-    selected_exps=exp_list,
-    weight_mode=weight_mode,
-    cfg=final_cfg,
-)
-try:
-    if df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
-        st.sidebar.download_button(
-            "Скачать суммарную таблицу (Multi)",
-            data=df_final_multi.to_csv(index=False).encode("utf-8"),
-            file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
-            mime="text/csv",
-        )
-except Exception:
-    pass
-
+                            df_corr=df_corr,
+                            windows=windows,
+                            selected_exps=exp_list,
+                            weight_mode=weight_mode,
+                            cfg=final_cfg,
+                        )
+                        try:
+                            if df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
+                                st.sidebar.download_button(
+                                    "Скачать суммарную таблицу (Multi)",
+                                    data=df_final_multi.to_csv(index=False).encode('utf-8'),
+                                    file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
+                                    mime="text/csv",
+                                )
+                        except Exception:
+                            pass
                         _st_hide_subheader()
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
                         # --- Net GEX chart (Multi: aggregated) ---
