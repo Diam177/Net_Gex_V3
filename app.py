@@ -520,92 +520,10 @@ if raw_records:
 
                     # --- MULTI режим: взвешенная сумма по нескольким экспирациям ---
                     if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
-                        # 1) веса по T
+                        
+                        # 1) выбранные экспирации (фильтр по df_corr)
                         exp_list = [e for e in selected_exps if e in df_corr["exp"].unique().tolist()]
-                        if not exp_list:
-                            raise ValueError("Нет выбранных экспираций для режима Multi.")
-                        t_map = {}
-                        for e in exp_list:
-                            T_vals = df_corr.loc[df_corr["exp"]==e, "T"].dropna().values
-                            T_med = float(np.nanmedian(T_vals)) if T_vals.size else float("nan")
-                            if not (math.isfinite(T_med) and T_med>0):
-                                T_med = 1.0/252.0  # защита от T→0/NaN
-                            t_map[e] = T_med
-                        w_raw = {}
-                        for e in exp_list:
-                            if weight_mode == "1/T":
-                                w_raw[e] = 1.0 / max(t_map[e], 1.0/252.0)
-                            elif weight_mode == "1/√T":
-                                w_raw[e] = 1.0 / math.sqrt(max(t_map[e], 1.0/252.0))
-                            else:
-                                w_raw[e] = 1.0
-                        w_sum = sum(w_raw.values()) or 1.0
-                        weights = {e: w_raw[e]/w_sum for e in exp_list}
-
-                        # 2) NetGEX/AG профили по каждой экспирации
-                        per_exp = {}
-                        for e in exp_list:
-                            nt = compute_netgex_ag_per_expiry(df_corr, e, windows=windows, cfg=NetGEXAGConfig(scale=scale_val, aggregate="none"))
-                            per_exp[e] = nt[["K","AG_1pct","NetGEX_1pct"] + ([c for c in ["S","F"] if c in nt.columns])].copy()
-
-                        # 3) единая сетка K (union)
-                        K_union = sorted(set().union(*[set(df["K"].astype(float).tolist()) for df in per_exp.values()]))
-                        base = pd.DataFrame({"K": K_union})
-                        # медианные S/F по сериям
-                        S_med = float(np.nanmedian([float(np.nanmedian(nt["S"])) for nt in per_exp.values() if "S" in nt.columns])) if per_exp else float("nan")
-                        base["S"] = S_med
-                        if any("F" in nt.columns for nt in per_exp.values()):
-                            F_vals = []
-                            for nt in per_exp.values():
-                                if "F" in nt.columns and nt["F"].notna().any():
-                                    F_vals.append(float(np.nanmedian(nt["F"])))
-                            base["F"] = float(np.nanmedian(F_vals)) if F_vals else np.nan
-
-                        base["AG_1pct"] = 0.0
-                        base["NetGEX_1pct"] = 0.0
-
-                        for e, nt in per_exp.items():
-                            m = nt.groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
-                            base = base.merge(m, left_on="K", right_index=True, how="left", suffixes=("","_add")).fillna(0.0)
-                            base["AG_1pct"] += weights[e] * base.pop("AG_1pct_add")
-                            base["NetGEX_1pct"] += weights[e] * base.pop("NetGEX_1pct_add")
-
-                        # 4) call_oi / put_oi (простая сумма по сериям)
-                        g = df_corr[df_corr["exp"].isin(exp_list)].copy()
-                        agg_oi = g.groupby(["K","side"], as_index=False)["oi"].sum()
-                        piv_oi = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
-                        base["call_oi"] = piv_oi.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
-                        base["put_oi"]  = piv_oi.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
-
-                        # 5) масштаб в млн $
-                        if scale_val and scale_val>0:
-                            base["AG_1pct_M"] = base["AG_1pct"] / scale_val
-                            base["NetGEX_1pct_M"] = base["NetGEX_1pct"] / scale_val
-
-                        # 6) PZ/ER по списку контекстов с весами
-                        all_ctx = []
-                        for e in exp_list:
-                            ctx_map = _series_ctx_from_corr(df_corr, e)
-                            if e in ctx_map:
-                                ctx = dict(ctx_map[e])  # копия
-                                # домножим "формообразующие" ряды
-                                if "gamma_abs_share" in ctx and "gamma_net_share" in ctx:
-                                    ctx["gamma_abs_share"] = (np.array(ctx["gamma_abs_share"], dtype=float) * weights[e])
-                                    ctx["gamma_net_share"] = (np.array(ctx["gamma_net_share"], dtype=float) * weights[e])
-                                all_ctx.append(ctx)
-
-                        strikes_eval = base["K"].astype(float).tolist()
-                        pz = compute_power_zone(
-                            S=S_med,
-                            strikes_eval=strikes_eval,
-                            all_series_ctx=all_ctx,
-                            day_high=getattr(final_cfg, "day_high", None),
-                            day_low=getattr(final_cfg, "day_low", None),
-                        )
-                        # маппинг на таблицу
-                        base["PZ"] = pd.Series(pz, index=base.index).astype(float)
-
-                        # порядок колонок
+                        # дальнейшая сборка передана в final_table.build_final_sum_from_corr
                         df_final_multi = build_final_sum_from_corr(
                             df_corr=df_corr,
                             windows=windows,
@@ -613,15 +531,30 @@ if raw_records:
                             weight_mode=weight_mode,
                             cfg=final_cfg,
                         )
-                        try:
-                            if df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
-                                st.sidebar.download_button(
-                                    "Скачать суммарную таблицу (Multi)",
-                                    data=df_final_multi.to_csv(index=False).encode('utf-8'),
-                                    file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
-                                    mime="text/csv",
-                                )
-                        except Exception:
+                        
+                        # Кнопка скачивания + диагностика
+                        if df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
+                            st.sidebar.download_button(
+                                "Скачать суммарную таблицу (Multi)",
+                                data=df_final_multi.to_csv(index=False).encode('utf-8'),
+                                file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
+                                mime="text/csv",
+                            )
+                        else:
+                            _reasons = []
+                            try:
+                                if not selected_exps:
+                                    _reasons.append("не выбраны экспирации")
+                            except Exception:
+                                pass
+                            try:
+                                if not windows:
+                                    _reasons.append("не построены окна")
+                            except Exception:
+                                pass
+                            if df_final_multi is None or getattr(df_final_multi, 'empty', True):
+                                _reasons.append("нет данных на объединённой сетке K")
+                            st.sidebar.info("Суммарная таблица пуста: " + "; ".join(_reasons) if _reasons else "Суммарная таблица пуста")
                             pass
                         _st_hide_subheader()
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
