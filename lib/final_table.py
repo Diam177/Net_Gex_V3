@@ -202,3 +202,120 @@ def process_from_raw(
     df_corr = res["df_corr"]; windows = res["windows"]
 
     return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
+
+
+# --- Aggregated final table across multiple expirations (Multi) ---
+def build_final_sum_from_corr(
+    df_corr: pd.DataFrame,
+    windows: Dict[str, np.ndarray],
+    selected_exps: Optional[List[str]] = None,
+    weight_mode: str = "1/√T",
+    cfg: FinalTableConfig = FinalTableConfig(),
+) -> pd.DataFrame:
+    """
+    Суммарная финальная таблица по нескольким экспирациям на единой сетке K.
+    Колонки: K, S[, F], call_oi, put_oi, call_vol, put_vol, AG_1pct, NetGEX_1pct, [AG_1pct_M, NetGEX_1pct_M], PZ.
+    AG/NetGEX и формообразующие ряды для PZ взвешиваются по режиму weight_mode: equal / 1/T / 1/√T.
+    OI и Volume агрегируются простым суммированием по выбранным экспирациям.
+    """
+    import numpy as np
+    import pandas as pd
+    from typing import List, Optional, Dict
+    from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
+
+    exps_all = sorted(df_corr["exp"].dropna().unique().tolist())
+    exp_list = [e for e in (selected_exps or exps_all) if e in exps_all]
+    if not exp_list:
+        return pd.DataFrame(columns=["K","S","AG_1pct","NetGEX_1pct","PZ"])
+
+    # Веса по экспирациям
+    t_map: Dict[str, float] = {}
+    for e in exp_list:
+        g = df_corr[df_corr["exp"] == e]
+        T_med = float(np.nanmedian(g["T"].values)) if len(g) else 1.0/252.0
+        t_map[e] = T_med if (T_med and np.isfinite(T_med)) else 1.0/252.0
+    w_raw: Dict[str, float] = {}
+    for e in exp_list:
+        if weight_mode == "1/T":
+            w_raw[e] = 1.0 / max(t_map[e], 1.0/252.0)
+        elif weight_mode == "1/√T":
+            w_raw[e] = 1.0 / np.sqrt(max(t_map[e], 1.0/252.0))
+        else:
+            w_raw[e] = 1.0
+    w_sum = sum(w_raw.values()) or 1.0
+    weights = {e: w_raw[e] / w_sum for e in exp_list}
+
+    # NetGEX/AG по экспирациям
+    scale_val = cfg.scale_millions if getattr(cfg, "scale_millions", None) else 1e6
+    per_exp: Dict[str, pd.DataFrame] = {}
+    for e in exp_list:
+        nt = compute_netgex_ag_per_expiry(
+            df_corr, e, windows=windows,
+            cfg=NetGEXAGConfig(scale=scale_val, aggregate="none")
+        )
+        keep = ["K","AG_1pct","NetGEX_1pct"] + [c for c in ["S","F"] if c in nt.columns]
+        per_exp[e] = nt[keep].copy()
+
+    # Единая сетка K
+    K_union = sorted(set().union(*[set(df["K"].astype(float).tolist()) for df in per_exp.values()]))
+    base = pd.DataFrame({"K": K_union})
+    # Медианные S/F
+    S_vals = [float(np.nanmedian(nt["S"])) for nt in per_exp.values() if "S" in nt.columns and nt["S"].notna().any()]
+    base["S"] = float(np.nanmedian(S_vals)) if S_vals else np.nan
+    if any("F" in nt.columns for nt in per_exp.values()):
+        F_vals = [float(np.nanmedian(nt["F"])) for nt in per_exp.values() if "F" in nt.columns and nt["F"].notna().any()]
+        base["F"] = float(np.nanmedian(F_vals)) if F_vals else np.nan
+
+    # Суммарные AG/NetGEX с весами
+    base["AG_1pct"] = 0.0
+    base["NetGEX_1pct"] = 0.0
+    for e, nt in per_exp.items():
+        m = nt.groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
+        base = base.merge(m, left_on="K", right_index=True, how="left", suffixes=("","_add")).fillna(0.0)
+        base["AG_1pct"] += weights[e] * base.pop("AG_1pct_add")
+        base["NetGEX_1pct"] += weights[e] * base.pop("NetGEX_1pct_add")
+
+    # Суммарные OI и Volume по всем сериям без весов
+    g = df_corr[df_corr["exp"].isin(exp_list)].copy()
+    agg_oi  = g.groupby(["K","side"], as_index=False)["oi"].sum()
+    agg_vol = g.groupby(["K","side"], as_index=False)["vol"].sum()
+    piv_oi  = agg_oi.pivot_table(index="K", columns="side", values="oi", aggfunc="sum").fillna(0.0)
+    piv_vol = agg_vol.pivot_table(index="K", columns="side", values="vol", aggfunc="sum").fillna(0.0)
+    base["call_oi"]  = piv_oi.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+    base["put_oi"]   = piv_oi.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+    base["call_vol"] = piv_vol.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+    base["put_vol"]  = piv_vol.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
+
+    # Масштаб в млн $
+    if scale_val and scale_val > 0:
+        base["AG_1pct_M"] = base["AG_1pct"] / scale_val
+        base["NetGEX_1pct_M"] = base["NetGEX_1pct"] / scale_val
+
+    # PZ: взвешиваем формообразующие ряды
+    all_ctx = []
+    for e in exp_list:
+        series_map = _series_ctx_from_corr(df_corr, e)
+        if e in series_map:
+            ctx = dict(series_map[e])
+            if "gamma_abs_share" in ctx:
+                ctx["gamma_abs_share"] = (np.array(ctx["gamma_abs_share"], dtype=float) * weights[e])
+            if "gamma_net_share" in ctx:
+                ctx["gamma_net_share"] = (np.array(ctx["gamma_net_share"], dtype=float) * weights[e])
+            all_ctx.append(ctx)
+
+    strikes_eval = base["K"].astype(float).tolist()
+    pz = compute_power_zone(
+        S=float(base["S"]) if "S" in base.columns and pd.notna(base["S"]).any() else float("nan"),
+        strikes_eval=strikes_eval,
+        all_series_ctx=all_ctx,
+        day_high=getattr(cfg, "day_high", None),
+        day_low=getattr(cfg, "day_low", None),
+    )
+    base["PZ"] = pd.Series(pz, index=base.index).astype(float)
+
+    cols = ["K","S"] + (["F"] if "F" in base.columns else []) +            ["call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct"]
+    if "AG_1pct_M" in base.columns:
+        cols += ["AG_1pct_M","NetGEX_1pct_M"]
+    cols += ["PZ"]
+    return base[cols].sort_values("K").reset_index(drop=True)
+
