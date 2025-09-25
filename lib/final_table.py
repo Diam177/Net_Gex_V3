@@ -203,8 +203,7 @@ def process_from_raw(
 
     return build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
 
-
-# === OVERRIDE: build_final_sum_from_corr ===
+# ===== Multi-mode: final sum table with Single-like window selection =====
 def build_final_sum_from_corr(
     df_corr: pd.DataFrame,
     windows: Dict[str, np.ndarray],
@@ -213,21 +212,23 @@ def build_final_sum_from_corr(
     cfg: FinalTableConfig = FinalTableConfig(),
 ) -> pd.DataFrame:
     """
-    Multi-aggregation with window selection AFTER aggregation.
-    Aggregates OI/Vol across expiries without per-exp windows.
-    Aggregates AG/NetGEX with weights across expiries without per-exp windows.
-    Then selects a contiguous evaluation window on the aggregated gamma_abs profile.
+    Агрегация по нескольким экспирациям. Окно выбирается по ТОЧНО той же процедуре, что и в Single:
+    - формируем "веса окна" w_blend на сетке K;
+    - старт от ATM; симметрично расширяемся до покрытия cfg.p_cover с пределами [cfg.nmin, cfg.nmax].
+    Остальная логика: OI/Vol — сумма по экспирациям; AG/NetGEX — взвешенная сумма по экспирациям.
     """
     import numpy as _np
     import pandas as _pd
     from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
+    from lib.sanitize_window import compute_window_weights, SanitizerConfig, _select_window_for_exp
 
+    # 0) список экспираций
     exps_all = sorted(_pd.Series(df_corr.get("exp", _pd.Series([], dtype=str))).dropna().unique().tolist())
     exp_list = [e for e in (selected_exps or exps_all) if e in exps_all]
     if not exp_list:
         return _pd.DataFrame(columns=["K","S","AG_1pct","NetGEX_1pct","PZ"])
 
-    # weights
+    # 1) веса по экспирациям
     t_map = {}
     for e in exp_list:
         g = df_corr.loc[df_corr["exp"] == e]
@@ -245,18 +246,14 @@ def build_final_sum_from_corr(
     w_sum = sum(w_raw.values()) or 1.0
     weights = {e: w_raw[e]/w_sum for e in exp_list}
 
-    # per-exp panels WITHOUT windows
+    # 2) NetGEX/AG per-exp без окон и объединённая сетка
     scale_val = getattr(cfg, "scale_millions", 1e6) or 1e6
     per_exp = {}
     for e in exp_list:
-        nt = compute_netgex_ag_per_expiry(
-            df_corr, e, windows=None,
-            cfg=NetGEXAGConfig(scale=scale_val, aggregate="none")
-        )
+        nt = compute_netgex_ag_per_expiry(df_corr, e, windows=None, cfg=NetGEXAGConfig(scale=scale_val, aggregate="none"))
         keep = ["K","AG_1pct","NetGEX_1pct"] + [c for c in ["S","F"] if c in nt.columns]
         per_exp[e] = nt[keep].copy()
 
-    # union K and median S/F
     K_union = sorted(set().union(*[set(_pd.to_numeric(df["K"], errors="coerce").dropna().tolist()) for df in per_exp.values()]))
     base = _pd.DataFrame({"K": K_union})
     S_vals = [float(_np.nanmedian(nt["S"])) for nt in per_exp.values() if "S" in nt.columns and nt["S"].notna().any()]
@@ -265,7 +262,7 @@ def build_final_sum_from_corr(
         F_vals = [float(_np.nanmedian(nt["F"])) for nt in per_exp.values() if "F" in nt.columns and nt["F"].notna().any()]
         base["F"] = float(_np.nanmedian(F_vals)) if F_vals else _np.nan
 
-    # weighted AG/Net across expiries
+    # 3) агрегируем AG/NetGEX по весам
     base["AG_1pct"] = 0.0; base["NetGEX_1pct"] = 0.0
     for e, nt in per_exp.items():
         m = nt.groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
@@ -273,7 +270,7 @@ def build_final_sum_from_corr(
         base["AG_1pct"]     += weights[e] * base.pop("AG_1pct_add")
         base["NetGEX_1pct"] += weights[e] * base.pop("NetGEX_1pct_add")
 
-    # OI/Vol sum across expiries without windows
+    # 4) агрегируем OI/Vol суммой
     g = df_corr[df_corr["exp"].isin(exp_list)].copy()
     agg_oi  = g.groupby(["K","side"], as_index=False)["oi"].sum()
     agg_vol = g.groupby(["K","side"], as_index=False)["vol"].sum()
@@ -284,61 +281,52 @@ def build_final_sum_from_corr(
     base["call_vol"] = piv_vol.get("C", _pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
     base["put_vol"]  = piv_vol.get("P", _pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
 
-    # scale to millions
     if scale_val and scale_val > 0:
         base["AG_1pct_M"]     = base["AG_1pct"] / scale_val
         base["NetGEX_1pct_M"] = base["NetGEX_1pct"] / scale_val
 
-    # PZ context and window selection AFTER aggregation
+    # 5) ВЫБОР ОКНА — как в Single: по w_blend, через _select_window_for_exp
+    #    a) считаем per-exp df_weights и агрегируем w_blend с весами экспираций на общую сетку
+    s_cfg = SanitizerConfig()  # использовать те же p_cover, nmin, nmax
+    dfw = compute_window_weights(df_corr[df_corr["exp"].isin(exp_list)].copy(), cfg=s_cfg)
+    w_agg = _np.zeros(len(base), dtype=float)
+    k_to_pos = {float(k): i for i,k in enumerate(base["K"].astype(float).tolist())}
+    for e in exp_list:
+        sub = dfw[dfw["exp"] == e][["K","w_blend"]]
+        for _, row in sub.iterrows():
+            pos = k_to_pos.get(float(row["K"]))
+            if pos is not None:
+                w_agg[pos] += float(row["w_blend"]) * float(weights[e])
+
+    #    b) тот же селектор: старт от ATM и симметричное расширение до покрытия p, с cap [nmin,nmax]
+    strikes = base["K"].astype(float).to_numpy()
+    S_mid = float(_np.nanmedian(base["S"])) if "S" in base.columns and _pd.notna(base["S"]).any() else float("nan")
+    idx = _select_window_for_exp(strikes, w_agg, S_mid, s_cfg.p_cover, s_cfg.nmin, s_cfg.nmax)
+    strikes_eval = strikes[idx].tolist() if idx.size>0 else strikes.tolist()
+
+    # 6) PZ: контексты per-exp с весами по gamma-шарам (как было), но считаем только на strikes_eval
     all_ctx = []
-    agg_profile = _np.zeros(len(base), dtype=float)
     for e in exp_list:
         ctx_map = _series_ctx_from_corr(df_corr, e)
         if e not in ctx_map:
             continue
         ctx = dict(ctx_map[e])
-        if "gamma_abs_share" in ctx and "strikes" in ctx:
-            k_map = {float(k): i for i,k in enumerate(ctx["strikes"])}
-            for iK, K in enumerate(base["K"].astype(float).tolist()):
-                j = k_map.get(float(K))
-                if j is not None:
-                    agg_profile[iK] += float(ctx["gamma_abs_share"][j]) * weights[e]
+        # домножим формы на вес экспирации, чтобы вклад был сопоставим при суммировании внутри PZ
+        if "gamma_abs_share" in ctx:
             ctx["gamma_abs_share"] = (_np.asarray(ctx["gamma_abs_share"], dtype=float) * weights[e])
         if "gamma_net_share" in ctx:
             ctx["gamma_net_share"] = (_np.asarray(ctx["gamma_net_share"], dtype=float) * weights[e])
         all_ctx.append(ctx)
 
-    # Select evaluation window by covering target share of aggregated gamma_abs mass
-    target = 0.90
-    Ks = base["K"].astype(float).to_numpy()
-    w = agg_profile.astype(float).copy()
-    if _np.isfinite(w).any() and float(w.sum()) > 0.0:
-        w = w / float(w.sum())
-        i0 = int(_np.nanargmax(w))
-        lo = hi = i0
-        mass = float(w[i0])
-        while mass < target and (lo > 0 or hi < len(w)-1):
-            left = w[lo-1] if lo > 0 else -1.0
-            right = w[hi+1] if hi < len(w)-1 else -1.0
-            if right >= left and hi < len(w)-1:
-                hi += 1; mass += float(w[hi])
-            elif lo > 0:
-                lo -= 1; mass += float(w[lo])
-            else:
-                break
-        strikes_eval = Ks[lo:hi+1].tolist()
-    else:
-        strikes_eval = Ks.tolist()
-        strikes_eval = base["K"].astype(float).iloc[lo:hi].tolist()
-
     pz = compute_power_zone(
-        S=float(_np.nanmedian(base["S"])) if "S" in base.columns and _pd.notna(base["S"]).any() else float("nan"),
+        S=S_mid,
         strikes_eval=strikes_eval,
         all_series_ctx=all_ctx,
         day_high=getattr(cfg, "day_high", None),
         day_low=getattr(cfg, "day_low", None),
     )
 
+    # 7) Вставим PZ и по желанию обрежем NetGEX вне окна (чтобы не плодить «пустые» столбики)
     base["PZ"] = 0.0
     if strikes_eval:
         idx_map = {float(k): i for i,k in enumerate(strikes_eval)}
@@ -347,7 +335,16 @@ def build_final_sum_from_corr(
             if j is not None:
                 base.at[i, "PZ"] = float(pz[j])
 
-    cols = ["K","S"] + (["F"] if "F" in base.columns else []) +            ["call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct"]
+    # Обнулим NetGEX вне окна (AG оставим как есть для контроля агрегата)
+    if strikes_eval:
+        keep = set(map(float, strikes_eval))
+        mask_keep = base["K"].astype(float).isin(keep)
+        base.loc[~mask_keep, "NetGEX_1pct"] = 0.0
+        if "NetGEX_1pct_M" in base.columns:
+            base.loc[~mask_keep, "NetGEX_1pct_M"] = 0.0
+
+    cols = ["K","S"] + (["F"] if "F" in base.columns else []) + \
+           ["call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct"]
     if "AG_1pct_M" in base.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
     cols += ["PZ"]
     return base[cols].sort_values("K").reset_index(drop=True)
