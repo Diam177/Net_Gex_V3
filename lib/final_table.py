@@ -308,20 +308,27 @@ def build_final_sum_from_corr(
             ctx["gamma_net_share"] = (_np.asarray(ctx["gamma_net_share"], dtype=float) * weights[e])
         all_ctx.append(ctx)
 
-    n_win = int(_np.nanmedian([len(windows.get(e, _np.array([], dtype=int))) for e in exp_list if e in windows]) or 0)
-    if n_win <= 0 or n_win > len(base):
-        strikes_eval = base["K"].astype(float).tolist()
+    # Select evaluation window by covering target share of aggregated gamma_abs mass
+    target = 0.90
+    Ks = base["K"].astype(float).to_numpy()
+    w = agg_profile.astype(float).copy()
+    if _np.isfinite(w).any() and float(w.sum()) > 0.0:
+        w = w / float(w.sum())
+        i0 = int(_np.nanargmax(w))
+        lo = hi = i0
+        mass = float(w[i0])
+        while mass < target and (lo > 0 or hi < len(w)-1):
+            left = w[lo-1] if lo > 0 else -1.0
+            right = w[hi+1] if hi < len(w)-1 else -1.0
+            if right >= left and hi < len(w)-1:
+                hi += 1; mass += float(w[hi])
+            elif lo > 0:
+                lo -= 1; mass += float(w[lo])
+            else:
+                break
+        strikes_eval = Ks[lo:hi+1].tolist()
     else:
-        if _np.isfinite(agg_profile).any():
-            if float(agg_profile.sum()) > 0:
-                agg_profile = agg_profile / float(agg_profile.sum())
-            k0 = int(_np.nanargmax(agg_profile))
-        else:
-            k0 = len(base)//2
-        half = max(1, n_win//2)
-        lo = max(0, k0 - half)
-        hi = min(len(base), lo + n_win)
-        lo = max(0, hi - n_win)
+        strikes_eval = Ks.tolist()
         strikes_eval = base["K"].astype(float).iloc[lo:hi].tolist()
 
     pz = compute_power_zone(
