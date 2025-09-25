@@ -577,22 +577,6 @@ if raw_records:
                         base["call_oi"] = piv_oi.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
                         base["put_oi"]  = piv_oi.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
 
-
-                        # 4a) call_vol / put_vol (простая сумма по сериям, если есть колонка 'volume')
-                        if "volume" in g.columns:
-                            gvol = g[g["volume"].notna()].copy()
-                            if not gvol.empty:
-                                agg_vol = gvol.groupby(["K","side"], as_index=False)["volume"].sum()
-                                piv_vol = agg_vol.pivot_table(index="K", columns="side", values="volume", aggfunc="sum").fillna(0.0)
-                                base["call_vol"] = piv_vol.get("C", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
-                                base["put_vol"]  = piv_vol.get("P", pd.Series(dtype=float)).reindex(base["K"], fill_value=0.0).to_numpy()
-                            else:
-                                base["call_vol"] = 0.0
-                                base["put_vol"]  = 0.0
-                        else:
-                            base["call_vol"] = 0.0
-                            base["put_vol"]  = 0.0
-
                         # 5) масштаб в млн $
                         if scale_val and scale_val>0:
                             base["AG_1pct_M"] = base["AG_1pct"] / scale_val
@@ -622,40 +606,13 @@ if raw_records:
                         base["PZ"] = pd.Series(pz, index=base.index).astype(float)
 
                         # порядок колонок
-                        cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct"]
+                        cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","AG_1pct","NetGEX_1pct"]
                         if "AG_1pct_M" in base.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
                         cols += ["PZ"]
                         df_final_multi = base[cols].sort_values("K").reset_index(drop=True)
 
                         _st_hide_subheader()
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
-
-                        # Кнопка скачивания финальной таблицы (Multi, агрегат)
-                        try:
-                            _csv_bytes = df_final_multi.to_csv(index=False).encode("utf-8")
-                            st.download_button(
-                                "Скачать финальную таблицу (Multi, агрегат)",
-                                data=_csv_bytes,
-                                file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
-                                mime="text/csv",
-                            )
-                        except Exception:
-                            pass
-
-                        # Кнопка скачивания финальной таблицы (Multi, все даты построчно)
-                        try:
-                            from lib.final_table import build_final_tables_from_corr, FinalTableConfig
-                            finals = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
-                            _stacked = pd.concat([df.assign(exp=exp) for exp, df in (finals or {}).items() if df is not None and not getattr(df, 'empty', True)], ignore_index=True)
-                            st.download_button(
-                                "Скачать финальную таблицу (Multi, все даты построчно)",
-                                data=_stacked.to_csv(index=False).encode("utf-8"),
-                                file_name=(f"{ticker}_FINAL_STACKED.csv" if 'ticker' in locals() and ticker else "FINAL_STACKED.csv"),
-                                mime="text/csv",
-                            )
-                        except Exception:
-                            pass
-
                         # --- Net GEX chart (Multi: aggregated) ---
                         try:
                             render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
