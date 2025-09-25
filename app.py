@@ -358,7 +358,7 @@ if raw_records:
                                         zf.writestr(f"{exp_key}/{name}.csv", csv_bytes)
                                 # write per-exp finals
                                 try:
-                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig, build_final_sum_from_corr
+                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
                                     finals = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
                                     for exp_key, fin in (finals or {}).items():
                                         if fin is None or getattr(fin, "empty", True):
@@ -506,7 +506,7 @@ if raw_records:
                     st.exception(_e_zip_single)
             # 7) Финальная таблица (по df_corr + windows)
             try:
-                from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr
+                from lib.final_table import build_final_tables_from_corr, FinalTableConfig, _series_ctx_from_corr, build_final_sum_from_corr
                 from lib.netgex_ag import compute_netgex_ag_per_expiry, NetGEXAGConfig
                 from lib.power_zone_er import compute_power_zone
                 import numpy as np
@@ -520,10 +520,30 @@ if raw_records:
 
                     # --- MULTI режим: взвешенная сумма по нескольким экспирациям ---
                     if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
-                        
-                        # 1) выбранные экспирации (фильтр по df_corr)
+                        # 1) веса по T
                         exp_list = [e for e in selected_exps if e in df_corr["exp"].unique().tolist()]
-                        # дальнейшая сборка передана в final_table.build_final_sum_from_corr
+                        if not exp_list:
+                            raise ValueError("Нет выбранных экспираций для режима Multi.")
+                        t_map = {}
+                        for e in exp_list:
+                            T_vals = df_corr.loc[df_corr["exp"]==e, "T"].dropna().values
+                            T_med = float(np.nanmedian(T_vals)) if T_vals.size else float("nan")
+                            if not (math.isfinite(T_med) and T_med>0):
+                                T_med = 1.0/252.0  # защита от T→0/NaN
+                            t_map[e] = T_med
+                        w_raw = {}
+                        for e in exp_list:
+                            if weight_mode == "1/T":
+                                w_raw[e] = 1.0 / max(t_map[e], 1.0/252.0)
+                            elif weight_mode == "1/√T":
+                                w_raw[e] = 1.0 / math.sqrt(max(t_map[e], 1.0/252.0))
+                            else:
+                                w_raw[e] = 1.0
+                        w_sum = sum(w_raw.values()) or 1.0
+                        weights = {e: w_raw[e]/w_sum for e in exp_list}
+
+                        
+                        # --- Суммарная финальная таблица (Multi) через final_table.build_final_sum_from_corr ---
                         df_final_multi = build_final_sum_from_corr(
                             df_corr=df_corr,
                             windows=windows,
@@ -531,31 +551,31 @@ if raw_records:
                             weight_mode=weight_mode,
                             cfg=final_cfg,
                         )
-                        
-                        # Кнопка скачивания + диагностика
-                        if df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
-                            st.sidebar.download_button(
-                                "Скачать суммарную таблицу (Multi)",
-                                data=df_final_multi.to_csv(index=False).encode('utf-8'),
-                                file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
-                                mime="text/csv",
-                            )
+                        # Диагностика и кнопка скачивания
+                        if df_final_multi is None or getattr(df_final_multi, "empty", True):
+                            reason = []
+                            if not exp_list:
+                                reason.append("не выбраны экспирации")
+                            if not windows or not any(len(windows.get(e, [])) for e in exp_list):
+                                reason.append("не построены окна")
+                            if df_final_multi is None or getattr(df_final_multi, "empty", True):
+                                reason.append("нет данных на объединённой сетке K")
+                            st.sidebar.info("Суммарная таблица пуста: " + ", ".join(reason))
                         else:
-                            _reasons = []
+                            _st_hide_subheader()
+                            _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
                             try:
-                                if not selected_exps:
-                                    _reasons.append("не выбраны экспирации")
-                            except Exception:
-                                pass
-                            try:
-                                if not windows:
-                                    _reasons.append("не построены окна")
-                            except Exception:
-                                pass
-                            if df_final_multi is None or getattr(df_final_multi, 'empty', True):
-                                _reasons.append("нет данных на объединённой сетке K")
-                            st.sidebar.info("Суммарная таблица пуста: " + "; ".join(_reasons) if _reasons else "Суммарная таблица пуста")
-                            pass
+                                st.sidebar.download_button(
+                                    "Скачать суммарную таблицу (Multi)",
+                                    data=df_final_multi.to_csv(index=False).encode("utf-8"),
+                                    file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
+                                    mime="text/csv",
+                                )
+                            except Exception as _dl_e:
+                                st.sidebar.warning("Не удалось подготовить CSV суммарной таблицы.")
+                                st.sidebar.exception(_dl_e)
+
+
                         _st_hide_subheader()
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
                         # --- Net GEX chart (Multi: aggregated) ---
