@@ -299,7 +299,7 @@ def build_final_sum_from_corr(
         all_ctx.append(ctx)
     strikes_eval = base["K"].astype(float).tolist()
     pz = compute_power_zone(
-        S=float(base["S"]) if pd.notna(base.get("S", np.nan)).any() else float("nan"),
+        S=(float(np.nanmedian(base["S"].astype(float))) if ("S" in base.columns and pd.notna(base["S"]).any()) else float("nan")),
         strikes_eval=strikes_eval,
         all_series_ctx=all_ctx,
         day_high=getattr(cfg, "day_high", None),
