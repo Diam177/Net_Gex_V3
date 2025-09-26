@@ -483,7 +483,7 @@ def render_key_levels(
 
     # Дата под осью
     fig.add_annotation(
-        x=0.5, xref="paper", y=-0.12, yref="paper",
+        x=0.5, xref="paper", y=-0.08, yref="paper",
         text=_format_date_for_footer(pd.to_datetime(x_left)),
         showarrow=False, xanchor="center", yanchor="top",
         font=dict(size=10, color="#FFFFFF"),
