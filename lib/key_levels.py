@@ -333,14 +333,12 @@ def render_key_levels(
 
                     fig.add_trace(go.Scatter(
                         x=x_curve, y=Ks, mode="lines",
-                        line=dict(width=1.2, color=COLOR_PZ),
+                        line_shape='spline',
+                        line=dict(width=1.2, color=COLOR_PZ, smoothing=0.9),
                         name="Power Zone", showlegend=True, legendrank=LEGEND_RANK.get("PZ", 70),
                         customdata=PZ_raw, hovertemplate="Strike: %{y:g}<br>PZ: %{customdata:.0f}<extra></extra>",
                         fill="tozerox", fillcolor="rgba(228,197,30,0.25)", opacity=0.9
                     ))
-                    fig.add_vrect(x0=x_left, x1=x_band_end,
-                                  line_width=1, line_color=COLOR_PZ,
-                                  fillcolor="rgba(228,197,30,0.06)", opacity=0.3, layer="below")
             # --- /Power Zone ---
 
     # --- Горизонтальные уровни ---
