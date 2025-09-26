@@ -191,9 +191,9 @@ def compute_power_zone(
             mx = float(_np.nanmax(arr)) if arr.size else 0.0
             return (arr / mx) if mx > 0 else _np.zeros_like(arr)
 
-        AG_hat   = _norm01(AG_loc)
-        Stab_hat = _norm01(Stab_e)
-        Act_hat  = _norm01(Act_raw)
+        AG_hat = AG_loc
+        Stab_hat = Stab_e
+        Act_hat = Act_raw
 
         prep.append({
             "Ks": Ks,
