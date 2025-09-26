@@ -83,7 +83,7 @@ def compute_power_zone(
                             iv_vals.append(vv)
                     except Exception:
                         pass
-    sigma_est = float(_np.median(iv_vals)) if iv_vals else 0.25
+    sigma_est = float(_np.median(iv_vals)) if iv_vals else 0.0
     # Интрадейный диапазон R
     if isinstance(day_high, (int, float)) and isinstance(day_low, (int, float)):
         R = float(day_high) - float(day_low)
@@ -98,9 +98,9 @@ def compute_power_zone(
     step_eval = _median_step(strikes_eval.tolist())
 
     # Базовая ширина ядра по волатильности (1/sqrt(252))
-    h_base = float(S) * max(float(sigma_est), 0.05) / math.sqrt(252.0)
-    # Итоговая ширина: ограничиваем range и сеткой
-    h = max(0.25*step_eval, min(0.025*float(S), max(h_base, R/6.0)))
+    T_med = float(_np.median(T_arr[T_arr > 0])) if _np.any(T_arr > 0) else (1.0/252.0)
+    h_base = float(S) * float(sigma_est) * math.sqrt(T_med)
+    h = max(step_eval, h_base)
 
     # --- Предобработка серий: сглаженные AG, стабильность и активность ---
     prep = []
@@ -128,8 +128,8 @@ def compute_power_zone(
             g_net = _np.asarray(g_raw_net, dtype=float)
 
         # Перевод в долларовые величины (как в проекте): * S / 1000
-        AG_e = g_abs * float(S) / 1000.0
-        NG_e = _np.abs(g_net) * float(S) / 1000.0
+            AG_e = _np.asarray(g_abs, float)
+            NG_e = _np.abs(_np.asarray(g_net, float))
 
         # Локальное треугольное сглаживание по окну h
         def _median_step2(xarr: List[float]) -> float:
@@ -174,7 +174,16 @@ def compute_power_zone(
         idxs = _np.arange(len(Ks), dtype=int)
         dist_steps = _np.abs(idxs - atm_idx)
         w_blend = _np.clip(1.0 - dist_steps / d_star, 0.0, 1.0)
-        Act_raw = w_blend * Vol_eff + (1.0 - w_blend) * OI_eff
+        vol_sum = _np.maximum(vol_vec, 0.0)
+        oi_sum  = _np.maximum(call_oi_vec + put_oi_vec, 0.0)
+
+        mxv = float(_np.nanmax(vol_sum)) if vol_sum.size else 0.0
+        mxi = float(_np.nanmax(oi_sum))  if oi_sum.size  else 0.0
+
+        vol_n = (vol_sum / mxv) if mxv > 0.0 else _np.zeros_like(vol_sum)
+        oi_n  = (oi_sum  / mxi) if mxi > 0.0 else _np.zeros_like(oi_sum)
+
+        Act_raw = _np.sqrt(vol_n * oi_n)
 
         # Нормировки к [0,1]
         def _norm01(arr: _np.ndarray) -> _np.ndarray:
@@ -214,6 +223,4 @@ def compute_power_zone(
         left = idx_near - 1; right = idx_near
         pick = _np.where(_np.abs(Ks[left] - strikes_eval) <= _np.abs(Ks[right] - strikes_eval), left, right)
         mass_vals += w_e * Wd_eval * (c["AG_hat"][pick] * c["Stab_hat"][pick] * c["Act_hat"][pick])
-    max_mass = float(_np.nanmax(mass_vals)) if n_eval > 0 else 0.0
-    pz_norm = (mass_vals / max_mass) if max_mass > 0 else _np.zeros_like(mass_vals)
-    return pz_norm
+    return mass_vals
