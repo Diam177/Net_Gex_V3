@@ -337,7 +337,7 @@ def render_key_levels(
                         line=dict(width=1.2, color=COLOR_PZ, smoothing=0.9),
                         name="Power Zone", showlegend=True, legendrank=LEGEND_RANK.get("PZ", 70),
                         customdata=PZ_raw, hovertemplate="Strike: %{y:g}<br>PZ: %{customdata:.0f}<extra></extra>",
-                        fill="tozerox", fillcolor="rgba(228,197,30,0.25)", opacity=0.9
+                        fill="tozerox", fillcolor="rgba(228,197,30,0.175)", opacity=0.9
                     ))
             # --- /Power Zone ---
 
@@ -483,9 +483,9 @@ def render_key_levels(
 
     # Дата под осью
     fig.add_annotation(
-        x=0.0, xref="paper", y=-0.12, yref="paper",
+        x=0.5, xref="paper", y=-0.12, yref="paper",
         text=_format_date_for_footer(pd.to_datetime(x_left)),
-        showarrow=False, xanchor="left", yanchor="top",
+        showarrow=False, xanchor="center", yanchor="top",
         font=dict(size=10, color="#FFFFFF"),
     )
 
