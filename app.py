@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
@@ -711,28 +712,28 @@ if raw_records:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
 
-# --- Key Levels chart (Multi) ---
-try:
-    import pandas as pd, pytz
-    # Подбор столбца NetGEX и spot для G-Flip
-    _ycol_m = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
-    _spot_m = float(pd.to_numeric(df_final_multi.get("S"), errors="coerce").median()) if ("S" in df_final_multi.columns) else None
-    _gflip_m = _compute_gamma_flip_from_table(df_final_multi, y_col=_ycol_m or "NetGEX_1pct", spot=_spot_m)
-    # Привязываем G-Flip к ближайшему доступному страйку из df_final_multi['K']
-    try:
-        _Ks_m = pd.to_numeric(df_final_multi.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final_multi.columns) else []
-        if (_gflip_m is not None) and _Ks_m:
-            _gflip_m = float(min(_Ks_m, key=lambda x: abs(float(x) - float(_gflip_m))))
-    except Exception:
-        pass
-    # Дата сессии и прайс‑лента для Key Levels
-    _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
-    _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
-    # Рендер
-    render_key_levels(df_final=df_final_multi, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
-except Exception as _klm_e:
-    st.error('Не удалось отобразить чарт Key Levels (Multi)')
-    st.exception(_klm_e)
+                            # --- Key Levels chart (Multi) ---
+                            try:
+                                import pandas as pd, pytz
+                                # Подбор столбца NetGEX и spot для G-Flip
+                                _ycol_m = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
+                                _spot_m = float(pd.to_numeric(df_final_multi.get("S"), errors="coerce").median()) if ("S" in df_final_multi.columns) else None
+                                _gflip_m = _compute_gamma_flip_from_table(df_final_multi, y_col=_ycol_m or "NetGEX_1pct", spot=_spot_m)
+                                # Привязываем G-Flip к ближайшему доступному страйку из df_final_multi['K']
+                                try:
+                                    _Ks_m = pd.to_numeric(df_final_multi.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final_multi.columns) else []
+                                    if (_gflip_m is not None) and _Ks_m:
+                                        _gflip_m = float(min(_Ks_m, key=lambda x: abs(float(x) - float(_gflip_m))))
+                                except Exception:
+                                    pass
+                                # Дата сессии и прайс‑лента для Key Levels
+                                _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
+                                # Рендер
+                                render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
+                            except Exception as _klm_e:
+                                st.error('Не удалось отобразить чарт Key Levels (Multi)')
+                                st.exception(_klm_e)
 
 
                     else:
