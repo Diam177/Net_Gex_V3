@@ -153,7 +153,7 @@ def _get_api_key() -> str | None:
 
 api_key = _get_api_key()
 if not api_key:
-    st.error("POLYGON_API_KEY не задан в Streamlit Secrets или переменных окружения.")
+    st.error("POLYGON_API_KEY is not set in Streamlit Secrets or environment variables.")
     st.stop()
 
 
@@ -168,7 +168,7 @@ def _normalize_ticker():
 
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
-    st.text_input("Тикер", key="ticker", on_change=_normalize_ticker)
+    st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
     ticker = st.session_state.get("ticker", "")
 
     # Получаем список будущих экспираций под выбранный тикер
@@ -178,24 +178,24 @@ with st.sidebar:
             expirations = list_future_expirations(ticker, api_key)
             st.session_state[f"expirations:{ticker}"] = expirations
         except Exception as e:
-            st.error(f"Не удалось получить даты экспираций: {e}")
+            st.error(f"Unable to retrieve expiration dates: {e}")
             expirations = []
 
     if expirations:
         # по умолчанию ближайшая дата — первая в списке
         default_idx = 0
-        sel = st.selectbox("Дата экспирации", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
+        sel = st.selectbox("Expiration date", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
 
         # --- Режим агрегации экспираций ---
-        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
+        mode_exp = st.radio("Expiration mode", ["Single","Multi"], index=0, horizontal=True)
         selected_exps = []
-        weight_mode = "равные"
+        weight_mode = "equal"
         if mode_exp == "Single":
             selected_exps = [expiration]
         else:
-            selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
-            weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
+            selected_exps = st.multiselect("Select expiration", options=expirations, default=expirations[:2])
+            weight_mode = st.selectbox("Weighing", ["equal","1/T","1/√T"], index=2)
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
