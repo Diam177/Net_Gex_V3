@@ -182,28 +182,19 @@ with st.sidebar:
             expirations = []
 
     if expirations:
-        expirations = sorted(expirations)
         # по умолчанию ближайшая дата — первая в списке
         default_idx = 0
         sel = st.selectbox("Дата экспирации", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
 
         # --- Режим агрегации экспираций ---
-        prev_mode_key = f"prev_mode_exp:{ticker}"
-        mode_key = f"mode_exp:{ticker}"
-        multi_key = f"multi_exps:{ticker}"
-        prev_mode = st.session_state.get(prev_mode_key, "Single")
-        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True, key=mode_key)
-        st.session_state[prev_mode_key] = mode_exp
+        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True)
         selected_exps = []
         weight_mode = "равные"
         if mode_exp == "Single":
             selected_exps = [expiration]
         else:
-            # при входе в Multi или если ключ ещё не установлен — выбрать две ближайшие
-            if (multi_key not in st.session_state) or (prev_mode != "Multi" and mode_exp == "Multi"):
-                st.session_state[multi_key] = expirations[:2] if expirations else []
-            selected_exps = st.multiselect("Выберите экспирации", options=expirations, key=multi_key)
+            selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
             weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
     else:
         expiration = ""
@@ -375,7 +366,13 @@ if raw_records:
                                         zf.writestr(f"{exp_key}/final_table.csv", fin.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
-                                # aggregated final table (Multi)
+                                # aggregated final table for Multi (used by chart)
+                                try:
+                                    if 'df_final_multi' in locals() and df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
+                                        zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
+                                except Exception:
+                                    pass
+                                # aggregated final table (sum) used by chart
                                 try:
                                     if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
                                         zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
@@ -387,7 +384,7 @@ if raw_records:
                             return bio
                         if any(tbl is not None and (not getattr(tbl, "empty", True)) 
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
-                            zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None) else None)
+                            zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
                             dl_tables_container.download_button("Скачать таблицы",
                                 data=zip_bytes.getvalue(),
