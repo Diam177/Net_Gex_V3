@@ -201,6 +201,7 @@ def build_final_sum_from_corr(
     """
     # 0) Список экспираций
     exps_all = sorted(df_corr.get("exp", pd.Series(dtype=str)).dropna().unique().tolist())
+    s_cfg = SanitizerConfig()  # defaults for p_cover/nmin/nmax as in single
     exp_list = [e for e in (selected_exps or exps_all) if e in exps_all]
     if not exp_list:
         return pd.DataFrame(columns=["K","S","call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct","PZ"])
