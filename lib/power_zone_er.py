@@ -66,6 +66,7 @@ def compute_power_zone(
         for s in all_series_ctx
     ], dtype=float)
     T_arr = _np.array([float(s.get("T", 0.0)) for s in all_series_ctx], dtype=float)
+    T_arr = _np.maximum(T_arr, 1.0/252.0)  # clip to avoid blow-ups at T->0
     W_time = total_oi * (T_arr**(-eta)) * ((1.0 - tau)**zeta)
     W_time = (W_time / W_time.sum()) if W_time.sum() > 0 else _np.ones_like(W_time) / len(W_time)
 
