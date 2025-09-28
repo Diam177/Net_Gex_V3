@@ -106,8 +106,8 @@ def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
 
     ctx = {
         "strikes": Ks.tolist(),
-        "gamma_abs_share": [gamma_abs_share[float(k)] for k in Ks],
-        "gamma_net_share": [gamma_net_share[float(k)] for k in Ks],
+        "gamma_abs_share": list(np.asarray(gamma_abs_share, dtype=float)) ,
+        "gamma_net_share": list(np.asarray(gamma_net_share, dtype=float)),
         "call_oi": call_oi,
         "put_oi": put_oi,
         "call_vol": call_vol,
@@ -435,8 +435,8 @@ def build_final_sum_from_corr(
 
         all_ctx.append({
             "strikes": [float(k) for k in Ks],
-            "gamma_abs_share": [gamma_abs_share[float(k)] for k in Ks],
-            "gamma_net_share": [gamma_net_share[float(k)] for k in Ks],
+            "gamma_abs_share": list(np.asarray(gamma_abs_share, dtype=float)) ,
+        "gamma_net_share": list(np.asarray(gamma_net_share, dtype=float)),
             "call_oi": call_oi, "put_oi": put_oi,
             "call_vol": call_vol, "put_vol": put_vol,
             "iv_call": iv_call, "iv_put": iv_put,
