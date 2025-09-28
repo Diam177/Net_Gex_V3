@@ -712,6 +712,21 @@ if raw_records:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
 
+
+                            
+                        # --- Key Levels chart (Multi) ---
+                        try:
+                            import pandas as pd, pytz
+                            _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                            _ycol = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
+                            _spot_for_flip = float(pd.to_numeric(df_final_multi["S"], errors="coerce").median()) if "S" in df_final_multi.columns else None
+                            _gflip_val = _compute_gamma_flip_from_table(df_final_multi, y_col=_ycol or "NetGEX_1pct", spot=_spot_for_flip)
+                            _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
+                            render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_multi")
+                        except Exception as _kl_em:
+                            st.error('Не удалось отобразить чарт Key Levels (Multi)')
+                            st.exception(_kl_em)
+
                     else:
                         # --- SINGLE режим: как было ---
                         final_tables = build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
