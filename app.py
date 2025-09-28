@@ -375,16 +375,10 @@ if raw_records:
                                         zf.writestr(f"{exp_key}/final_table.csv", fin.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
-                                # aggregated final table for Multi (used by chart)
-                                try:
-                                    if 'df_final_multi' in locals() and df_final_multi is not None and not getattr(df_final_multi, 'empty', True):
-                                        zf.writestr("FINAL_SUM.csv", df_final_multi.to_csv(index=False).encode("utf-8"))
-                                except Exception:
-                                    pass
-                                # aggregated final table (sum) used by chart
+                                # aggregated final table (Multi)
                                 try:
                                     if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
-                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
+                                        zf.writestr(\"FINAL_SUM.csv\", final_sum_df.to_csv(index=False).encode(\"utf-8\"))
                                 except Exception:
                                     pass
 
@@ -393,7 +387,7 @@ if raw_records:
                             return bio
                         if any(tbl is not None and (not getattr(tbl, "empty", True)) 
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
-                            zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
+                            zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None) else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
                             dl_tables_container.download_button("Скачать таблицы",
                                 data=zip_bytes.getvalue(),
