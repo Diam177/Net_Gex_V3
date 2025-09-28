@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Tuple
 import streamlit as st
 
 
+
+try:
+    from advanced_analysis_block import update_ao_summary, render_advanced_analysis_block
+except Exception:
+    update_ao_summary = None
+    render_advanced_analysis_block = None
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
     import pandas as pd
@@ -712,21 +718,6 @@ if raw_records:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
 
-
-                            
-                        # --- Key Levels chart (Multi) ---
-                        try:
-                            import pandas as pd, pytz
-                            _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
-                            _ycol = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
-                            _spot_for_flip = float(pd.to_numeric(df_final_multi["S"], errors="coerce").median()) if "S" in df_final_multi.columns else None
-                            _gflip_val = _compute_gamma_flip_from_table(df_final_multi, y_col=_ycol or "NetGEX_1pct", spot=_spot_for_flip)
-                            _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
-                            render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_multi")
-                        except Exception as _kl_em:
-                            st.error('Не удалось отобразить чарт Key Levels (Multi)')
-                            st.exception(_kl_em)
-
                     else:
                         # --- SINGLE режим: как было ---
                         final_tables = build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
@@ -762,6 +753,65 @@ if raw_records:
                                     _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
+
+                                    # --- Advanced Analysis block (auto-added) ---
+                                    try:
+                                        if render_advanced_analysis_block and update_ao_summary:
+                                            import pandas as pd
+                                            def _build_df_options_agg(df: pd.DataFrame) -> pd.DataFrame:
+                                                cols = {c.lower(): c for c in df.columns}
+                                                k = cols.get("k") or cols.get("strike") or "K"
+                                                agg = {}
+                                                # optional columns present in final window
+                                                for name in ("put_oi","call_oi","put_volume","call_volume","netgex_1pct_m","netgex_1pct","net_gex","netgex"):
+                                                    if name in cols:
+                                                        agg[cols[name]] = "sum"
+                                                g = df.groupby(k, as_index=False).agg(agg) if agg else df[[k]].copy()
+                                                # normalize column names
+                                                rename_map = {}
+                                                if "put_oi" in cols:      rename_map[cols["put_oi"]] = "put_oi"
+                                                if "call_oi" in cols:     rename_map[cols["call_oi"]] = "call_oi"
+                                                if "put_volume" in cols:  rename_map[cols["put_volume"]] = "put_volume"
+                                                if "call_volume" in cols: rename_map[cols["call_volume"]] = "call_volume"
+                                                if "netgex_1pct_m" in cols: rename_map[cols["netgex_1pct_m"]] = "net_gex"
+                                                elif "netgex_1pct" in cols: rename_map[cols["netgex_1pct"]] = "net_gex"
+                                                elif "net_gex" in cols:     rename_map[cols["net_gex"]] = "net_gex"
+                                                elif "netgex" in cols:      rename_map[cols["netgex"]] = "net_gex"
+                                                return g.rename(columns=rename_map)
+                                    
+                                            # get ticker and price
+                                            ticker_cur = st.session_state.get("ticker") or locals().get("ticker") or globals().get("ticker")
+                                            S = st.session_state.get("spot") or st.session_state.get("last_price") or st.session_state.get("price")
+                                            vwap_series = None
+                                            if ("_price_df" in locals()) and (locals().get("_price_df") is not None):
+                                                _pdf = locals().get("_price_df")
+                                                if hasattr(_pdf, "columns") and ("vwap" in _pdf.columns):
+                                                    vwap_series = _pdf["vwap"]
+                                    
+                                            # prefer df_final if present, else aggregate multi
+                                            if ("df_final" in locals()) and (locals().get("df_final") is not None) and (not getattr(locals().get("df_final"), "empty", True)):
+                                                df_options_agg = _build_df_options_agg(locals().get("df_final"))
+                                                exps = []
+                                                _df = locals().get("df_final")
+                                                if hasattr(_df, "columns") and ("exp" in _df.columns) and len(_df):
+                                                    try:
+                                                        exps = [str(_df.get("exp").iloc[0])]
+                                                    except Exception:
+                                                        exps = []
+                                                update_ao_summary(ticker=ticker_cur or "", df_options=df_options_agg, current_price=S, selected_expirations=exps, extra_iv=st.session_state.get("iv_summary"))
+                                                render_advanced_analysis_block(fallback_ticker=ticker_cur or "", vwap_series=vwap_series)
+                                            elif isinstance(locals().get("df_final_multi"), dict) and locals().get("df_final_multi"):
+                                                frames = [v for v in locals().get("df_final_multi").values() if v is not None and not getattr(v, "empty", True)]
+                                                if len(frames):
+                                                    import pandas as pd
+                                                    df_concat = pd.concat(frames, ignore_index=True)
+                                                    if not df_concat.empty:
+                                                        df_options_agg = _build_df_options_agg(df_concat)
+                                                        exps = list(locals().get("df_final_multi").keys())
+                                                        update_ao_summary(ticker=ticker_cur or "", df_options=df_options_agg, current_price=S, selected_expirations=exps, extra_iv=st.session_state.get("iv_summary"))
+                                                        render_advanced_analysis_block(fallback_ticker=ticker_cur or "", vwap_series=vwap_series)
+                                    except Exception as _aa_err:
+                                        st.caption(f"Advanced Analysis block skipped: {_aa_err}")
                                 except Exception as _kl_e:
                                     st.error('Не удалось отобразить чарт Key Levels')
                                     st.exception(_kl_e)
