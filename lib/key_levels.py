@@ -301,44 +301,6 @@ def render_key_levels(
             vwap_series = (pr.mul(vol)).cumsum() / cum_vol
         else:
             vwap_series = None
-
-# --- Power Zone: левая полоска с заливкой ---
-        if "PZ" in df_final.columns:
-            g = (
-                df_final[["K", "PZ"]]
-                .assign(K=lambda x: pd.to_numeric(x["K"], errors="coerce"),
-                        PZ=lambda x: pd.to_numeric(x["PZ"], errors="coerce"))
-                .dropna()
-                .groupby("K", as_index=False)["PZ"].sum()
-                .sort_values("K")
-                .reset_index(drop=True)
-            )
-            Ks = g["K"].to_numpy(dtype=float)
-            PZ_raw = g["PZ"].to_numpy(dtype=float)
-            band_frac = 0.12  # ширина левой полосы по оси времени
-            x_band_end = x_left + (x_right - x_left) * band_frac
-            # нормировка только для геометрии X (не меняет натуральные значения PZ)
-            pz01 = (PZ_raw - np.nanmin(PZ_raw)) / max(np.nanmax(PZ_raw) - np.nanmin(PZ_raw), 1e-12)
-            x_curve = pd.to_datetime(x_left) + (pd.to_datetime(x_band_end) - pd.to_datetime(x_left)) * pz01
-
-            fig.add_trace(go.Scatter(
-                x=[pd.to_datetime(x_left)] * len(Ks), y=Ks, mode="lines",
-                line=dict(width=0), hoverinfo="skip",
-                showlegend=False
-            ))            # Robust filled band using paper coords on x
-            try:
-                _px = (pd.Series(PZ_raw) - float(np.nanmin(PZ_raw))) / max(float(np.nanmax(PZ_raw) - np.nanmin(PZ_raw)), 1e-12)
-                _px = _px.clip(lower=0, upper=1).to_numpy()
-                _xx = _px * band_frac  # 0..band_frac in paper coords
-                # Path: from left baseline up, then along curve back to baseline
-                pts = [f"L {_xx[i]:.6f},{float(Ks[i]):.6f}" for i in range(len(Ks))]
-                path = f"M 0,{float(Ks[0]):.6f} " + " ".join(pts) + f" L 0,{float(Ks[-1]):.6f} Z"
-                fig.add_shape(type="path", path=path, xref="paper", yref="y",
-                               line=dict(width=0), fillcolor="rgba(228,197,30,0.175)", opacity=0.9, layer="above")
-            except Exception as _pz_shape_err:
-                # Fallback: no-op if shape construction fails
-                pass
-        # --- /Power Zone ---
         if vwap_series is not None:
             fig.add_trace(go.Scatter(
                 x=pdf["time"], y=vwap_series,
@@ -349,9 +311,40 @@ def render_key_levels(
             ))
 
 
-            
 
-    # --- Горизонтальные уровни ---
+
+
+    
+    # --- Power Zone: левая полоска с заливкой ---
+    if "PZ" in df_final.columns:
+        g = (
+            df_final[["K", "PZ"]]
+            .assign(K=lambda x: pd.to_numeric(x["K"], errors="coerce"),
+                    PZ=lambda x: pd.to_numeric(x["PZ"], errors="coerce"))
+            .dropna()
+            .groupby("K", as_index=False)["PZ"].sum()
+            .sort_values("K")
+            .reset_index(drop=True)
+        )
+        Ks = g["K"].to_numpy(dtype=float)
+        PZ_raw = g["PZ"].to_numpy(dtype=float)
+        if Ks.size >= 2:
+            band_frac = 0.12  # ширина левой полосы по оси времени
+            x_band_end = x_left + (x_right - x_left) * band_frac
+            # нормировка только для геометрии X (не меняет натуральные значения PZ)
+            pz01 = (PZ_raw - np.nanmin(PZ_raw)) / max(np.nanmax(PZ_raw) - np.nanmin(PZ_raw), 1e-12)
+            x_curve = pd.to_datetime(x_left) + (pd.to_datetime(x_band_end) - pd.to_datetime(x_left)) * pz01
+
+            fig.add_trace(go.Scatter(
+                x=x_curve, y=Ks, mode="lines",
+                line_shape='spline',
+                line=dict(width=1.2, color=COLOR_PZ, smoothing=0.9),
+                name="Power Zone", showlegend=True, legendrank=LEGEND_RANK.get("PZ", 70),
+                customdata=PZ_raw, hovertemplate="Strike: %{y:g}<br>PZ: %{customdata:.0f}<extra></extra>",
+                fill="tozerox", fillcolor="rgba(228,197,30,0.175)", opacity=0.9
+            ))
+    # --- /Power Zone ---
+# --- Горизонтальные уровни ---
     color_map = {
         "Max Pos GEX": COLOR_MAX_POS_GEX,
         "Max Neg GEX": COLOR_MAX_NEG_GEX,
