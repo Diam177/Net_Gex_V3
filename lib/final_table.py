@@ -106,8 +106,8 @@ def _series_ctx_from_corr(df_corr: pd.DataFrame, exp: str) -> Dict[str, dict]:
 
     ctx = {
         "strikes": Ks.tolist(),
-        "gamma_abs_share": list(np.asarray(gamma_abs_share, dtype=float)) ,
-        "gamma_net_share": list(np.asarray(gamma_net_share, dtype=float)),
+        "gamma_abs_share": [float(x) for x in np.asarray(gamma_abs_share, dtype=float)],
+            "gamma_net_share": [float(x) for x in np.asarray(gamma_net_share, dtype=float)],
         "call_oi": call_oi,
         "put_oi": put_oi,
         "call_vol": call_vol,
@@ -421,8 +421,8 @@ def build_final_sum_from_corr(
         # доли
         ag = ctx["AG"]; net = ctx["Net"]
         sum_ag = float(np.nansum(ag)); sum_net_abs = float(np.nansum(np.abs(net)))
-        gamma_abs_share = {float(k): (float(v)/sum_ag if sum_ag>0 else 0.0) for k, v in zip(Ks, ag)}
-        gamma_net_share = {float(k): (float(v)/sum_net_abs if sum_net_abs>0 else 0.0) for k, v in zip(Ks, net)}
+        gamma_abs_share = (ag / sum_ag) if sum_ag>0 else np.zeros_like(ag)
+        gamma_net_share = (net / sum_net_abs) if sum_net_abs>0 else np.zeros_like(net)
         # словари OI/Vol по K
         call_oi = {float(k): float(v) for k, v in zip(Ks, ctx["call_oi"])}
         put_oi  = {float(k): float(v) for k, v in zip(Ks, ctx["put_oi"])}
@@ -435,8 +435,8 @@ def build_final_sum_from_corr(
 
         all_ctx.append({
             "strikes": [float(k) for k in Ks],
-            "gamma_abs_share": list(np.asarray(gamma_abs_share, dtype=float)) ,
-        "gamma_net_share": list(np.asarray(gamma_net_share, dtype=float)),
+            "gamma_abs_share": [float(x) for x in np.asarray(gamma_abs_share, dtype=float)],
+            "gamma_net_share": [float(x) for x in np.asarray(gamma_net_share, dtype=float)],
             "call_oi": call_oi, "put_oi": put_oi,
             "call_vol": call_vol, "put_vol": put_vol,
             "iv_call": iv_call, "iv_put": iv_put,
