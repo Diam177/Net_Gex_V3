@@ -365,6 +365,41 @@ def build_final_sum_from_corr(
     idx_win = _select_window_like_single(K_union, W, S_multi, p_cover, nmin, nmax)
     K_window = K_union[idx_win]
 
+    # --- DEBUG: persist detailed state for Multi aggregation ---
+    try:
+        import os, json, time, numpy as np, pandas as _pd
+        _dbg_dir = "/mnt/data/debug_multi"
+        os.makedirs(_dbg_dir, exist_ok=True)
+        _ts = time.strftime("%Y%m%d-%H%M%S")
+        _tag = f"multi_{_ts}"
+        _meta = {
+            "exp_list": list(exp_list),
+            "weights": {e: float(w[e]) for e in w},
+            "T": {e: float(per_exp[e]["T"]) for e in per_exp},
+            "S_multi": float(S_multi),
+            "F_multi": float(np.nanmedian([ctx.get("F", float('nan')) for ctx in per_exp.values()]))
+        }
+        with open(os.path.join(_dbg_dir, f"{_tag}_meta.json"), "w", encoding="utf-8") as f:
+            json.dump(_meta, f, ensure_ascii=False, indent=2)
+        for _e, _ctx in per_exp.items():
+            _df = _pd.DataFrame({
+                "K": _ctx["Ks"].astype(float),
+                "AG": _ctx["AG"].astype(float),
+                "Net": _ctx["Net"].astype(float),
+                "m_norm": _ctx["m_norm"].astype(float),
+                "call_oi": _ctx["call_oi"].astype(float),
+                "put_oi": _ctx["put_oi"].astype(float),
+                "call_vol": _ctx["call_vol"].astype(float),
+                "put_vol": _ctx["put_vol"].astype(float),
+            })
+            _df.to_csv(os.path.join(_dbg_dir, f"{_tag}_perexp_{_e}.csv"), index=False)
+        _dfW = _pd.DataFrame({"K": K_union.astype(float), "W": W.astype(float)})
+        _inwin = np.zeros_like(K_union, dtype=int); _inwin[idx_win] = 1
+        _dfW["in_window"] = _inwin
+        _dfW.to_csv(os.path.join(_dbg_dir, f"{_tag}_W.csv"), index=False)
+    except Exception:
+        pass
+
     # 6) Агрегация рядов на Multi-окне
     # Подготовим словари по K для ускорения
     K_to_pos = {k:i for i,k in enumerate(K_window)}
@@ -463,6 +498,42 @@ def build_final_sum_from_corr(
     if "AG_1pct_M" in base.columns:
         cols += ["AG_1pct_M","NetGEX_1pct_M"]
     cols += ["PZ"]
+    # --- DEBUG: dump output and a self-check aggregation ---
+    try:
+        import os, time, pandas as _pd, numpy as _np
+        _dbg_dir = "/mnt/data/debug_multi"
+        os.makedirs(_dbg_dir, exist_ok=True)
+        _ts = time.strftime("%Y%m%d-%H%M%S")
+        _tag = f"multi_{_ts}"
+        base.to_csv(os.path.join(_dbg_dir, f"{_tag}_SUM_out.csv"), index=False)
+        _K = K_window
+        _AG_chk = _np.zeros_like(_K, float); _NG_chk = _np.zeros_like(_K, float)
+        _COI = _np.zeros_like(_K, float); _POI = _np.zeros_like(_K, float)
+        _CV  = _np.zeros_like(_K, float); _PV  = _np.zeros_like(_K, float)
+        _mapK = {float(k):i for i,k in enumerate(_K)}
+        for _e,_ctx in per_exp.items():
+            _k2i = {float(k): i for i,k in enumerate(_ctx["Ks"])}
+            for _k, _pos in _mapK.items():
+                _i = _k2i.get(float(_k))
+                if _i is None: 
+                    continue
+                _AG_chk[_pos] += w[_e]*float(_ctx["AG"][_i])
+                _NG_chk[_pos] += w[_e]*float(_ctx["Net"][_i])
+                _COI[_pos] += float(_ctx["call_oi"][_i])
+                _POI[_pos] += float(_ctx["put_oi"][_i])
+                _CV[_pos]  += float(_ctx["call_vol"][_i])
+                _PV[_pos]  += float(_ctx["put_vol"][_i])
+        _chk = _pd.DataFrame({
+            "K": _K.astype(float),
+            "AG_chk": _AG_chk, "Net_chk": _NG_chk,
+            "call_oi_chk": _COI, "put_oi_chk": _POI,
+            "call_vol_chk": _CV, "put_vol_chk": _PV,
+        })
+        _cmp = base.merge(_chk, on="K", how="left")
+        _cmp.to_csv(os.path.join(_dbg_dir, f"{_tag}_compare.csv"), index=False)
+    except Exception:
+        pass
+
     return base[cols].sort_values("K").reset_index(drop=True)
 def process_from_raw(
     raw_records: List[dict],
