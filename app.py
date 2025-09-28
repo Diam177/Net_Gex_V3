@@ -387,6 +387,39 @@ if raw_records:
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
                             dl_tables_container.download_button("Скачать таблицы",
+
+                            # Extra: DEBUG bundle download (zip /mnt/data/debug_multi)
+                            try:
+                                import io, os, zipfile, time
+                                _dbg_dir = "/mnt/data/debug_multi"
+                                if os.path.isdir(_dbg_dir):
+                                    # Collect files
+                                    files = []
+                                    for root, _, fnames in os.walk(_dbg_dir):
+                                        for fn in fnames:
+                                            files.append(os.path.join(root, fn))
+                                    if files:
+                                        # Zip only recent run if multiple: group by timestamp token in filename
+                                        # Otherwise zip all.
+                                        bio_dbg = io.BytesIO()
+                                        with zipfile.ZipFile(bio_dbg, mode="w", compression=zipfile.ZIP_DEFLATED) as zf_dbg:
+                                            for fp in files:
+                                                try:
+                                                    arc = os.path.relpath(fp, _dbg_dir)
+                                                    zf_dbg.write(fp, arcname=arc)
+                                                except Exception:
+                                                    pass
+                                        bio_dbg.seek(0)
+                                        st.download_button(
+                                            "Скачать DEBUG-пакет",
+                                            data=bio_dbg.getvalue(),
+                                            file_name=f"debug_multi_{time.strftime('%Y%m%d-%H%M%S')}.zip",
+                                            mime="application/zip",
+                                            type="secondary",
+                                            use_container_width=False,
+                                        )
+                            except Exception:
+                                pass
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
