@@ -712,65 +712,6 @@ if raw_records:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
 
-                        # --- Key Levels chart (Multi: aggregated) ---
-                        try:
-                            import pytz, pandas as pd
-                            _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
-                            try:
-                                _price_df
-                            except NameError:
-                                _price_df = None
-                            if _price_df is None:
-                                _price_df = _load_session_price_df_for_key_levels(
-                                    ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""), timeout=30
-                                )
-                            render_key_levels(
-                                df_final=df_final_multi,
-                                ticker=ticker,
-                                g_flip=None,
-                                price_df=_price_df,
-                                session_date=_session_date_str,
-                                toggle_key="key_levels_multi",
-                            )
-                        except Exception as _klm_e:
-                            st.error('Не удалось отобразить чарт Key Levels (Multi)')
-                            st.exception(_klm_e)
-
-                        # --- Advanced Analysis block (Multi) ---
-                        try:
-                            if render_advanced_analysis_block and update_ao_summary:
-                                import pandas as pd
-                                def _build_df_options_agg_multi(df: pd.DataFrame) -> pd.DataFrame:
-                                    cols = {c.lower(): c for c in df.columns}
-                                    k = cols.get("k") or cols.get("strike") or "K"
-                                    agg = {}
-                                    for name in ("put_oi","call_oi","put_volume","call_volume","netgex_1pct_m","netgex_1pct","net_gex","netgex"):
-                                        if name in cols:
-                                            agg[cols[name]] = "sum"
-                                    g = df.groupby(k, as_index=False).agg(agg) if agg else df[[k]].copy()
-                                    rename_map = {}
-                                    if "put_oi" in cols:      rename_map[cols["put_oi"]] = "put_oi"
-                                    if "call_oi" in cols:     rename_map[cols["call_oi"]] = "call_oi"
-                                    if "put_volume" in cols:  rename_map[cols["put_volume"]] = "put_volume"
-                                    if "call_volume" in cols: rename_map[cols["call_volume"]] = "call_volume"
-                                    if "netgex_1pct_m" in cols: rename_map[cols["netgex_1pct_m"]] = "net_gex"
-                                    elif "netgex_1pct" in cols: rename_map[cols["netgex_1pct"]] = "net_gex"
-                                    elif "net_gex" in cols:     rename_map[cols["net_gex"]] = "net_gex"
-                                    elif "netgex" in cols:      rename_map[cols["netgex"]] = "net_gex"
-                                    return g.rename(columns=rename_map)
-                                frames = [v for v in df_final_multi.values() if v is not None and not getattr(v, "empty", True)]
-                                if len(frames):
-                                    df_concat = pd.concat(frames, ignore_index=True)
-                                    if not df_concat.empty:
-                                        df_options_agg = _build_df_options_agg_multi(df_concat)
-                                        ticker_cur = st.session_state.get("ticker") or (ticker if 'ticker' in locals() else "")
-                                        S_cur = st.session_state.get("spot") or st.session_state.get("last_price") or st.session_state.get("price")
-                                        vwap_series = _price_df["vwap"] if ('_price_df' in locals() and hasattr(_price_df, "columns") and "vwap" in _price_df.columns) else None
-                                        update_ao_summary(ticker=ticker_cur, df_options=df_options_agg, current_price=S_cur, selected_expirations=list(df_final_multi.keys()), extra_iv=st.session_state.get("iv_summary"))
-                                        render_advanced_analysis_block(fallback_ticker=ticker_cur, vwap_series=vwap_series)
-                        except Exception as _aa_multi_err:
-                            st.caption(f"Advanced Analysis (Multi) skipped: {_aa_multi_err}")
-
                     else:
                         # --- SINGLE режим: как было ---
                         final_tables = build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
