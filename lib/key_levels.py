@@ -324,21 +324,20 @@ def render_key_levels(
                 )
                 Ks = g["K"].to_numpy(dtype=float)
                 PZ_raw = g["PZ"].to_numpy(dtype=float)
-                if Ks.size > 1 and np.nanmax(PZ_raw) > 0:
-                    band_frac = 0.12  # ширина левой полосы по оси времени
-                    x_band_end = x_left + (x_right - x_left) * band_frac
-                    # нормировка только для геометрии X (не меняет натуральные значения PZ)
-                    pz01 = (PZ_raw - np.nanmin(PZ_raw)) / max(np.nanmax(PZ_raw) - np.nanmin(PZ_raw), 1e-12)
-                    x_curve = pd.to_datetime(x_left) + (pd.to_datetime(x_band_end) - pd.to_datetime(x_left)) * pz01
+                band_frac = 0.12  # ширина левой полосы по оси времени
+                x_band_end = x_left + (x_right - x_left) * band_frac
+                # нормировка только для геометрии X (не меняет натуральные значения PZ)
+                pz01 = (PZ_raw - np.nanmin(PZ_raw)) / max(np.nanmax(PZ_raw) - np.nanmin(PZ_raw), 1e-12)
+                x_curve = pd.to_datetime(x_left) + (pd.to_datetime(x_band_end) - pd.to_datetime(x_left)) * pz01
 
-                    fig.add_trace(go.Scatter(
-                        x=x_curve, y=Ks, mode="lines",
-                        line_shape='spline',
-                        line=dict(width=1.2, color=COLOR_PZ, smoothing=0.9),
-                        name="Power Zone", showlegend=True, legendrank=LEGEND_RANK.get("PZ", 70),
-                        customdata=PZ_raw, hovertemplate="Strike: %{y:g}<br>PZ: %{customdata:.0f}<extra></extra>",
-                        fill="tozerox", fillcolor="rgba(228,197,30,0.175)", opacity=0.9
-                    ))
+                fig.add_trace(go.Scatter(
+                    x=x_curve, y=Ks, mode="lines",
+                    line_shape='spline',
+                    line=dict(width=1.2, color=COLOR_PZ, smoothing=0.9),
+                    name="Power Zone", showlegend=True, legendrank=LEGEND_RANK.get("PZ", 70),
+                    customdata=PZ_raw, hovertemplate="Strike: %{y:g}<br>PZ: %{customdata:.0f}<extra></extra>",
+                    fill="tozerox", fillcolor="rgba(228,197,30,0.175)", opacity=0.9
+                ))
             # --- /Power Zone ---
 
     # --- Горизонтальные уровни ---
