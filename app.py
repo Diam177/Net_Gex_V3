@@ -258,6 +258,17 @@ if raw_records:
         # --- TRUE MULTI-EXP PROCESSING: прогон по каждой выбранной экспирации и объединение ---
         try:
             if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
+
+                # --- QA Sidebar setup for Multi ---
+                qa_mode = st.sidebar.toggle("QA режим Multi", value=True)
+                ok_exps, fail_exps = [], []
+                _qa_rows = []
+                st.sidebar.caption("Диагностика Multi")
+                try:
+                    st.sidebar.write(f"Выбрано дат: **{len(selected_exps)}**")
+                except Exception:
+                    st.sidebar.write("Выбрано дат: ?")
+
                 import pandas as pd
                 df_corr_multi_list = []
                 windows_multi = {}
@@ -271,9 +282,44 @@ if raw_records:
                         if dfe is not None and not getattr(dfe, "empty", True):
                             df_corr_multi_list.append(dfe)
                         win_e = res_e.get("windows") or {}
+
+                        # QA: collect per-exp stats
+                        try:
+                            ok_exps.append(_exp)
+                            rows_cnt = int(len(dfe)) if dfe is not None else 0
+                            k_cnt = 0
+                            k_min = float("nan"); k_max = float("nan")
+                            dfw_e = res_e.get("df_weights")
+                            if isinstance(dfw_e, pd.DataFrame) and not dfw_e.empty and isinstance(win_e, dict):
+                                try:
+                                    gW = dfw_e[dfw_e.get("exp")==_exp].sort_values("K").reset_index(drop=True)
+                                    idxs = list(win_e.get(_exp, win_e.get("window", []))) if hasattr(win_e, "get") else []
+                                    ks = []
+                                    for ii in idxs:
+                                        ii = int(ii)
+                                        if 0 <= ii < len(gW):
+                                            ks.append(float(gW.loc[ii, "K"]))
+                                    if ks:
+                                        k_cnt = len(ks)
+                                        k_min = min(ks); k_max = max(ks)
+                                except Exception:
+                                    pass
+                            _qa_rows.append({"exp": _exp, "status": "OK", "rows_df_corr": rows_cnt, "K_in_window": k_cnt, "K_min": k_min, "K_max": k_max})
+                        except Exception:
+                            pass
+
                         for k, v in win_e.items():
                             windows_multi[k] = v
                     except Exception as _exc:
+
+                        # QA: record failure
+                        try:
+                            fail_exps.append((_exp, f"{type(_exc).__name__}: {_exc}"))
+                            if qa_mode:
+                                st.sidebar.error(f"{_exp}: {type(_exc).__name__}: {_exc}")
+                        except Exception:
+                            pass
+
                         # мягко пропускаем проблемные экспирации, чтобы не ломать UI
                         pass
 
@@ -282,6 +328,25 @@ if raw_records:
                 if windows_multi:
                     windows = windows_multi
                     # --- Соберём промежуточные таблицы по каждой экспирации для ZIP-скачивания ---
+
+                # QA: sidebar summary after per-exp processing
+                try:
+                    st.sidebar.write(f"Собрано дат: **{len(ok_exps)}**")
+                    if fail_exps:
+                        st.sidebar.write("Проблемы: " + "; ".join(e for e, _ in fail_exps))
+                    if _qa_rows:
+                        try:
+                            import pandas as _pd  # alias to avoid shadowing
+                        except Exception:
+                            pass
+                        try:
+                            _df_qa = pd.DataFrame(_qa_rows).set_index("exp")
+                            st.sidebar.dataframe(_df_qa, use_container_width=True, height=220)
+                        except Exception:
+                            st.sidebar.write(_qa_rows)
+                except Exception:
+                    pass
+
                     try:
                         import io, zipfile
                         import pandas as pd
@@ -551,6 +616,60 @@ if raw_records:
                             weight_mode=weight_mode,
                             cfg=final_cfg,
                         )
+
+                        # --- QA: Sidebar Multi diagnostics for aggregated table ---
+                        try:
+                            union_k = int(df_final_multi["K"].nunique()) if ("K" in df_final_multi.columns) else int(len(df_final_multi))
+                        except Exception:
+                            union_k = int(len(df_final_multi)) if df_final_multi is not None else 0
+                        try:
+                            df_multi_rows = int(len(df_final_multi)) if df_final_multi is not None else 0
+                        except Exception:
+                            df_multi_rows = 0
+                        # weights diagnostics
+                        try:
+                            weights_sum = float(sum((weights or {}).values())) if isinstance(weights, dict) else float("nan")
+                        except Exception:
+                            weights_sum = float("nan")
+                        # invariants
+                        try:
+                            need_cols = [c for c in ["AG_1pct","NetGEX_1pct","call_oi","put_oi","K"] if c in getattr(df_final_multi, "columns", [])]
+                            no_nan_critical = bool(df_final_multi[need_cols].notna().all().all()) if need_cols else True
+                            k_sorted_unique = bool(df_final_multi["K"].is_monotonic_increasing and df_final_multi["K"].is_unique) if "K" in getattr(df_final_multi, "columns", []) else True
+                        except Exception:
+                            no_nan_critical = False
+                            k_sorted_unique = False
+                        # sidebar render
+                        try:
+                            st.sidebar.markdown("### Multi QA")
+                            st.sidebar.metric("Выбрано дат", len(selected_exps))
+                            try:
+                                st.sidebar.metric("Собрано дат", len(ok_exps))
+                            except Exception:
+                                pass
+                            st.sidebar.metric("Страйков в union", union_k)
+                            st.sidebar.metric("Строк в мульти", df_multi_rows)
+                            st.sidebar.markdown("**Инварианты**")
+                            checks = [
+                                ("Сумма весов ≈ 1", abs((weights_sum or 0.0) - 1.0) < 1e-9),
+                                ("Нет NaN в ключевых колонках", no_nan_critical),
+                                ("K отсортированы и уникальны", k_sorted_unique),
+                                ("Union не пуст", df_multi_rows > 0),
+                            ]
+                            for label, ok in checks:
+                                st.sidebar.write(("✅ " if ok else "❌ ") + label)
+                            # weights table
+                            try:
+                                import pandas as pd
+                                _w_rows = [{"exp": e, "T": t_map.get(e), "w": weights.get(e)} for e in (exp_list or [])]
+                                _wdf = pd.DataFrame(_w_rows)
+                                with st.sidebar.expander("Weights"):
+                                    st.dataframe(_wdf, use_container_width=True, height=200)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+
                         # Диагностика и кнопка скачивания
                         if df_final_multi is None or getattr(df_final_multi, "empty", True):
                             reason = []
