@@ -142,6 +142,13 @@ def _session_timerange(session_date: Optional[Union[str, pd.Timestamp]]) -> Tupl
     if session_date is None:
         session_date = pd.Timestamp.utcnow().tz_localize("UTC") if tz is None else pd.Timestamp.now(tz)
     session_date = pd.to_datetime(session_date).date()
+    # clamp future session_date to today in ET to ensure 'Market closed' logic works
+    try:
+        today_et = (pd.Timestamp.now(tz).date() if tz is not None else pd.Timestamp.utcnow().date())
+    except Exception:
+        today_et = pd.Timestamp.utcnow().date()
+    if session_date > today_et:
+        session_date = today_et
     t0_naive = pd.Timestamp(year=session_date.year, month=session_date.month, day=session_date.day, hour=9, minute=30)
     t1_naive = pd.Timestamp(year=session_date.year, month=session_date.month, day=session_date.day, hour=16, minute=0)
     if tz is not None:
