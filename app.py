@@ -378,7 +378,7 @@ if raw_records:
                                 # aggregated final table (Multi)
                                 try:
                                     if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
-                                        zf.writestr(\"FINAL_SUM.csv\", final_sum_df.to_csv(index=False).encode(\"utf-8\"))
+                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
 
