@@ -261,6 +261,8 @@ if raw_records:
                 import pandas as pd
                 df_corr_multi_list = []
                 windows_multi = {}
+                ok_exps = []
+                fail_exps = []
 
                 for _exp in selected_exps:
                     try:
@@ -274,13 +276,22 @@ if raw_records:
                         for k, v in win_e.items():
                             windows_multi[k] = v
                     except Exception as _exc:
-                        # мягко пропускаем проблемные экспирации, чтобы не ломать UI
-                        pass
+                        fail_exps.append((_exp, str(_exc)))
 
-                if df_corr_multi_list:
-                    df_corr = pd.concat(df_corr_multi_list, ignore_index=True)
+                if not df_corr_multi_list:
+                    raise RuntimeError('Multi: ни одна экспирация не обработана')
+                df_corr = pd.concat(df_corr_multi_list, ignore_index=True)
                 if windows_multi:
                     windows = windows_multi
+                # ограничим список экспираций реально обработанными
+                if ok_exps:
+                    selected_exps = ok_exps
+                # предупреждение по пропускам
+                if fail_exps:
+                    try:
+                        st.warning('Multi: пропущены ' + ', '.join(e for e,_ in fail_exps))
+                    except Exception:
+                        pass
                     # --- Соберём промежуточные таблицы по каждой экспирации для ZIP-скачивания ---
                     try:
                         import io, zipfile
