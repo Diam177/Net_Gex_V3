@@ -359,6 +359,7 @@ if raw_records:
                                 # write per-exp finals
                                 try:
                                     from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
                                     finals = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
                                     for exp_key, fin in (finals or {}).items():
                                         if fin is None or getattr(fin, "empty", True):
@@ -378,6 +379,11 @@ if raw_records:
                                         zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
                                 except Exception:
                                     pass
+                                try:
+                                    if final_sum_df is not None and not getattr(final_sum_df, 'empty', True):
+                                        zf.writestr("FINAL_SUM.csv", final_sum_df.to_csv(index=False).encode("utf-8"))
+                                except Exception:
+                                    pass
 
 
                             bio.seek(0)
@@ -386,8 +392,14 @@ if raw_records:
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
-                            dl_tables_container.download_button("Скачать таблицы",
-
+                            dl_tables_container.download_button(
+                                "Скачать таблицы",
+                                data=zip_bytes.getvalue(),
+                                file_name=fname,
+                                mime="application/zip",
+                                type="primary",
+                                use_container_width=False,
+                            )
                             # Extra: DEBUG bundle download (zip /mnt/data/debug_multi)
                             try:
                                 import io, os, zipfile, time
@@ -420,12 +432,6 @@ if raw_records:
                                         )
                             except Exception:
                                 pass
-                                data=zip_bytes.getvalue(),
-                                file_name=fname,
-                                mime="application/zip",
-                                type="primary",
-                                use_container_width=False,
-                            )
                     except Exception as _zip_err:
                         st.warning("Не удалось подготовить ZIP с промежуточными таблицами.")
                         st.exception(_zip_err)
