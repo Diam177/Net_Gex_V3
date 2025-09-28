@@ -325,15 +325,19 @@ def render_key_levels(
                 x=[pd.to_datetime(x_left)] * len(Ks), y=Ks, mode="lines",
                 line=dict(width=0), hoverinfo="skip",
                 showlegend=False
-            ))
-            fig.add_trace(go.Scatter(
-                x=x_curve, y=Ks, mode="lines",
-                line_shape='spline',
-                line=dict(width=1.2, color=COLOR_PZ, smoothing=0.9),
-                name="Power Zone", showlegend=True, legendrank=LEGEND_RANK.get("PZ", 70),
-                customdata=PZ_raw, hovertemplate="Strike: %{y:g}<br>PZ: %{customdata:.0f}<extra></extra>",
-                fill="tonextx", fillcolor="rgba(228,197,30,0.175)", opacity=0.9
-            ))
+            ))            # Robust filled band using paper coords on x
+            try:
+                _px = (pd.Series(PZ_raw) - float(np.nanmin(PZ_raw))) / max(float(np.nanmax(PZ_raw) - np.nanmin(PZ_raw)), 1e-12)
+                _px = _px.clip(lower=0, upper=1).to_numpy()
+                _xx = _px * band_frac  # 0..band_frac in paper coords
+                # Path: from left baseline up, then along curve back to baseline
+                pts = [f"L {_xx[i]:.6f},{float(Ks[i]):.6f}" for i in range(len(Ks))]
+                path = f"M 0,{float(Ks[0]):.6f} " + " ".join(pts) + f" L 0,{float(Ks[-1]):.6f} Z"
+                fig.add_shape(type="path", path=path, xref="paper", yref="y",
+                               line=dict(width=0), fillcolor="rgba(228,197,30,0.175)", opacity=0.9, layer="above")
+            except Exception as _pz_shape_err:
+                # Fallback: no-op if shape construction fails
+                pass
         # --- /Power Zone ---
         if vwap_series is not None:
             fig.add_trace(go.Scatter(
