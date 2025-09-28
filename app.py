@@ -190,23 +190,20 @@ with st.sidebar:
 
         # --- Режим агрегации экспираций ---
         prev_mode_key = f"prev_mode_exp:{ticker}"
+        mode_key = f"mode_exp:{ticker}"
+        multi_key = f"multi_exps:{ticker}"
         prev_mode = st.session_state.get(prev_mode_key, "Single")
-        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True, key=f"mode_exp:{ticker}")
+        mode_exp = st.radio("Режим экспираций", ["Single","Multi"], index=0, horizontal=True, key=mode_key)
+        st.session_state[prev_mode_key] = mode_exp
         selected_exps = []
         weight_mode = "равные"
-        if mode_exp != prev_mode:
-            st.session_state[prev_mode_key] = mode_exp
-            if mode_exp == "Multi":
-                st.session_state[f"multi_exps:{ticker}"] = (expirations[:2] if expirations else [])
         if mode_exp == "Single":
             selected_exps = [expiration]
         else:
-            selected_exps = st.multiselect(
-                "Выберите экспирации",
-                options=expirations,
-                default=st.session_state.get(f"multi_exps:{ticker}", (expirations[:2] if expirations else [])),
-                key=f"multi_exps:{ticker}"
-            )
+            # при входе в Multi или если ключ ещё не установлен — выбрать две ближайшие
+            if (multi_key not in st.session_state) or (prev_mode != "Multi" and mode_exp == "Multi"):
+                st.session_state[multi_key] = expirations[:2] if expirations else []
+            selected_exps = st.multiselect("Выберите экспирации", options=expirations, key=multi_key)
             weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
     else:
         expiration = ""
@@ -274,8 +271,6 @@ if raw_records:
                 df_corr_multi_list = []
                 windows_multi = {}
 
-                ok_exps = []
-                fail_exps = []
                 for _exp in selected_exps:
                     try:
                         js_e = download_snapshot_json(ticker, _exp, api_key)
@@ -287,22 +282,14 @@ if raw_records:
                         win_e = res_e.get("windows") or {}
                         for k, v in win_e.items():
                             windows_multi[k] = v
-                        ok_exps.append(_exp)
                     except Exception as _exc:
-                        fail_exps.append((_exp, str(_exc)))
+                        # мягко пропускаем проблемные экспирации, чтобы не ломать UI
+                        pass
 
-                if not df_corr_multi_list:
-                    raise RuntimeError('Multi: ни одна экспирация не обработана')
-                df_corr = pd.concat(df_corr_multi_list, ignore_index=True)
+                if df_corr_multi_list:
+                    df_corr = pd.concat(df_corr_multi_list, ignore_index=True)
                 if windows_multi:
                     windows = windows_multi
-                if ok_exps:
-                    selected_exps = ok_exps
-                if fail_exps:
-                    try:
-                        st.warning('Multi: пропущены ' + ', '.join(e for e,_ in fail_exps))
-                    except Exception:
-                        pass
                     # --- Соберём промежуточные таблицы по каждой экспирации для ZIP-скачивания ---
                     try:
                         import io, zipfile
