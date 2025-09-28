@@ -269,14 +269,14 @@ if raw_records:
             if ("mode_exp" in locals()) and (mode_exp == "Multi") and selected_exps:
 
                 # --- QA Sidebar setup for Multi ---
-                qa_mode = st.sidebar.toggle("QA режим Multi", value=True)
+                qa_mode = st.sidebar.toggle("QA mode Multi", value=True)
                 ok_exps, fail_exps = [], []
                 _qa_rows = []
-                st.sidebar.caption("Диагностика Multi")
+                st.sidebar.caption("Multi Diagnostics")
                 try:
-                    st.sidebar.write(f"Выбрано дат: **{len(selected_exps)}**")
+                    st.sidebar.write(f"Selected dates: **{len(selected_exps)}**")
                 except Exception:
-                    st.sidebar.write("Выбрано дат: ?")
+                    st.sidebar.write("Selected dates: ?")
 
                 import pandas as pd
                 df_corr_multi_list = []
@@ -340,9 +340,9 @@ if raw_records:
 
                 # QA: sidebar summary after per-exp processing
                 try:
-                    st.sidebar.write(f"Собрано дат: **{len(ok_exps)}**")
+                    st.sidebar.write(f"Dates collected: **{len(ok_exps)}**")
                     if fail_exps:
-                        st.sidebar.write("Проблемы: " + "; ".join(e for e, _ in fail_exps))
+                        st.sidebar.write("Issues: " + "; ".join(e for e, _ in fail_exps))
                     if _qa_rows:
                         try:
                             import pandas as _pd  # alias to avoid shadowing
@@ -664,14 +664,14 @@ if raw_records:
                                 st.sidebar.metric("Собрано дат", len(ok_exps))
                             except Exception:
                                 pass
-                            st.sidebar.metric("Страйков в union", union_k)
-                            st.sidebar.metric("Строк в мульти", df_multi_rows)
-                            st.sidebar.markdown("**Инварианты**")
+                            st.sidebar.metric("Strikes in the Union", union_k)
+                            st.sidebar.metric("Rows in multi", df_multi_rows)
+                            st.sidebar.markdown("**Invariants**")
                             checks = [
-                                ("Сумма весов ≈ 1", abs((weights_sum or 0.0) - 1.0) < 1e-9),
-                                ("Нет NaN в ключевых колонках", no_nan_critical),
-                                ("K отсортированы и уникальны", k_sorted_unique),
-                                ("Union не пуст", df_multi_rows > 0),
+                                ("Sum of weights ≈ 1", abs((weights_sum or 0.0) - 1.0) < 1e-9),
+                                ("No NaN in key columns", no_nan_critical),
+                                ("K are sorted and unique", k_sorted_unique),
+                                ("Union is not empty", df_multi_rows > 0),
                             ]
                             for label, ok in checks:
                                 st.sidebar.write(("✅ " if ok else "❌ ") + label)
@@ -691,12 +691,12 @@ if raw_records:
                         if df_final_multi is None or getattr(df_final_multi, "empty", True):
                             reason = []
                             if not exp_list:
-                                reason.append("не выбраны экспирации")
+                                reason.append("expirations not selected")
                             if not windows or not any(len(windows.get(e, [])) for e in exp_list):
-                                reason.append("не построены окна")
+                                reason.append("no windows built")
                             if df_final_multi is None or getattr(df_final_multi, "empty", True):
-                                reason.append("нет данных на объединённой сетке K")
-                            st.sidebar.info("Суммарная таблица пуста: " + ", ".join(reason))
+                                reason.append("no data on the combined K grid")
+                            st.sidebar.info("The summary table is empty: " + ", ".join(reason))
                         else:
                             _st_hide_subheader()
                             _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
@@ -708,7 +708,7 @@ if raw_records:
                                     mime="text/csv",
                                 )
                             except Exception as _dl_e:
-                                st.sidebar.warning("Не удалось подготовить CSV суммарной таблицы.")
+                                st.sidebar.warning("Failed to generate CSV summary table.")
                                 st.sidebar.exception(_dl_e)
 
 
@@ -718,7 +718,7 @@ if raw_records:
                         try:
                             render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
                         except Exception as _chart_em:
-                            st.error('Не удалось отобразить чарт Net GEX (Multi)')
+                            st.error('Unable to display Net GEX chart (Multi)')
                             st.exception(_chart_em)
 
                         # --- Key Levels chart (Multi) ---
@@ -741,7 +741,7 @@ if raw_records:
                             # Рендер
                             render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
                         except Exception as _klm_e:
-                            st.error('Не удалось отобразить чарт Key Levels (Multi)')
+                            st.error('Failed to display Key Levels chart (Multi)')
                             st.exception(_klm_e)
 
 
@@ -759,7 +759,7 @@ if raw_records:
                                 try:
                                     render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
                                 except Exception as _chart_e:
-                                    st.error('Не удалось отобразить чарт Net GEX')
+                                    st.error('Unable to display Net GEX chart')
                                     st.exception(_chart_e)
                                 # --- Key Levels chart (uses same final table & G-Flip from netgex_chart) ---
                                 try:
@@ -781,14 +781,14 @@ if raw_records:
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
                                 except Exception as _kl_e:
-                                    st.error('Не удалось отобразить чарт Key Levels')
+                                    st.error('Failed to display Key Levels chart')
                                     st.exception(_kl_e)
 
                             else:
-                                st.info("Финальная таблица пуста для выбранной экспирации.")
+                                st.info("The final table is empty for the selected expiration.")
             except Exception as _e:
-                st.error("Ошибка построения финальной таблицы.")
+                st.error("Error constructing final table.")
                 st.exception(_e)
     except Exception as e:
-            st.error("Ошибка пайплайна sanitize/window.")
+            st.error("Pipeline sanitize/window error.")
             st.exception(e)
