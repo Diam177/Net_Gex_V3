@@ -195,13 +195,20 @@ with st.sidebar:
             selected_exps = [expiration]
         else:
             selected_exps = st.multiselect("Выберите экспирации", options=expirations, default=expirations[:2])
-            if not selected_exps:
-                st.info("Select expiration date")
             weight_mode = st.selectbox("Взвешивание", ["равные","1/T","1/√T"], index=2)
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
 
+
+
+# --- Empty state guard for Multi with no selected expirations ---
+try:
+    if ('mode_exp' in locals()) and (mode_exp == 'Multi') and (not selected_exps):
+        st.info('Select expiration date')
+        st.stop()
+except Exception:
+    pass
 
 # --- Data fetch ---------------------------------------------------------------
 raw_records: List[Dict] | None = None
@@ -480,14 +487,14 @@ if raw_records:
                 _st_hide_df(df_marked, use_container_width=True, hide_index=True)
 
             # 2) df_corr (восстановленные IV/Greeks)
-            df_corr = res.get("df_corr")
+            # Guard: do not overwrite multi df_corr
             if ("mode_exp" in locals()) and (mode_exp == "Multi"):
-                # в режиме Multi не показываем df_corr здесь; он будет собран по нескольким экспирациям
-                df_corr_single = df_corr
+                df_corr_single = res.get("df_corr")
             else:
-                if df_corr is not None and not getattr(df_corr, "empty", True):
-                    _st_hide_subheader()
-                    _st_hide_df(df_corr, use_container_width=True, hide_index=True)
+                df_corr = res.get("df_corr")
+            if df_corr is not None and not getattr(df_corr, "empty", True):
+                _st_hide_subheader()
+                _st_hide_df(df_corr, use_container_width=True, hide_index=True)
 
             # 3) df_weights (веса окна по страйку)
             df_weights = res.get("df_weights")
@@ -713,6 +720,30 @@ if raw_records:
                         except Exception as _chart_em:
                             st.error('Не удалось отобразить чарт Net GEX (Multi)')
                             st.exception(_chart_em)
+
+                            # --- Key Levels chart (Multi) ---
+                            try:
+                                import pandas as pd, pytz
+                                # Подбор столбца NetGEX и spot для G-Flip
+                                _ycol_m = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
+                                _spot_m = float(pd.to_numeric(df_final_multi.get("S"), errors="coerce").median()) if ("S" in df_final_multi.columns) else None
+                                _gflip_m = _compute_gamma_flip_from_table(df_final_multi, y_col=_ycol_m or "NetGEX_1pct", spot=_spot_m)
+                                # Привязываем G-Flip к ближайшему доступному страйку из df_final_multi['K']
+                                try:
+                                    _Ks_m = pd.to_numeric(df_final_multi.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final_multi.columns) else []
+                                    if (_gflip_m is not None) and _Ks_m:
+                                        _gflip_m = float(min(_Ks_m, key=lambda x: abs(float(x) - float(_gflip_m))))
+                                except Exception:
+                                    pass
+                                # Дата сессии и прайс‑лента для Key Levels
+                                _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
+                                # Рендер
+                                render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
+                            except Exception as _klm_e:
+                                st.error('Не удалось отобразить чарт Key Levels (Multi)')
+                                st.exception(_klm_e)
+
 
                     else:
                         # --- SINGLE режим: как было ---
