@@ -230,16 +230,16 @@ if snapshot_js:
         raw_bytes = json.dumps(snapshot_js, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         fname = f"{ticker}_{expiration}.json"
         st.sidebar.download_button(
-            label="Скачать сырой JSON (Polygon)",
+            label="Download JSON",
             data=raw_bytes,
             file_name=fname,
             mime="application/json",
             use_container_width=True,
         )
     except Exception as e:
-        st.sidebar.error(f"Не удалось подготовить JSON к скачиванию: {e}")
+        st.sidebar.error(f"Failed to prepare JSON for download: {e}")
 else:
-    st.sidebar.info("Выберите тикер и дату экспирации, чтобы загрузить snapshot и скачать JSON.")
+    st.sidebar.info("Select the ticker and expiration date to download the snapshot and JSON.")
 
 # --- Download tables button placeholder (below raw JSON) ---------------------
 dl_tables_container = st.sidebar.empty()
@@ -460,7 +460,7 @@ if raw_records:
                                for tbls in multi_exports.values() for tbl in (tbls or {}).values()):
                             zip_bytes = _zip_multi_intermediate(multi_exports, df_final_multi if 'df_final_multi' in locals() else None)
                             fname = f"{ticker}_intermediate_{len(multi_exports)}exps.zip" if ticker else "intermediate_tables.zip"
-                            dl_tables_container.download_button("Скачать таблицы",
+                            dl_tables_container.download_button("Download tables",
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
@@ -582,7 +582,7 @@ if raw_records:
                         return bio
                     exp_str = expiration if 'expiration' in locals() else 'exp'
                     zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
-                    dl_tables_container.download_button('Скачать таблицы', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+                    dl_tables_container.download_button('Download tables', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
                 except Exception as _e_zip_single:
                     st.warning('Не удалось подготовить ZIP с таблицами (single).')
                     st.exception(_e_zip_single)
@@ -702,7 +702,7 @@ if raw_records:
                             _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
                             try:
                                 st.sidebar.download_button(
-                                    "Скачать суммарную таблицу (Multi)",
+                                    "Download table (Multi)",
                                     data=df_final_multi.to_csv(index=False).encode("utf-8"),
                                     file_name=(f"{ticker}_FINAL_SUM.csv" if 'ticker' in locals() and ticker else "FINAL_SUM.csv"),
                                     mime="text/csv",
