@@ -478,7 +478,11 @@ if raw_records:
                 _st_hide_df(df_marked, use_container_width=True, hide_index=True)
 
             # 2) df_corr (восстановленные IV/Greeks)
-            df_corr = res.get("df_corr")
+            # Guard: do not overwrite multi df_corr
+            if ("mode_exp" in locals()) and (mode_exp == "Multi"):
+                df_corr_single = res.get("df_corr")
+            else:
+                df_corr = res.get("df_corr")
             if df_corr is not None and not getattr(df_corr, "empty", True):
                 _st_hide_subheader()
                 _st_hide_df(df_corr, use_container_width=True, hide_index=True)
@@ -490,7 +494,11 @@ if raw_records:
                 _st_hide_df(df_weights, use_container_width=True, hide_index=True)
 
             # 4) windows (выбранные страйки каждого окна) — преобразуем в таблицу
-            windows = res.get("windows")
+            # Guard: do not overwrite multi windows
+            if ("mode_exp" in locals()) and (mode_exp == "Multi"):
+                windows_single = res.get("windows")
+            else:
+                windows = res.get("windows")
             if windows and isinstance(windows, dict) and df_weights is not None:
                 try:
                     rows = []
