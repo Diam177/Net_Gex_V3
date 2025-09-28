@@ -322,12 +322,17 @@ def render_key_levels(
             x_curve = pd.to_datetime(x_left) + (pd.to_datetime(x_band_end) - pd.to_datetime(x_left)) * pz01
 
             fig.add_trace(go.Scatter(
+                x=[pd.to_datetime(x_left)] * len(Ks), y=Ks, mode="lines",
+                line=dict(width=0), hoverinfo="skip",
+                showlegend=False
+            ))
+            fig.add_trace(go.Scatter(
                 x=x_curve, y=Ks, mode="lines",
                 line_shape='spline',
                 line=dict(width=1.2, color=COLOR_PZ, smoothing=0.9),
                 name="Power Zone", showlegend=True, legendrank=LEGEND_RANK.get("PZ", 70),
                 customdata=PZ_raw, hovertemplate="Strike: %{y:g}<br>PZ: %{customdata:.0f}<extra></extra>",
-                fill="tozerox", fillcolor="rgba(228,197,30,0.175)", opacity=0.9
+                fill="tonextx", fillcolor="rgba(228,197,30,0.175)", opacity=0.9
             ))
         # --- /Power Zone ---
         if vwap_series is not None:
