@@ -383,7 +383,13 @@ def build_final_sum_from_corr(
         if arr is None:
             continue
         try:
-            Ks_union.extend([float(x) for x in (arr.tolist() if hasattr(arr, "tolist") else list(arr))])
+            import pandas as _pd, numpy as _np
+            if hasattr(arr, "columns") and "K" in getattr(arr, "columns", []):
+                Ks_union.extend(_pd.to_numeric(arr["K"], errors="coerce").dropna().astype(float).tolist())
+            elif hasattr(arr, "tolist"):
+                Ks_union.extend([float(x) for x in arr.tolist()])
+            else:
+                Ks_union.extend([float(x) for x in list(arr)])
         except Exception:
             pass
     Ks = sorted(set(Ks_union))
@@ -538,7 +544,13 @@ def build_final_sum_from_corr(
         if arr is None:
             continue
         try:
-            Ks_union.extend([float(x) for x in (arr.tolist() if hasattr(arr, "tolist") else list(arr))])
+            import pandas as _pd, numpy as _np
+            if hasattr(arr, "columns") and "K" in getattr(arr, "columns", []):
+                Ks_union.extend(_pd.to_numeric(arr["K"], errors="coerce").dropna().astype(float).tolist())
+            elif hasattr(arr, "tolist"):
+                Ks_union.extend([float(x) for x in arr.tolist()])
+            else:
+                Ks_union.extend([float(x) for x in list(arr)])
         except Exception:
             pass
     Ks = sorted(set(Ks_union))
