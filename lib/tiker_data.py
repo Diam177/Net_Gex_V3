@@ -93,21 +93,28 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     if not expiration_date:
         raise ValueError("expiration_date не задана")
 
-    base = f"{POLYGON_BASE}/v3/snapshot/options/{t}?expiration_date={expiration_date}&limit=250"
+    
     headers = _headers(api_key)
-
-    all_results: List[dict] = []
-    # Первая попытка — без limit (чтобы избежать известной ошибки 'Limit ... max')
-    for page in _get_with_cursor(base, headers, timeout, 10000):
-        results = page.get("results") or []
-        all_results.extend(results)
-
-    return {
-        "ticker": t,
-        "expiration_date": expiration_date,
-        "results_count": len(all_results),
-        "results": all_results,
-    }
+    _base_sym = t[2:] if t.startswith("I:") else t
+    _cands = [t] if t.startswith("I:") else [t, f"I:{_base_sym}"]
+    last_err = None
+    for _sym in dict.fromkeys(_cands):
+        all_results: List[dict] = []
+        try:
+            base_url = f"{POLYGON_BASE}/v3/snapshot/options/{_sym}?expiration_date={expiration_date}&limit=250"
+            for page in _get_with_cursor(base_url, headers, timeout, 10000):
+                results = page.get("results") or []
+                all_results.extend(results)
+            return {
+                "ticker": _sym,
+                "expiration_date": expiration_date,
+                "results_count": len(all_results),
+                "results": all_results,
+            }
+        except Exception as e:
+            last_err = e
+            continue
+    raise PolygonError(f"snapshot/options failed for {t}: {last_err}")
 
 
 def snapshots_zip_bytes(ticker: str, dates: Iterable[str], api_key: str, *, timeout: int = 30, max_pages: int = 40) -> Tuple[bytes, str]:
@@ -200,6 +207,21 @@ def get_spot_price(ticker: str, api_key: str, *, now_utc: datetime | None = None
         t = r0.get("t")
         if c is not None and t is not None:
             return float(c), int(t), "prev_close"
+
+    
+    # Fallback for index symbols: try with 'I:' prefix if not provided
+    if not ticker.startswith("I:"):
+        try:
+            js = _poly_get_json(f"{POLYGON_BASE}/v2/aggs/ticker/I:{ticker}/prev", api_key, timeout=timeout)
+            results = js.get("results") or []
+            if results:
+                r0 = results[0]
+                c = r0.get("c")
+                t = r0.get("t")
+                if c is not None and t is not None:
+                    return float(c), int(t), "prev_close"
+        except PolygonError:
+            pass
 
     raise PolygonError(f"get_spot_price: unable to resolve spot for {ticker}")
 # --- END: spot price helper ---------------------------------------------------
