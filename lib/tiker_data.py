@@ -1,8 +1,7 @@
 from __future__ import annotations
 import io
 import json
-import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from typing import Dict, Iterable, List, Tuple
 
 import requests
@@ -24,25 +23,16 @@ def _headers(api_key: str) -> Dict[str, str]:
     return h
 
 
-def _get_with_cursor(url: str, headers: Dict[str, str], timeout: int, max_pages: int, api_key: str = None) -> Iterable[dict]:
+def _get_with_cursor(url: str, headers: Dict[str, str], timeout: int, max_pages: int, api_key: str | None = None) -> Iterable[dict]:
     """
     Универсальный пагинатор по cursor/next_url (Polygon v3).
     Возвращает генератор страниц (dict).
-    Добавлен параметр api_key для сохранения ключа при пагинации.
     """
     pages = 0
     next_url = url
     sess = requests.Session()
     while next_url and pages < max_pages:
-        # Если next_url от Polygon не содержит apiKey, нужно его добавить
-        if api_key and 'apiKey=' not in next_url and 'apiKey=' in url:
-            # Извлекаем apiKey из исходного URL и добавляем к next_url
-            api_key_match = re.search(r'apiKey=([^&]+)', url)
-            if api_key_match and 'apiKey=' not in next_url:
-                separator = '&' if '?' in next_url else '?'
-                next_url = f"{next_url}{separator}apiKey={api_key_match.group(1)}"
-        
-        resp = sess.get(next_url, headers=headers, timeout=timeout)
+        resp = sess.get(next_url, headers=headers, params={"apiKey": api_key} if api_key else None, timeout=timeout)
         if resp.status_code == 429:
             raise PolygonError("Polygon вернул 429 (rate limit). Попробуйте позже или уменьшите частоту запросов.")
         if not resp.ok:
@@ -73,7 +63,7 @@ def list_future_expirations(ticker: str, api_key: str, *, max_pages: int = 8, ti
     today = date.today()
     uniq = set()
 
-    for page in _get_with_cursor(url, headers, timeout, max_pages):
+    for page in _get_with_cursor(url, headers, timeout, max_pages, api_key):
         results = page.get("results") or []
         for r in results:
             d = (r.get("expiration_date") or "").strip()
@@ -96,8 +86,6 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     Возвращает объединённый JSON-снэпшот всех опционов по данной дате экспирации.
     Источник: /v3/snapshot/options/{UNDERLYING}?expiration_date=YYYY-MM-DD
     Обходит страницы cursor до max_pages.
-    
-    ИСПРАВЛЕНО: Добавлен apiKey в URL для получения греков.
     """
     t = (ticker or "").strip().upper()
     if not t:
@@ -105,15 +93,12 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     if not expiration_date:
         raise ValueError("expiration_date не задана")
 
-    # ИЗМЕНЕНИЕ: Добавляем apiKey прямо в URL вместо использования только заголовков
     base = f"{POLYGON_BASE}/v3/snapshot/options/{t}?expiration_date={expiration_date}&limit=250&apiKey={api_key}"
-    
-    # Оставляем заголовки как дополнительную авторизацию (на всякий случай)
     headers = _headers(api_key)
 
     all_results: List[dict] = []
-    # Передаем api_key в _get_with_cursor для правильной пагинации
-    for page in _get_with_cursor(base, headers, timeout, max_pages, api_key=api_key):
+    # Первая попытка — без limit (чтобы избежать известной ошибки 'Limit ... max')
+    for page in _get_with_cursor(base, headers, timeout, 10000, api_key):
         results = page.get("results") or []
         all_results.extend(results)
 
@@ -149,6 +134,7 @@ def snapshots_zip_bytes(ticker: str, dates: Iterable[str], api_key: str, *, time
     return buf.read(), f"{t}_snapshots_{len(dates_list)}.zip"
 
 # --- BEGIN: spot price helper (safe addition) ---------------------------------
+from datetime import datetime, timedelta, timezone
 
 def _poly_get_json(url: str, api_key: str, params: dict | None = None, timeout: float = 10.0) -> dict:
     headers = {"Authorization": f"Bearer {api_key}"}
