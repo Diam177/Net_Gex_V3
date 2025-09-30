@@ -23,7 +23,7 @@ def _headers(api_key: str) -> Dict[str, str]:
     return h
 
 
-def _get_with_cursor(url: str, headers: Dict[str, str], timeout: int, max_pages: int, api_key: str | None = None) -> Iterable[dict]:
+def _get_with_cursor(url: str, headers: Dict[str, str], timeout: int, max_pages: int) -> Iterable[dict]:
     """
     Универсальный пагинатор по cursor/next_url (Polygon v3).
     Возвращает генератор страниц (dict).
@@ -32,7 +32,7 @@ def _get_with_cursor(url: str, headers: Dict[str, str], timeout: int, max_pages:
     next_url = url
     sess = requests.Session()
     while next_url and pages < max_pages:
-        resp = sess.get(next_url, headers=headers, params={"apiKey": api_key} if api_key else None, timeout=timeout)
+        resp = sess.get(next_url, headers=headers, timeout=timeout)
         if resp.status_code == 429:
             raise PolygonError("Polygon вернул 429 (rate limit). Попробуйте позже или уменьшите частоту запросов.")
         if not resp.ok:
@@ -63,7 +63,7 @@ def list_future_expirations(ticker: str, api_key: str, *, max_pages: int = 8, ti
     today = date.today()
     uniq = set()
 
-    for page in _get_with_cursor(url, headers, timeout, max_pages, api_key):
+    for page in _get_with_cursor(url, headers, timeout, max_pages):
         results = page.get("results") or []
         for r in results:
             d = (r.get("expiration_date") or "").strip()
@@ -87,7 +87,11 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     Источник: /v3/snapshot/options/{UNDERLYING}?expiration_date=YYYY-MM-DD
     Обходит страницы cursor до max_pages.
     """
-    t = (ticker or "").strip().upper()
+    t_raw = (ticker or '').strip()
+    t = t_raw.upper()
+    # Normalize SPX to index ticker for Polygon snapshot
+    if t == 'SPX' and not t_raw.startswith('I:'):
+        t = 'I:SPX'
     if not t:
         raise ValueError("ticker не задан")
     if not expiration_date:
@@ -98,7 +102,7 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
 
     all_results: List[dict] = []
     # Первая попытка — без limit (чтобы избежать известной ошибки 'Limit ... max')
-    for page in _get_with_cursor(base, headers, timeout, 10000, api_key):
+    for page in _get_with_cursor(base, headers, timeout, 10000):
         results = page.get("results") or []
         all_results.extend(results)
 
