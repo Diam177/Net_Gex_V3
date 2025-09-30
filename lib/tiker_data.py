@@ -89,9 +89,10 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     """
     t_raw = (ticker or '').strip()
     t = t_raw.upper()
-    # Normalize SPX to index ticker for Polygon snapshot
-    if t == 'SPX' and not t_raw.startswith('I:'):
-        t = 'I:SPX'
+    # Normalize common indices to Polygon index tickers
+    _IDX = {'SPX','NDX','VIX','RUT','DJX'}
+    if t in _IDX and not t_raw.startswith('I:'):
+        t = f'I:{t}'
     if not t:
         raise ValueError("ticker не задан")
     if not expiration_date:
