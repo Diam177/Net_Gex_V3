@@ -93,7 +93,7 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     if not expiration_date:
         raise ValueError("expiration_date не задана")
 
-    base = f"{POLYGON_BASE}/v3/snapshot/options/{t}?expiration_date={expiration_date}&limit=250&apiKey={api_key}"
+    base = f"{POLYGON_BASE}/v3/snapshot/options/{t}?expiration_date={expiration_date}&limit=250"
     headers = _headers(api_key)
 
     all_results: List[dict] = []
