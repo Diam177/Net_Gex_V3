@@ -11,6 +11,28 @@ POLYGON_BASE = "https://api.polygon.io"
 HEADERS_TEMPLATE = {"Authorization": "Bearer {api_key}"}
 
 
+# --- Ticker normalization helpers --------------------------------------------
+_INDEXES = {"SPX","NDX","VIX","RUT","DJX"}
+
+def _norm_snapshot_ticker(ticker: str) -> str:
+    """For snapshot/spot endpoints: ensure index tickers have 'I:' prefix."""
+    t_raw = (ticker or "").strip()
+    t_up = t_raw.upper()
+    if t_raw.startswith("I:"):
+        return t_raw
+    if t_up in _INDEXES:
+        return f"I:{t_up}"
+    return t_up
+
+def _norm_reference_underlying(ticker: str) -> str:
+    """For reference/contracts endpoint: underlying_ticker without 'I:' prefix."""
+    t_raw = (ticker or "").strip()
+    if t_raw.startswith("I:"):
+        return t_raw[2:]
+    return t_raw.upper()
+# -----------------------------------------------------------------------------
+
+
 class PolygonError(RuntimeError):
     pass
 
@@ -87,12 +109,7 @@ def download_snapshot_json(ticker: str, expiration_date: str, api_key: str, *, t
     Источник: /v3/snapshot/options/{UNDERLYING}?expiration_date=YYYY-MM-DD
     Обходит страницы cursor до max_pages.
     """
-    t_raw = (ticker or '').strip()
-    t = t_raw.upper()
-    # Normalize common indices to Polygon index tickers
-    _IDX = {'SPX','NDX','VIX','RUT','DJX'}
-    if t in _IDX and not t_raw.startswith('I:'):
-        t = f'I:{t}'
+    t = (ticker or "").strip().upper()
     if not t:
         raise ValueError("ticker не задан")
     if not expiration_date:
@@ -136,7 +153,7 @@ def snapshots_zip_bytes(ticker: str, dates: Iterable[str], api_key: str, *, time
             zf.writestr(f"{t}_{d}.json", json.dumps(js, ensure_ascii=False))
 
     buf.seek(0)
-    return buf.read(), f"{t}_snapshots_{len(dates_list)}.zip"
+    return buf.read(), f"{t_norm}_snapshots_{len(dates_list)}.zip"
 
 # --- BEGIN: spot price helper (safe addition) ---------------------------------
 from datetime import datetime, timedelta, timezone
