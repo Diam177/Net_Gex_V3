@@ -18,38 +18,14 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     if not t or not session_date_str:
         return None
     base = "https://api.polygon.io"
-
-    # normalize session date: clamp only future (today allowed)
-    from datetime import datetime, date
-    ET = pytz.timezone("America/New_York")
+    url = f"{base}/v2/aggs/ticker/{t}/range/1/minute/{session_date_str}/{session_date_str}?adjusted=true&sort=asc&limit=50000"
+    headers = {"Authorization": f"Bearer {api_key}"}
     try:
-        _req = date.fromisoformat(session_date_str)
+        r = requests.get(url, headers=headers, timeout=timeout)
+        r.raise_for_status()
+        js = r.json()
     except Exception:
         return None
-    _today_et = datetime.now(ET).date()
-    _target = _today_et.isoformat() if _req > _today_et else session_date_str
-
-    headers = {"Authorization": f"Bearer {api_key}"}
-    base = "https://api.polygon.io"
-
-    # try ticker as-is and with 'I:' prefix for indices; de-duplicate
-    _base_sym = t[2:] if t.startswith("I:") else t
-    _cands = [t] if t.startswith("I:") else [t, f"I:{_base_sym}"]
-    js = None
-    for _sym in dict.fromkeys(_cands):
-        _url = f"{base}/v2/aggs/ticker/{{_sym}}/range/1/minute/{{_target}}/{{_target}}?adjusted=true&sort=asc&limit=50000".format(_sym=_sym, _target=_target)
-        try:
-            _r = requests.get(_url, headers=headers, timeout=timeout)
-            _r.raise_for_status()
-            _js = _r.json()
-            if (_js.get("results") or []):
-                js = _js
-                break
-        except Exception:
-            continue
-    if js is None:
-        return None
-
     res = js.get("results") or []
     if not res:
         return None
@@ -272,13 +248,26 @@ dl_tables_container = st.sidebar.empty()
 S: float | None = None
 if ticker:
     try:
-        S, ts_ms, src = get_spot_price(ticker, api_key)
+        spot_ticker = f"I:{ticker.strip().upper()}" if (ticker and ticker.strip().upper() == "SPX" and not ticker.strip().upper().startswith("I:")) else ticker
+        S, ts_ms, src = get_spot_price(spot_ticker, api_key)
         # spot caption hidden per UI request
     except Exception:
         S = None
 # 3) из snapshot (fallback)
 if S is None and raw_records:
-    S = _infer_spot_from_snapshot(raw_records)
+    # 2a) Try underlying_asset.value if present
+    try:
+        for _r in raw_records:
+            _ua = _r.get("underlying_asset") or {}
+            _val = _ua.get("value")
+            if isinstance(_val, (int, float)):
+                S = float(_val)
+                break
+    except Exception:
+        pass
+    # 2b) Delta-based inference as before
+    if S is None:
+        S = _infer_spot_from_snapshot(raw_records)
     if S:
         # spot fallback caption hidden per UI request
         pass
