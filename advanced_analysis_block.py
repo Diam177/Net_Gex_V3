@@ -350,29 +350,20 @@ def render_advanced_analysis_block(
     # Четвёртая колонка
     with c4:
         _colored_line('ATM IV', _fmt_num(m['atm_iv'], 2), _color_for_iv(m.get('atm_iv'), asset_class=asset_class))
-        _colored_line('Skew (Put/Call IV)', _fmt_num(m['skew'], 2), _color_for_skew(m.get('skew')))
-
-    # Нижняя строка: Expected Move
-    c5, c6 = st.columns(2)
-    S_val = m["S"]
-    if m["em_1d"] is not None and S_val is not None:
-        em = m["em_1d"]; pct = 100.0 * em / float(S_val) if float(S_val)!=0 else float("nan")
-        lo = float(S_val) - em; hi = float(S_val) + em
-        st.session_state["__em_1d_vals__"] = (em, pct, lo, hi)
-        with c5:
+        _colored_line('Skew (Put/Call IV)', _fmt_num(m['skew'], 3), _color_for_skew(m.get('skew')))
+        # Expected Move moved into right column
+        S_val = m.get('S')
+        if m.get('em_1d') is not None and S_val is not None:
+            em = float(m['em_1d']); pct = 100.0 * em / float(S_val) if float(S_val)!=0 else float('nan')
+            lo = float(S_val) - em; hi = float(S_val) + em
             st.markdown(f"**Expected Move (1d):** ±{_fmt_num(em, 2)} ({_fmt_num(pct, 2)}%) — диапазон [{_fmt_num(lo,2)}; {_fmt_num(hi,2)}]")
-    else:
-        with c5:
+        else:
             st.markdown("**Expected Move (1d):** —")
-
-    if m["em_1w"] is not None and S_val is not None:
-        em = m["em_1w"]; pct = 100.0 * em / float(S_val) if float(S_val)!=0 else float("nan")
-        lo = float(S_val) - em; hi = float(S_val) + em
-        st.session_state["__em_1w_vals__"] = (em, pct, lo, hi)
-        with c6:
-            st.markdown(f"**Expected Move (1w):** ±{_fmt_num(em, 2)} ({_fmt_num(pct, 2)}%) — диапазон [{_fmt_num(lo,2)}; {_fmt_num(hi,2)}]")
-    else:
-        with c6:
+        if m.get('em_1w') is not None and S_val is not None:
+            emw = float(m['em_1w']); pctw = 100.0 * emw / float(S_val) if float(S_val)!=0 else float('nan')
+            low = float(S_val) - emw; hiw = float(S_val) + emw
+            st.markdown(f"**Expected Move (1w):** ±{_fmt_num(emw, 2)} ({_fmt_num(pctw, 2)}%) — диапазон [{_fmt_num(low,2)}; {_fmt_num(hiw,2)}]")
+        else:
             st.markdown("**Expected Move (1w):** —")
 
     return m
