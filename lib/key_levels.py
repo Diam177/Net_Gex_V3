@@ -303,7 +303,7 @@ def render_key_levels(
             vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
         elif "vw" in pdf.columns:
             # Polygon per-bar VWAP (no volume needed) — useful for indices like I:SPX
-            vwap_series = pd.to_numeric(pdf["vw"], errors="coerce")
+            vwap_series = pd.to_numeric(pdf["vw"], errors="coerce").expanding().mean()
         elif set(["price","volume"]).issubset(set(pdf.columns)):
             vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
             pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
