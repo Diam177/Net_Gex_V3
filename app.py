@@ -10,12 +10,6 @@ from typing import Any, Dict, List, Tuple
 import streamlit as st
 
 
-
-# Advanced metrics block
-try:
-    from advanced_analysis_block import render_advanced_analysis_block
-except Exception:
-    render_advanced_analysis_block = None
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
     import pandas as pd
@@ -65,20 +59,49 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     if any(v is not None for v in vwap_api):
         vw = pd.Series(pd.to_numeric(vwap_api, errors="coerce"), index=df.index)
         vol = df["volume"].fillna(0.0)
-        cum_vol = vol.cumsum()
-        if float(cum_vol.iloc[-1] or 0) > 0:
-            df["vwap"] = (vw * vol).cumsum() / cum_vol.replace(0, pd.NA)
-        else:
-            # No usable volume (indices like I:SPX). Fall back to per-bar 'vw'.
-            df["vwap"] = vw.expanding().mean().ffill()
+        cum_vol = vol.cumsum().replace(0, pd.NA)
+        df["vwap"] = (vw * vol).cumsum() / cum_vol
     else:
         vol = df["volume"].fillna(0.0)
         pr  = df["price"].fillna(method="ffill")
-        cum_vol = vol.cumsum()
-        if float(cum_vol.iloc[-1] or 0) > 0:
-            df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
-        else:
-            df["vwap"] = pr  # degenerate fallback
+        cum_vol = vol.cumsum().replace(0, pd.NA)
+        df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol
+    # Proxy VWAP for SPX using SPY volume if no usable volume or vwap
+    try:
+        need_proxy = False
+        try:
+            vwap_non_null = int(pd.to_numeric(df.get("vwap"), errors="coerce").notna().sum()) if "vwap" in df.columns else 0
+        except Exception:
+            vwap_non_null = 0
+        vol_sum = float(pd.to_numeric(df.get("volume"), errors="coerce").fillna(0.0).sum()) if "volume" in df.columns else 0.0
+        if t in {"I:SPX", "SPX", "^SPX"} and (vwap_non_null == 0 or vol_sum == 0.0):
+            need_proxy = True
+        if need_proxy:
+            url_spy = f"{base}/v2/aggs/ticker/SPY/range/1/minute/{session_date_str}/{session_date_str}?adjusted=true&sort=asc&limit=50000"
+            r2 = requests.get(url_spy, headers=headers, timeout=timeout)
+            r2.raise_for_status()
+            js2 = r2.json()
+            res2 = js2.get("results") or []
+            if res2:
+                times2 = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res2]
+                close2 = pd.to_numeric([x.get("c") for x in res2], errors="coerce")
+                vol2   = pd.to_numeric([x.get("v") for x in res2], errors="coerce").fillna(0.0)
+                spy_df = pd.DataFrame({"time": times2, "spy_close": close2, "spy_vol": vol2}).sort_values("time")
+                cum2 = spy_df["spy_vol"].cumsum().replace(0, pd.NA)
+                spy_df["vwap_spy"] = (spy_df["spy_close"].mul(spy_df["spy_vol"])).cumsum() / cum2
+                # align by time and scale by last close ratio
+                df_sorted = df.sort_values("time")
+                merged = pd.merge_asof(df_sorted, spy_df[["time","vwap_spy","spy_close"]], on="time")
+                last_spx = pd.to_numeric(df_sorted.get("close"), errors="coerce").dropna()
+                last_spy = pd.to_numeric(merged.get("spy_close"), errors="coerce").dropna()
+                if not last_spx.empty and not last_spy.empty:
+                    alpha = float(last_spx.iloc[-1]) / float(last_spy.iloc[-1])
+                    prox = alpha * merged["vwap_spy"]
+                    if prox.notna().sum() > 0:
+                        df["vwap"] = prox.ffill()
+    except Exception:
+        pass
+
     return df
 # --- Helpers to hide tables from main page ---
 def _st_hide_df(*args, **kwargs):
@@ -756,31 +779,6 @@ if raw_records:
                             _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
                             # Рендер
                             render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
-
-                            # --- Advanced Analysis Block (Multi) — placed under Key Levels ---
-                            try:
-                                if render_advanced_analysis_block is not None:
-                                    try:
-                                        import pandas as pd, pytz
-                                        _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
-                                        _price_df_m = _load_session_price_df_for_key_levels(
-                                            ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", "")
-                                        )
-                                    except Exception:
-                                        _price_df_m = None
-                                    render_advanced_analysis_block(
-                                        ticker=ticker,
-                                        df_final=df_final_multi,
-                                        df_corr=df_corr if 'df_corr' in locals() else None,
-                                        S=S if 'S' in locals() else None,
-                                        price_df=_price_df_m,
-                                        selected_exps=selected_exps if 'selected_exps' in locals() else None,
-                                        weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
-                                        caption_suffix="Агрегировано по выбранным экспирациям."
-                                    )
-                            except Exception as _aabm_e:
-                                st.warning("Advanced block (Multi) failed")
-                                st.exception(_aabm_e)
                         except Exception as _klm_e:
                             st.error('Failed to display Key Levels chart (Multi)')
                             st.exception(_klm_e)
@@ -821,31 +819,6 @@ if raw_records:
                                     _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
-
-                                    # --- Advanced Analysis Block (Single) — placed under Key Levels ---
-                                    try:
-                                        if render_advanced_analysis_block is not None:
-                                            try:
-                                                import pandas as pd, pytz
-                                                _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
-                                                _price_df = _load_session_price_df_for_key_levels(
-                                                    ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", "")
-                                                )
-                                            except Exception:
-                                                _price_df = None
-                                            render_advanced_analysis_block(
-                                                ticker=ticker,
-                                                df_final=df_final,
-                                                df_corr=df_corr if 'df_corr' in locals() else None,
-                                                S=S if 'S' in locals() else None,
-                                                price_df=_price_df,
-                                                selected_exps=selected_exps if 'selected_exps' in locals() else None,
-                                                weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
-                                                caption_suffix="Агрегировано по выбранной экспирации."
-                                            )
-                                    except Exception as _aabs_e:
-                                        st.warning("Advanced block (Single) failed")
-                                        st.exception(_aabs_e)
                                 except Exception as _kl_e:
                                     st.error('Failed to display Key Levels chart')
                                     st.exception(_kl_e)
