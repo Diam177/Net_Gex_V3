@@ -723,30 +723,7 @@ if raw_records:
 
                         _st_hide_subheader()
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
-                        # --- Advanced Analysis Block (Multi) ---
-                        try:
-                            if render_advanced_analysis_block is not None:
-                                # try to fetch session price df for VWAP
-                                try:
-                                    import pandas as pd, pytz
-                                    _session_date_str_m = pd.Timestamp.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d')
-                                    _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get('POLYGON_API_KEY', ''))
-                                except Exception:
-                                    _price_df_m = None
-                                render_advanced_analysis_block(
-                                    ticker=ticker,
-                                    df_final=df_final_multi,
-                                    df_corr=df_corr if 'df_corr' in locals() else None,
-                                    S=S if 'S' in locals() else None,
-                                    price_df=_price_df_m,
-                                    selected_exps=selected_exps if 'selected_exps' in locals() else None,
-                                    weight_mode=weight_mode if 'weight_mode' in locals() else '1/√T',
-                                    caption_suffix='Агрегировано по выбранным экспирациям.'
-                                )
-                        except Exception as _aabm_e:
-                            st.warning('Advanced block (Multi) failed')
-                            st.exception(_aabm_e)
-# --- Net GEX chart (Multi: aggregated) ---
+                        # --- Net GEX chart (Multi: aggregated) ---
                         try:
                             render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
                         except Exception as _chart_em:
@@ -772,6 +749,31 @@ if raw_records:
                             _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
                             # Рендер
                             render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
+
+                            # --- Advanced Analysis Block (Multi) — placed under Key Levels ---
+                            try:
+                                if render_advanced_analysis_block is not None:
+                                    try:
+                                        import pandas as pd, pytz
+                                        _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                        _price_df_m = _load_session_price_df_for_key_levels(
+                                            ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", "")
+                                        )
+                                    except Exception:
+                                        _price_df_m = None
+                                    render_advanced_analysis_block(
+                                        ticker=ticker,
+                                        df_final=df_final_multi,
+                                        df_corr=df_corr if 'df_corr' in locals() else None,
+                                        S=S if 'S' in locals() else None,
+                                        price_df=_price_df_m,
+                                        selected_exps=selected_exps if 'selected_exps' in locals() else None,
+                                        weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
+                                        caption_suffix="Агрегировано по выбранным экспирациям."
+                                    )
+                            except Exception as _aabm_e:
+                                st.warning("Advanced block (Multi) failed")
+                                st.exception(_aabm_e)
                         except Exception as _klm_e:
                             st.error('Failed to display Key Levels chart (Multi)')
                             st.exception(_klm_e)
@@ -787,29 +789,7 @@ if raw_records:
                             if df_final is not None and not getattr(df_final, "empty", True):
                                 _st_hide_subheader()
                                 _st_hide_df(df_final, use_container_width=True, hide_index=True)
-                                # --- Advanced Analysis Block (Single) ---
-                                try:
-                                    if render_advanced_analysis_block is not None:
-                                        try:
-                                            import pandas as pd, pytz
-                                            _session_date_str = pd.Timestamp.now(pytz.timezone('America/New_York')).strftime('%Y-%m-%d')
-                                            _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get('POLYGON_API_KEY', ''))
-                                        except Exception:
-                                            _price_df = None
-                                        render_advanced_analysis_block(
-                                            ticker=ticker,
-                                            df_final=df_final,
-                                            df_corr=df_corr if 'df_corr' in locals() else None,
-                                            S=S if 'S' in locals() else None,
-                                            price_df=_price_df,
-                                            selected_exps=selected_exps if 'selected_exps' in locals() else None,
-                                            weight_mode=weight_mode if 'weight_mode' in locals() else '1/√T',
-                                            caption_suffix='Агрегировано по выбранной экспирации.'
-                                        )
-                                except Exception as _aabs_e:
-                                    st.warning('Advanced block (Single) failed')
-                                    st.exception(_aabs_e)
-# --- Net GEX chart (under the final table) ---
+                                # --- Net GEX chart (under the final table) ---
                                 try:
                                     render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
                                 except Exception as _chart_e:
@@ -834,6 +814,31 @@ if raw_records:
                                     _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
+
+                                    # --- Advanced Analysis Block (Single) — placed under Key Levels ---
+                                    try:
+                                        if render_advanced_analysis_block is not None:
+                                            try:
+                                                import pandas as pd, pytz
+                                                _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                                _price_df = _load_session_price_df_for_key_levels(
+                                                    ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", "")
+                                                )
+                                            except Exception:
+                                                _price_df = None
+                                            render_advanced_analysis_block(
+                                                ticker=ticker,
+                                                df_final=df_final,
+                                                df_corr=df_corr if 'df_corr' in locals() else None,
+                                                S=S if 'S' in locals() else None,
+                                                price_df=_price_df,
+                                                selected_exps=selected_exps if 'selected_exps' in locals() else None,
+                                                weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
+                                                caption_suffix="Агрегировано по выбранной экспирации."
+                                            )
+                                    except Exception as _aabs_e:
+                                        st.warning("Advanced block (Single) failed")
+                                        st.exception(_aabs_e)
                                 except Exception as _kl_e:
                                     st.error('Failed to display Key Levels chart')
                                     st.exception(_kl_e)
