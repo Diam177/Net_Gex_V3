@@ -65,13 +65,20 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     if any(v is not None for v in vwap_api):
         vw = pd.Series(pd.to_numeric(vwap_api, errors="coerce"), index=df.index)
         vol = df["volume"].fillna(0.0)
-        cum_vol = vol.cumsum().replace(0, pd.NA)
-        df["vwap"] = (vw * vol).cumsum() / cum_vol
+        cum_vol = vol.cumsum()
+        if float(cum_vol.iloc[-1] or 0) > 0:
+            df["vwap"] = (vw * vol).cumsum() / cum_vol.replace(0, pd.NA)
+        else:
+            # No usable volume (indices like I:SPX). Fall back to per-bar 'vw'.
+            df["vwap"] = vw.ffill()
     else:
         vol = df["volume"].fillna(0.0)
         pr  = df["price"].fillna(method="ffill")
-        cum_vol = vol.cumsum().replace(0, pd.NA)
-        df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol
+        cum_vol = vol.cumsum()
+        if float(cum_vol.iloc[-1] or 0) > 0:
+            df["vwap"] = (pr.mul(vol)).cumsum() / cum_vol.replace(0, pd.NA)
+        else:
+            df["vwap"] = pr  # degenerate fallback
     return df
 # --- Helpers to hide tables from main page ---
 def _st_hide_df(*args, **kwargs):
