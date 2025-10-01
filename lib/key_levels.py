@@ -301,11 +301,17 @@ def render_key_levels(
 # VWAP
         if "vwap" in pdf.columns:
             vwap_series = pd.to_numeric(pdf["vwap"], errors="coerce")
+        elif "vw" in pdf.columns:
+            # Polygon per-bar VWAP (no volume needed) — useful for indices like I:SPX
+            vwap_series = pd.to_numeric(pdf["vw"], errors="coerce")
         elif set(["price","volume"]).issubset(set(pdf.columns)):
             vol = pd.to_numeric(pdf["volume"], errors="coerce").fillna(0.0)
             pr  = pd.to_numeric(pdf["price"], errors="coerce").fillna(np.nan)
-            cum_vol = vol.cumsum().replace(0, np.nan)
-            vwap_series = (pr.mul(vol)).cumsum() / cum_vol
+            cum_vol = vol.cumsum()
+            if float(cum_vol.iloc[-1] or 0) > 0:
+                vwap_series = (pr.mul(vol)).cumsum() / cum_vol.replace(0, np.nan)
+            else:
+                vwap_series = pd.to_numeric(pdf["vw"], errors="coerce") if "vw" in pdf.columns else None
         else:
             vwap_series = None
         if vwap_series is not None:
