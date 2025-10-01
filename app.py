@@ -70,7 +70,7 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
             df["vwap"] = (vw * vol).cumsum() / cum_vol.replace(0, pd.NA)
         else:
             # No usable volume (indices like I:SPX). Fall back to per-bar 'vw'.
-            df["vwap"] = vw.ffill()
+            df["vwap"] = vw.expanding().mean().ffill()
     else:
         vol = df["volume"].fillna(0.0)
         pr  = df["price"].fillna(method="ffill")
