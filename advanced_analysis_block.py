@@ -1,28 +1,31 @@
 
 # -*- coding: utf-8 -*-
 """
-advanced_analysis_block.py — компактный инфо‑блок «Advanced Options Market Analysis».
+advanced_analysis_block.py — компактный инфо‑блок «Advanced Options Market Analysis»
+с окраской ключевых метрик и нормированием Net GEX.
 
 Показывает:
 - Текущая цена (S)
 - VWAP (интрадей)
 - P/C Ratio (OI)
 - P/C Ratio (Volume)
-- Net GEX (sum)
+- Net GEX (sum) + цвет по нормированному GEX
 - ATM IV
 - Skew (Put/Call IV)
 - Expected Move (1d) и (1w) + диапазоны
 
+Входные данные:
+- df_final: финальная таблица (single или multi) со столбцами: call_oi, put_oi, call_vol, put_vol,
+  NetGEX_1pct[_M], AG_1pct[_M], S (при наличии).
+- df_corr: таблица из sanitize_window с полями exp, side(C/P), K, S, T, iv_corr, delta_corr.
+- price_df: опционально ['time','price','vwap'|'VWAP'|'Vwap'|('price','volume')]
+
 Зависимости: streamlit, pandas, numpy
-Входные данные берутся из уже рассчитанных таблиц проекта:
-- df_final: финальная таблица (single или multi), содержит по K: call_oi, put_oi, call_vol, put_vol, NetGEX_1pct[_M], S.
-- df_corr: «исправленная» таблица из sanitize_window (по всем выбранным экспирациям), содержит: exp, side (C/P), K, S, T, iv_corr, delta_corr.
-- price_df: опционально, DataFrame с колонками ['time','price','vwap'] для VWAP.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import math
 
 import numpy as np
@@ -33,20 +36,25 @@ import streamlit as st
 # ---------- Utility computations ----------
 
 def _fmt_num(x: Optional[float], digits: int = 2) -> str:
-    if x is None or not np.isfinite(x):
+    if x is None:
         return "—"
-    return f"{x:,.{digits}f}".replace(",", " ")
+    try:
+        xv = float(x)
+    except Exception:
+        return "—"
+    if not np.isfinite(xv):
+        return "—"
+    return f"{xv:,.{digits}f}".replace(",", " ")
 
 def _compute_vwap_value(price_df: Optional[pd.DataFrame]) -> Optional[float]:
-    if price_df is None or price_df.empty:
+    if price_df is None or getattr(price_df, "empty", True):
         return None
     cand = None
-    for col in ["vwap", "VWAP", "Vwap"]:
+    for col in ("vwap", "VWAP", "Vwap"):
         if col in price_df.columns:
             cand = pd.to_numeric(price_df[col], errors="coerce").dropna()
             break
     if cand is None or cand.empty:
-        # если нет готового VWAP, посчитаем кумулятивно
         if {"price","volume"}.issubset(set(price_df.columns)):
             pr  = pd.to_numeric(price_df["price"], errors="coerce")
             vol = pd.to_numeric(price_df["volume"], errors="coerce").fillna(0.0)
@@ -60,32 +68,34 @@ def _compute_vwap_value(price_df: Optional[pd.DataFrame]) -> Optional[float]:
 
 def _per_exp_atm_iv(df_corr: pd.DataFrame, S: float) -> Dict[str, Dict[str, float]]:
     """
-    Возвращает по каждой экспирации словарь:
+    По каждой экспирации возвращает:
       {"atm_call_iv": ..., "atm_put_iv": ..., "T_med": ...}
-    Метод: выбираем по каждой стороне контракт с |abs(delta_corr) - 0.5| минимальным.
+    Метод: контракт с |abs(delta_corr) - 0.5| минимальным, отдельно для C и P.
     """
     out: Dict[str, Dict[str, float]] = {}
-    if df_corr is None or df_corr.empty or "exp" not in df_corr.columns:
+    if df_corr is None or getattr(df_corr, "empty", True) or "exp" not in df_corr.columns:
         return out
     req_cols = {"side","iv_corr","delta_corr","T"}
-    have = set(df_corr.columns)
-    if not req_cols.issubset(have):
+    if not req_cols.issubset(set(df_corr.columns)):
         return out
 
     for exp, g in df_corr.groupby("exp", sort=False):
         res = {}
         T_med = float(pd.to_numeric(g.get("T"), errors="coerce").median()) if "T" in g.columns else float("nan")
-        for side, key in [("C","atm_call_iv"), ("P","atm_put_iv")]:
+        for side, key in (("C","atm_call_iv"), ("P","atm_put_iv")):
             gs = g[g.get("side")==side].copy()
             if gs.empty:
                 res[key] = float("nan")
                 continue
-            # ближайший к |delta|=0.5
-            d = pd.to_numeric(gs.get("delta_corr"), errors="coerce")
+            d  = pd.to_numeric(gs.get("delta_corr"), errors="coerce")
             iv = pd.to_numeric(gs.get("iv_corr"), errors="coerce")
-            idx = (d.abs() - 0.5).abs().idxmin() if d.notna().any() else None
-            val = float(iv.loc[idx]) if (idx in iv.index and np.isfinite(iv.loc[idx])) else float("nan")
-            res[key] = val
+            ok = d.notna()
+            if ok.any():
+                idx = (d.abs() - 0.5).abs().idxmin()
+                val = iv.loc[idx] if idx in iv.index else float("nan")
+            else:
+                val = float("nan")
+            res[key] = float(val) if np.isfinite(val) else float("nan")
         res["T_med"] = T_med if np.isfinite(T_med) else float("nan")
         out[str(exp)] = res
     return out
@@ -97,7 +107,6 @@ def _blend(values: List[Tuple[float, float]], mode: str = "1/√T") -> Optional[
     """
     vals = [(float(v), float(T)) for v, T in values if np.isfinite(v) and np.isfinite(T) and T >= 1/252.0]
     if not vals:
-        # без T — возьмём простую медиану доступных значений
         vals = [(float(v), 1.0) for v, T in values if np.isfinite(v)]
     if not vals:
         return None
@@ -112,6 +121,79 @@ def _blend(values: List[Tuple[float, float]], mode: str = "1/√T") -> Optional[
     return num / w_sum
 
 
+# ---------- Color helpers ----------
+def _color_for_value(val, *, lower, upper):
+    if val is None:
+        return None
+    try:
+        v = float(val)
+    except Exception:
+        return None
+    if not np.isfinite(v):
+        return None
+    if v < lower:
+        return "green"
+    if v > upper:
+        return "red"
+    return "orange"
+
+def _color_for_pc(val, *, vol=False):
+    return _color_for_value(val, lower=0.90, upper=1.10 if vol else 1.20)
+
+def _color_for_iv(val, *, asset_class="ETF"):
+    try:
+        v = float(val)
+    except Exception:
+        return None
+    if not np.isfinite(v):
+        return None
+    if asset_class and str(asset_class).upper() == "EQUITY":
+        if v < 0.30: return "green"
+        if v > 0.50: return "red"
+        return "orange"
+    if v < 0.15: return "green"
+    if v > 0.25: return "red"
+    return "orange"
+
+def _color_for_skew(val):
+    try:
+        v = float(val)
+    except Exception:
+        return None
+    if not np.isfinite(v):
+        return None
+    if v <= 0.01: return "green"
+    if v >= 0.03: return "red"
+    return "orange"
+
+def _color_for_netgex(sum_val, g_norm):
+    try:
+        if g_norm is not None and np.isfinite(float(g_norm)):
+            g = float(g_norm)
+            if g >= 0.15: return "green"
+            if g <= -0.15: return "red"
+            return "orange"
+    except Exception:
+        pass
+    try:
+        s = float(sum_val)
+    except Exception:
+        return None
+    if not np.isfinite(s):
+        return None
+    if s > 0: return "green"
+    if s < 0: return "red"
+    return "orange"
+
+def _colored_line(label, value_html, color):
+    if color:
+        st.markdown(f"<b>{label}:</b> <span style='color:{color};'>{value_html}</span>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"**{label}:** {value_html}")
+
+
+# ---------- Metrics ----------
+
 def compute_metrics(
     df_final: Optional[pd.DataFrame],
     df_corr: Optional[pd.DataFrame],
@@ -124,12 +206,15 @@ def compute_metrics(
     Возвращает словарь метрик для блока.
     """
     metrics: Dict[str, Optional[float]] = {
-        "S": float(S) if S is not None and np.isfinite(S) else None,
+        "S": float(S) if S is not None and np.isfinite(float(S)) else None,
         "VWAP": _compute_vwap_value(price_df),
         "pc_oi": None,
         "pc_vol": None,
         "netgex_sum": None,
         "netgex_is_millions": False,
+        "netgex_sum_base": None,
+        "ag_sum_base": None,
+        "g_norm": None,
         "atm_iv": None,
         "skew": None,
         "em_1d": None,
@@ -149,13 +234,35 @@ def compute_metrics(
             pv = pd.to_numeric(df_final["put_vol"], errors="coerce").fillna(0.0).sum()
             cv = pd.to_numeric(df_final["call_vol"], errors="coerce").fillna(0.0).sum()
             metrics["pc_vol"] = (float(pv)/float(cv)) if cv > 0 else None
+
         # Net GEX sum
         if "NetGEX_1pct_M" in cols:
-            metrics["netgex_sum"] = float(pd.to_numeric(df_final["NetGEX_1pct_M"], errors="coerce").fillna(0.0).sum())
+            ng_series = pd.to_numeric(df_final["NetGEX_1pct_M"], errors="coerce").fillna(0.0)
+            metrics["netgex_sum"] = float(ng_series.sum())
             metrics["netgex_is_millions"] = True
+            metrics["netgex_sum_base"] = float(ng_series.sum() * 1e6)  # dollars
         elif "NetGEX_1pct" in cols:
-            metrics["netgex_sum"] = float(pd.to_numeric(df_final["NetGEX_1pct"], errors="coerce").fillna(0.0).sum())
+            ng_series = pd.to_numeric(df_final["NetGEX_1pct"], errors="coerce").fillna(0.0)
+            metrics["netgex_sum"] = float(ng_series.sum())
             metrics["netgex_is_millions"] = False
+            metrics["netgex_sum_base"] = float(ng_series.sum())        # dollars
+        else:
+            ng_series = None
+
+        # AG sum in base dollars for normalization
+        if "AG_1pct_M" in cols:
+            ag_series = pd.to_numeric(df_final["AG_1pct_M"], errors="coerce")
+            metrics["ag_sum_base"] = float(ag_series.fillna(0.0).abs().sum() * 1e6)
+        elif "AG_1pct" in cols:
+            ag_series = pd.to_numeric(df_final["AG_1pct"], errors="coerce")
+            metrics["ag_sum_base"] = float(ag_series.fillna(0.0).abs().sum())
+
+        # Normalized GEX
+        ag_base = metrics["ag_sum_base"]
+        ng_base = metrics["netgex_sum_base"]
+        if ag_base is not None and ng_base is not None and ag_base > 0:
+            gnorm = float(ng_base) / float(ag_base)
+            metrics["g_norm"] = max(-1.0, min(1.0, gnorm))
 
     # ATM IV и Skew — из df_corr
     if df_corr is not None and not getattr(df_corr, "empty", True):
@@ -163,7 +270,6 @@ def compute_metrics(
         # фильтруем по выбранным экспирациям, если переданы
         if selected_exps:
             per = {k: v for k, v in per.items() if k in set(map(str, selected_exps))}
-        # blend ATM IV (среднее call/put per expiry, затем взвешивание по T)
         pairs_iv_T = []
         pairs_skew_T = []
         for e, d in per.items():
@@ -204,10 +310,11 @@ def render_advanced_analysis_block(
     price_df: Optional[pd.DataFrame] = None,
     selected_exps: Optional[List[str]] = None,
     weight_mode: str = "1/√T",
+    asset_class: str = "ETF",
     caption_suffix: str = "Агрегировано по выбранным экспирациям."
 ) -> Dict[str, Optional[float]]:
     """
-    Рисует инфо‑блок и возвращает словарь метрик (для логов/тестов).
+    Рисует инфо‑блок и возвращает словарь метрик.
     """
     m = compute_metrics(
         df_final=df_final, df_corr=df_corr, S=S, price_df=price_df,
@@ -215,32 +322,35 @@ def render_advanced_analysis_block(
     )
 
     st.markdown(f"### Advanced Options Market Analysis: {ticker}")
-    # Сетка 4x2 как в примере
+    # Сетка 4x2
     c1, c2, c3, c4 = st.columns(4)
 
     # Левая колонка
     with c1:
-        st.markdown(f"**Текущая цена:** {_fmt_num(m['S'], 2)}")
-        st.markdown(f"**VWAP:** {_fmt_num(m['VWAP'], 2)}")
+        _colored_line("Текущая цена", _fmt_num(m["S"], 2), None)
+        _colored_line("VWAP", _fmt_num(m["VWAP"], 2), None)
+
     # Вторая колонка
     with c2:
-        st.markdown(f"**P/C Ratio (OI):** {_fmt_num(m['pc_oi'], 2)}")
-        st.markdown(f"**P/C Ratio (Volume):** {_fmt_num(m['pc_vol'], 2)}")
+        _colored_line('P/C Ratio (OI)', _fmt_num(m['pc_oi'], 2), _color_for_pc(m.get('pc_oi'), vol=False))
+        _colored_line('P/C Ratio (Volume)', _fmt_num(m['pc_vol'], 2), _color_for_pc(m.get('pc_vol'), vol=True))
+
     # Третья колонка
     with c3:
-        if m["netgex_sum"] is None:
-            ng = "—"
+        if m['netgex_sum'] is None:
+            ng = '—'
         else:
-            if m["netgex_is_millions"]:
+            if m['netgex_is_millions']:
                 ng = f"{_fmt_num(m['netgex_sum'], 0)}M"
             else:
                 ng = f"{_fmt_num(m['netgex_sum'], 0)}"
-        st.markdown(f"**Net GEX (sum):** {ng}")
+        _colored_line('Net GEX (sum)', ng, _color_for_netgex(m.get('netgex_sum'), m.get('g_norm')))
         st.caption(caption_suffix)
+
     # Четвёртая колонка
     with c4:
-        st.markdown(f"**ATM IV:** {_fmt_num(m['atm_iv'], 2)}")
-        st.markdown(f"**Skew (Put/Call IV):** {_fmt_num(m['skew'], 2)}")
+        _colored_line('ATM IV', _fmt_num(m['atm_iv'], 2), _color_for_iv(m.get('atm_iv'), asset_class=asset_class))
+        _colored_line('Skew (Put/Call IV)', _fmt_num(m['skew'], 2), _color_for_skew(m.get('skew')))
 
     # Нижняя строка: Expected Move
     c5, c6 = st.columns(2)
@@ -248,7 +358,7 @@ def render_advanced_analysis_block(
     if m["em_1d"] is not None and S_val is not None:
         em = m["em_1d"]; pct = 100.0 * em / float(S_val) if float(S_val)!=0 else float("nan")
         lo = float(S_val) - em; hi = float(S_val) + em
-        st.session_state["__em_1d_vals__"] = (em, pct, lo, hi)  # для возможной отладки
+        st.session_state["__em_1d_vals__"] = (em, pct, lo, hi)
         with c5:
             st.markdown(f"**Expected Move (1d):** ±{_fmt_num(em, 2)} ({_fmt_num(pct, 2)}%) — диапазон [{_fmt_num(lo,2)}; {_fmt_num(hi,2)}]")
     else:
