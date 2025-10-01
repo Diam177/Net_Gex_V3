@@ -32,7 +32,7 @@ def _compute_vwap_value(price_df: Optional[pd.DataFrame]) -> Optional[float]:
     if price_df is None or getattr(price_df, "empty", True):
         return None
     cand = None
-    for col in ("vwap", "VWAP", "Vwap"):
+    for col in ("vwap", "VWAP", "Vwap", "vw"):
         if col in price_df.columns:
             cand = pd.to_numeric(price_df[col], errors="coerce").dropna()
             break
@@ -99,6 +99,59 @@ def _blend(values: List[Tuple[float, float]], mode: str = "1/√T") -> Optional[
     return num / w_sum
 
 
+
+# ---------- Bracket helpers (threshold labels) ----------
+def _bracket_pc(val, *, vol=False):
+    try:
+        v = float(val)
+    except Exception:
+        return ""
+    if vol:
+        if v < 0.90: return "[<0.90]"
+        if v > 1.10: return "[>1.10]"
+        return "[0.90–1.10]"
+    else:
+        if v < 0.90: return "[<0.90]"
+        if v > 1.20: return "[>1.20]"
+        return "[0.90–1.20]"
+
+def _bracket_iv(val, *, asset_class="ETF"):
+    try:
+        v = float(val)
+    except Exception:
+        return ""
+    if str(asset_class).upper() == "EQUITY":
+        if v < 0.30: return "[<0.30]"
+        if v > 0.50: return "[>0.50]"
+        return "[0.30–0.50]"
+    if v < 0.15: return "[<0.15]"
+    if v > 0.25: return "[>0.25]"
+    return "[0.15–0.25]"
+
+def _bracket_skew(val):
+    try:
+        v = float(val)
+    except Exception:
+        return ""
+    if v <= 0.01: return "[≤0.01]"
+    if v >= 0.03: return "[≥0.03]"
+    return "[0.01–0.03]"
+
+def _bracket_netgex(sum_val, g_norm):
+    try:
+        if g_norm is not None and np.isfinite(float(g_norm)):
+            g = float(g_norm)
+            if g >= 0.15: return "[≥+0.15]"
+            if g <= -0.15: return "[≤−0.15]"
+            return "[−0.15…+0.15]"
+    except Exception:
+        pass
+    # fallback by sign if no g_norm
+    try:
+        s = float(sum_val)
+    except Exception:
+        return ""
+    return "[>0]" if s > 0 else ("[<0]" if s < 0 else "[]")
 # ---------- Color helpers ----------
 def _color_for_value(val, *, lower, upper):
     if val is None:
@@ -304,8 +357,20 @@ def render_advanced_analysis_block(
             st.markdown("<div style='white-space:nowrap;'><b>Expected Move (1w):</b> —</div>", unsafe_allow_html=True)
 
     with c2:
-        _colored_line('P/C Ratio (OI)', _fmt_num(m['pc_oi'], 2), _color_for_pc(m.get('pc_oi'), vol=False))
-        _colored_line('P/C Ratio (Volume)', _fmt_num(m['pc_vol'], 2), _color_for_pc(m.get('pc_vol'), vol=True))
+        _colored_line('P/C Ratio (OI)', f"{_fmt_num(m['pc_oi'], 2)} {_bracket_pc(m.get('pc_oi'), vol=False)}", _color_for_pc(m.get('pc_oi'), vol=False))
+        _colored_line('P/C Ratio (Volume)', f"{_fmt_num(m['pc_vol'], 2)} {_bracket_pc(m.get('pc_vol'), vol=True)}", _color_for_pc(m.get('pc_vol'), vol=True))
+        # Divergence detection between OI and Volume ratios
+        try:
+            oi = float(m.get('pc_oi')) if m.get('pc_oi') is not None else None
+            vo = float(m.get('pc_vol')) if m.get('pc_vol') is not None else None
+        except Exception:
+            oi, vo = None, None
+        if oi is not None and vo is not None:
+            if oi > 1.10 and vo < 0.90:
+                st.caption("Дивергенция: толпа vs умные деньги (бычья)")
+            elif oi < 0.90 and vo > 1.10:
+                st.caption("Дивергенция: толпа vs умные деньги (медвежья)")
+
 
     with c3:
         if m['netgex_sum'] is None:
@@ -315,11 +380,11 @@ def render_advanced_analysis_block(
                 ng = f"{_fmt_num(m['netgex_sum'], 0)}M"
             else:
                 ng = f"{_fmt_num(m['netgex_sum'], 0)}"
-        _colored_line('Net GEX (sum)', ng, _color_for_netgex(m.get('netgex_sum'), m.get('g_norm')))
+        _colored_line('Net GEX (sum)', f"{ng} {_bracket_netgex(m.get('netgex_sum'), m.get('g_norm'))}", _color_for_netgex(m.get('netgex_sum'), m.get('g_norm')))
         st.caption(caption_suffix)
 
     with c4:
-        _colored_line('ATM IV', _fmt_num(m['atm_iv'], 2), _color_for_iv(m.get('atm_iv'), asset_class=asset_class))
-        _colored_line('Skew (Put/Call IV)', _fmt_num(m['skew'], 3), _color_for_skew(m.get('skew')))
+        _colored_line('ATM IV', f"{_fmt_num(m['atm_iv'], 2)} {_bracket_iv(m.get('atm_iv'), asset_class=asset_class)}", _color_for_iv(m.get('atm_iv'), asset_class=asset_class))
+        _colored_line('Skew (Put/Call IV)', f"{_fmt_num(m['skew'], 3)} {_bracket_skew(m.get('skew'))}", _color_for_skew(m.get('skew')))
 
     return m
