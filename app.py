@@ -70,7 +70,7 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
         pass
 
     total_vol = float(df["volume"].fillna(0.0).sum())
-    if df.get("vw") is not None and df["vw"].notna().any() and total_vol == 0.0:
+    if "vw" in df.columns and df["vw"].notna().any() and total_vol == 0.0:
         # index case: use Polygon per-bar 'vw' directly
         df["vwap"] = df["vw"]
     elif any(v is not None for v in vwap_api) and total_vol > 0.0:
@@ -104,8 +104,7 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
                     "spy_vw":    pd.to_numeric([x.get("vw") for x in res2], errors="coerce"),
                 }).sort_values("time")
                 # RTH filter
-                spy_df = spy_df[(spy_df["time"].dt.time >= pd.Timestamp("09:30", tz=tz).time()) &
-                                (spy_df["time"].dt.time <= pd.Timestamp("16:00", tz=tz).time())]
+                spy_df = spy_df.set_index("time").between_time("09:30", "16:00").reset_index()
                 px = spy_df["spy_vw"].where(spy_df["spy_vw"].notna(), spy_df["spy_close"])
                 cumv = spy_df["spy_vol"].cumsum().replace(0, pd.NA)
                 spy_df["spy_vwap"] = (px.mul(spy_df["spy_vol"])).cumsum() / cumv
@@ -159,7 +158,7 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
             try:
                 import streamlit as st
                 code = getattr(getattr(e, "response", None), "status_code", None)
-                st.warning(f"SPY proxy VWAP недоступен ({code}). Использую TWAP.", icon="⚠️")
+                st.warning(f"SPY proxy VWAP недоступен ({code}) {type(e).__name__}: {e}. Использую TWAP.", icon="⚠️")
             except Exception:
                 pass
 
