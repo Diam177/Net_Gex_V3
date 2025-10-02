@@ -62,20 +62,16 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     except Exception:
         pass
     
-    # --- VWAP logic with SPX proxy (minimal patch) ---
-    # Expose per-bar 'vw' for indices; safe even if NaN
+    # --- VWAP logic with SPX proxy ---
+    # expose per-bar 'vw' for indices
     try:
         df["vw"] = pd.to_numeric(vwap_api, errors="coerce")
     except Exception:
-        try:
-            import pandas as pd  # local import safety
-            df["vw"] = pd.to_numeric(vwap_api, errors="coerce")
-        except Exception:
-            pass
+        pass
 
-    total_vol = float(df["volume"].fillna(0.0).sum()) if "volume" in df.columns else 0.0
-    if "vw" in df.columns and df["vw"].notna().any() and total_vol == 0.0:
-        # Index case: use Polygon per-bar 'vw' directly when no usable volume
+    total_vol = float(df["volume"].fillna(0.0).sum())
+    if df.get("vw") is not None and df["vw"].notna().any() and total_vol == 0.0:
+        # index case: use Polygon per-bar 'vw' directly
         df["vwap"] = df["vw"]
     elif any(v is not None for v in vwap_api) and total_vol > 0.0:
         vw = pd.Series(pd.to_numeric(vwap_api, errors="coerce"), index=df.index)
@@ -83,68 +79,54 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
         cum_vol = vol.cumsum().replace(0, pd.NA)
         df["vwap"] = (vw * vol).cumsum() / cum_vol
     else:
-        # leave as NaN for proxy or TWAP fallback
-        try:
-            import pandas as pd
-            df["vwap"] = pd.NA
-        except Exception:
-            pass
+        df["vwap"] = pd.NA
 
-    # Proxy via SPY — only for SPX tickers, only if vwap is still empty
-    t_upper = (ticker or "").upper()
-    if t_upper in {"SPX","^SPX","I:SPX"} and (("vwap" not in df.columns) or df["vwap"].isna().all()):
+    # SPY proxy only for SPX if vwap still NaN
+    t_up = (ticker or "").upper()
+    if t_up in {"SPX","^SPX","I:SPX"} and (df["vwap"].isna().all() or not df["vwap"].notna().any()):
         try:
             base = "https://api.polygon.io"
-            url_spy = f"{base}/v2/aggs/ticker/SPY/range/1/minute/{session_date_str}/{session_date_str}?adjusted=true&sort=asc&limit=50000"
-            r2 = requests.get(url_spy, headers=headers, timeout=timeout)
+            url_spy = (f"{base}/v2/aggs/ticker/SPY/range/1/minute/"
+                       f"{session_date_str}/{session_date_str}"
+                       f"?adjusted=true&sort=asc&limit=50000&apiKey={api_key}")
+            r2 = requests.get(url_spy, timeout=timeout)
             r2.raise_for_status()
             js2 = r2.json() or {}
             res2 = js2.get("results") or []
             if res2:
-                import numpy as np
-                import pandas as pd
-                import pytz
+                import pandas as pd, numpy as np, pytz
                 tz = pytz.timezone("America/New_York")
-                # SPY minute frame
-                spy_time_utc = pd.to_datetime([x.get("t") for x in res2], unit="ms", utc=True)
-                spy_time = spy_time_utc.tz_convert(tz)
+                spy_time = pd.to_datetime([x.get("t") for x in res2], unit="ms", utc=True).tz_convert(tz)
                 spy_df = pd.DataFrame({
                     "time": spy_time,
                     "spy_close": pd.to_numeric([x.get("c") for x in res2], errors="coerce"),
                     "spy_vol":   pd.to_numeric([x.get("v") for x in res2], errors="coerce").fillna(0.0),
                     "spy_vw":    pd.to_numeric([x.get("vw") for x in res2], errors="coerce"),
                 }).sort_values("time")
-                # RTH filter 09:30–16:00 ET
+                # RTH filter
                 spy_df = spy_df[(spy_df["time"].dt.time >= pd.Timestamp("09:30", tz=tz).time()) &
                                 (spy_df["time"].dt.time <= pd.Timestamp("16:00", tz=tz).time())]
-                # SPY VWAP
                 px = spy_df["spy_vw"].where(spy_df["spy_vw"].notna(), spy_df["spy_close"])
                 cumv = spy_df["spy_vol"].cumsum().replace(0, pd.NA)
                 spy_df["spy_vwap"] = (px.mul(spy_df["spy_vol"])).cumsum() / cumv
                 spy_df["minute"] = spy_df["time"].dt.floor("min")
 
-                # SPX ET minutes
+                # SPX minutes in ET
                 df_et = df.copy()
                 try:
                     df_et["time"] = df_et["time"].dt.tz_convert(tz)
                 except Exception:
-                    # if naive, assume UTC then convert
                     df_et["time"] = pd.to_datetime(df_et["time"], utc=True).dt.tz_convert(tz)
                 df_et["minute"] = df_et["time"].dt.floor("min")
 
-                # Join for ratio computation on common minutes
                 merged = pd.merge(df_et[["minute","price"]].rename(columns={"price":"spx_price"}),
                                   spy_df[["minute","spy_close"]], on="minute", how="inner").sort_values("minute")
-                # alpha0: use first common minute ratio as seed
                 if not merged.empty and merged["spy_close"].iloc[0] and merged["spx_price"].iloc[0]:
                     alpha0 = float(merged["spx_price"].iloc[0]) / float(merged["spy_close"].iloc[0])
                 else:
-                    alpha0 = 10.0  # safe numeric fallback
+                    alpha0 = 10.0
 
-                # Ratio series r_t = P_spx / P_spy on common minutes
                 ratio_map = (merged.set_index("minute")["spx_price"] / merged.set_index("minute")["spy_close"]).dropna()
-
-                # Build dynamic alpha(t): rolling 15-minute median with 1–99% clipping
                 minutes = spy_df["minute"].drop_duplicates().sort_values().reset_index(drop=True)
                 alphas = []
                 last_alpha = alpha0
@@ -157,11 +139,9 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
                         raw_alpha = r_win.clip(q1, q99).median()
                     else:
                         raw_alpha = last_alpha
-                    # startup clamp ±2% for first 30 minutes
                     if session_start is not None and (m - session_start) <= pd.Timedelta(minutes=30):
                         low = 0.98 * alpha0; high = 1.02 * alpha0
                         raw_alpha = min(max(raw_alpha, low), high)
-                    # step clamp 0.5%
                     delta = raw_alpha - last_alpha
                     max_step = 0.005 * last_alpha
                     if abs(delta) > abs(max_step):
@@ -170,31 +150,23 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
                     last_alpha = raw_alpha
                 alpha_series = pd.Series(alphas, index=minutes, name="alpha")
 
-                # Align alpha and SPY VWAP to SPX minutes
                 alpha_aligned = pd.merge(df_et[["minute"]], alpha_series, left_on="minute", right_index=True, how="left")["alpha"].fillna(method="ffill")
                 spy_vwap_aligned = pd.merge(df_et[["minute"]], spy_df[["minute","spy_vwap"]], on="minute", how="left")["spy_vwap"].fillna(method="ffill")
                 proxy_vwap = alpha_aligned.values * spy_vwap_aligned.values
 
-                # Fill df["vwap"] where NaN
-                if "vwap" not in df.columns:
-                    df["vwap"] = proxy_vwap
-                else:
-                    df["vwap"] = df["vwap"].where(df["vwap"].notna(), proxy_vwap)
-        except Exception:
-            # Diagnostic message kept minimal to avoid UI noise explosion
+                df["vwap"] = df["vwap"].where(df["vwap"].notna(), proxy_vwap)
+        except Exception as e:
             try:
                 import streamlit as st
-                st.warning("SPY proxy VWAP недоступен. Использую TWAP.", icon="⚠️")
+                code = getattr(getattr(e, "response", None), "status_code", None)
+                st.warning(f"SPY proxy VWAP недоступен ({code}). Использую TWAP.", icon="⚠️")
             except Exception:
                 pass
 
-    # Final fallback: TWAP if still NaN
-    try:
-        if df["vwap"].isna().all():
-            pr = df["price"].fillna(method="ffill")
-            df["vwap"] = pr.expanding().mean()
-    except Exception:
-        pass
+    # Final fallback: TWAP
+    if df["vwap"].isna().all():
+        pr = df["price"].fillna(method="ffill")
+        df["vwap"] = pr.expanding().mean()
     return df
 
 # --- Helpers to hide tables from main page ---
