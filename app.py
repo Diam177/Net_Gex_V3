@@ -99,9 +99,9 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
                 spy_time = pd.to_datetime([x.get("t") for x in res2], unit="ms", utc=True).tz_convert(tz)
                 spy_df = pd.DataFrame({
                     "time": spy_time,
-                    "spy_close": pd.to_numeric([x.get("c") for x in res2], errors="coerce"),
-                    "spy_vol":   pd.to_numeric([x.get("v") for x in res2], errors="coerce").fillna(0.0),
-                    "spy_vw":    pd.to_numeric([x.get("vw") for x in res2], errors="coerce"),
+                    "spy_close": pd.Series(pd.to_numeric([x.get("c") for x in res2], errors="coerce")),
+                    "spy_vol":   pd.Series(pd.to_numeric([x.get("v") for x in res2], errors="coerce")).fillna(0.0),
+                    "spy_vw":    pd.Series(pd.to_numeric([x.get("vw") for x in res2], errors="coerce")),
                 }).sort_values("time")
                 # RTH filter
                 spy_df = spy_df.set_index("time").between_time("09:30", "16:00").reset_index()
