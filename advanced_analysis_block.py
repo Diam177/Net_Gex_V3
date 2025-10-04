@@ -59,31 +59,22 @@ def _per_exp_atm_iv(df_corr: pd.DataFrame, S: float) -> Dict[str, Dict[str, floa
         return out
 
 def _per_exp_atm_iv_raw(df_raw: pd.DataFrame) -> Dict[str, Dict[str, float]]:
-    """
-    По каждой экспирации из df_raw возвращает:
-      {"atm_call_iv": ..., "atm_put_iv": ..., "T_med": ...}
-    Метод: ближайший к |Δ|=0.5 отдельно для C и P по колонкам 'delta' и 'iv'.
-    Требуемые колонки: exp, side (C/P), delta, iv, T.
-    """
     out: Dict[str, Dict[str, float]] = {}
     if df_raw is None or getattr(df_raw, "empty", True):
         return out
-    # фильтры базовой валидности
-    df = df_raw.copy()
-    cols = set(map(str, df.columns))
-    req = {"exp","side","delta","iv","T"}
-    if not req.issubset(cols):
+    cols = set(map(str, df_raw.columns))
+    need = {"exp","side","delta","iv","T"}
+    if not need.issubset(cols):
         return out
+    df = df_raw.copy()
     df = df[(df["delta"].notna()) & (df["iv"].notna())]
     df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["delta","iv"])
     for exp, g in df.groupby("exp"):
         res = {"atm_call_iv": float("nan"), "atm_put_iv": float("nan"), "T_med": float("nan")}
-        # медиана T как весовая характеристика
         try:
             res["T_med"] = float(np.nanmedian(pd.to_numeric(g.get("T"), errors="coerce")))
         except Exception:
             res["T_med"] = float("nan")
-        # выбрать ближайшее к |Δ|=0.5
         for side, key in (("C","atm_call_iv"), ("P","atm_put_iv")):
             gs = g[g["side"]==side]
             if gs.empty:
@@ -328,7 +319,8 @@ def compute_metrics(
     if df_corr is not None and not getattr(df_corr, "empty", True):
         per = _per_exp_atm_iv(df_corr, S if S is not None else float("nan"))
         if selected_exps:
-            per = {k: v for k, v in per.items() if k in set(map(str, selected_exps))}
+            per = per or {}
+        per = {k: v for k, v in per.items() if k in set(map(str, selected_exps))}
         pairs_iv_T, pairs_skew_T = [], []
         for e, d in per.items():
             call_iv = d.get("atm_call_iv")
@@ -342,22 +334,22 @@ def compute_metrics(
             elif put_iv is not None and np.isfinite(put_iv):
                 pairs_iv_T.append( (float(put_iv), float(T_med)) )
         metrics["atm_iv"] = _blend(pairs_iv_T, mode=weight_mode) if pairs_iv_T else None
-
-                # Skew only from df_raw
+        # Skew only from df_raw
         metrics["skew"] = None
         if df_raw is not None and not getattr(df_raw, "empty", True):
             per_raw = _per_exp_atm_iv_raw(df_raw)
             if selected_exps:
                 per_raw = {k: v for k, v in per_raw.items() if k in set(map(str, selected_exps))}
             pairs_skew_T_raw = []
-            for e, d in per_raw.items():
+            for d in per_raw.values():
                 call_iv = d.get("atm_call_iv"); put_iv = d.get("atm_put_iv"); T_med = d.get("T_med")
                 if np.isfinite(call_iv) and np.isfinite(put_iv) and np.isfinite(T_med):
                     pairs_skew_T_raw.append((float(put_iv) - float(call_iv), float(T_med)))
             if pairs_skew_T_raw:
                 metrics["skew"] = _blend(pairs_skew_T_raw, mode=weight_mode)
+        metrics["_skew_from_corr"] = _blend(pairs_skew_T, mode=weight_mode) if pairs_skew_T else None
 
-# Expected Moves
+    # Expected Moves
     S_val = metrics["S"]
     iv_val = metrics["atm_iv"]
     if (S_val is not None) and (iv_val is not None):
@@ -380,10 +372,12 @@ def render_advanced_analysis_block(
     selected_exps: Optional[List[str]] = None,
     weight_mode: str = "1/√T",
     asset_class: str = "ETF",
-    caption_suffix: str = "Агрегировано по выбранным экспирациям.",
-    df_raw: Optional[pd.DataFrame] = None,
-) -> Dict[str, Optional[float]]:
-    m = compute_metrics(df_final=df_final, df_corr=df_corr, S=S, price_df=price_df, selected_exps=selected_exps, weight_mode=weight_mode, df_raw=df_raw)
+    caption_suffix: str = "Агрегировано по выбранным экспирациям."
+, df_raw: Optional[pd.DataFrame] = None) -> Dict[str, Optional[float]]:
+    m = compute_metrics(
+        df_final=df_final, df_corr=df_corr, S=S, price_df=price_df,
+        selected_exps=selected_exps, weight_mode=weight_mode
+    , df_raw=df_raw)
 
     st.markdown(f"### Advanced Options Market Analysis: {ticker}")
     c1, c2, c3, c4 = st.columns(4)
