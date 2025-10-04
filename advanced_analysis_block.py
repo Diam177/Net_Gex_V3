@@ -223,6 +223,82 @@ def _colored_line(label, value_html, color):
         st.markdown(f"**{label}:** {value_html}")
 
 
+
+# ---------- Skew (RR25) helpers ----------
+
+def _interp_iv_at_delta(sub: pd.DataFrame, target: float, delta_col: str = "delta_corr", iv_col: str = "iv_corr"):
+    """
+    Линейная интерполяция IV по целевой дельте.
+    Если интерполяция невозможна — возвращает ближайшее по |Δ−target| значение.
+    """
+    if sub is None or getattr(sub, "empty", True):
+        return None
+    sub = sub.dropna(subset=[delta_col, iv_col]).copy()
+    if sub.empty:
+        return None
+    sub.sort_values(delta_col, inplace=True)
+    x = sub[delta_col].to_numpy(dtype=float)
+    y = sub[iv_col].to_numpy(dtype=float)
+    # позиция вставки
+    i = np.searchsorted(x, target)
+    if 0 < i < len(x):
+        x0, x1 = x[i-1], x[i]
+        y0, y1 = y[i-1], y[i]
+        if x1 != x0:
+            w = (target - x0) / (x1 - x0)
+            return float(y0 + w * (y1 - y0))
+    # фолбэк: ближайшее наблюдение
+    return float(y[np.argmin(np.abs(x - target))])
+
+def _skew_rr25_agg(df_corr: pd.DataFrame, *, weight_mode: str = "1/√T"):
+    """
+    Возвращает агрегированный RR25 = IV_put(Δ≈−0.25) − IV_call(Δ≈+0.25) по выбранным экспирациям.
+    Использует только df_corr; если есть колонка окна (in_window/is_in_window), ограничивается окном.
+    Нет валидных экспираций → возвращает None.
+    """
+    if df_corr is None or getattr(df_corr, "empty", True):
+        return None
+    df = df_corr.copy()
+
+    # опциональная маска окна
+    for wcol in ("in_window", "is_in_window"):
+        if wcol in df.columns:
+            df = df[df[wcol] == True]
+            break
+
+    req = {"side","iv_corr","delta_corr","exp"}
+    if not req.issubset(set(df.columns)):
+        return None
+
+    # к числам
+    for c in ("iv_corr","delta_corr","T"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    vals = []
+    for exp, g in df.groupby("exp", sort=False):
+        gC = g[g["side"].astype(str).str.upper() == "C"]
+        gP = g[g["side"].astype(str).str.upper() == "P"]
+        if gC.empty or gP.empty:
+            continue
+        ivC = _interp_iv_at_delta(gC,  0.25)
+        ivP = _interp_iv_at_delta(gP, -0.25)
+        T = float(pd.to_numeric(g.get("T"), errors="coerce").median()) if "T" in g.columns else float("nan")
+        if (ivC is None) or (ivP is None) or not (np.isfinite(T) and T > 0):
+            continue
+        vals.append((ivP - ivC, T))
+
+    if not vals:
+        return None
+
+    arr = np.array([v for v,_ in vals], dtype=float)
+    Tarr = np.array([t for _,t in vals], dtype=float)
+    if weight_mode == "1/T":
+        w = 1.0 / np.maximum(Tarr, 1e-12)
+    else:
+        w = 1.0 / np.sqrt(np.maximum(Tarr, 1e-12))
+    return float(np.sum(arr * w) / np.sum(w))
+
 # ---------- Metrics ----------
 
 def compute_metrics(
@@ -334,6 +410,8 @@ def render_advanced_analysis_block(
         df_final=df_final, df_corr=df_corr, S=S, price_df=price_df,
         selected_exps=selected_exps, weight_mode=weight_mode
     )
+    # override skew with RR25 aggregation (no fallback to ATM P−C)
+    m['skew'] = _skew_rr25_agg(df_corr=df_corr, weight_mode=weight_mode)
 
     st.markdown(f"### Advanced Options Market Analysis: {ticker}")
     c1, c2, c3, c4 = st.columns(4)
