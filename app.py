@@ -865,7 +865,7 @@ if raw_records:
                                         selected_exps=selected_exps if 'selected_exps' in locals() else None,
                                         weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
                                         caption_suffix="Агрегировано по выбранным экспирациям."
-                                    , df_raw=df_raw)
+                                    , df_raw=df_raw if 'df_raw' in locals() else None)
                             except Exception as _aabm_e:
                                 st.warning("Advanced block (Multi) failed")
                                 st.exception(_aabm_e)
@@ -930,7 +930,7 @@ if raw_records:
                                                 selected_exps=selected_exps if 'selected_exps' in locals() else None,
                                                 weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
                                                 caption_suffix="Агрегировано по выбранной экспирации."
-                                            , df_raw=df_raw)
+                                            , df_raw=df_raw if 'df_raw' in locals() else None)
                                     except Exception as _aabs_e:
                                         st.warning("Advanced block (Single) failed")
                                         st.exception(_aabs_e)
