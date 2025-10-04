@@ -82,6 +82,48 @@ def _per_exp_atm_iv(df_corr: pd.DataFrame, S: float) -> Dict[str, Dict[str, floa
     return out
 
 
+def _per_exp_atm_iv_raw(df_raw, S):
+    """Возвращает по каждой экспирации словарь:
+       {exp: {"atm_call_iv": float, "atm_put_iv": float, "T_med": float}}
+       ATM определяется как ближайшая по |Δ| к 0.5 отдельно для call и put.
+       Работает на сырых колонках: side, iv, delta, T, exp.
+    """
+    import numpy as _np
+    import pandas as _pd
+    out = {}
+    if df_raw is None or getattr(df_raw, "empty", True) or "exp" not in df_raw.columns:
+        return out
+    req = {"side","iv","delta","T"}
+    if not req.issubset(set(df_raw.columns)):
+        return out
+    # Нормализуем side
+    def _norm_side(x):
+        s = str(x).strip().upper()
+        if s in ("C","CALL"): return "C"
+        if s in ("P","PUT"):  return "P"
+        return s
+    _df = df_raw.copy()
+    _df["_side"] = _df["side"].map(_norm_side)
+    # Чистим NaN
+    _df = _df[_np.isfinite(_pd.to_numeric(_df["iv"], errors="coerce")) &
+              _np.isfinite(_pd.to_numeric(_df["delta"], errors="coerce")) &
+              _np.isfinite(_pd.to_numeric(_df.get("T"), errors="coerce"))]
+    for exp, g in _df.groupby("exp", sort=False):
+        T_med = float(_pd.to_numeric(g.get("T"), errors="coerce").median())
+        res = {}
+        for side, key in (("C","atm_call_iv"), ("P","atm_put_iv")):
+            gs = g[g["_side"]==side]
+            if gs.empty:
+                res[key] = float("nan"); continue
+            d  = _pd.to_numeric(gs["delta"], errors="coerce")
+            iv = _pd.to_numeric(gs["iv"], errors="coerce")
+            idx = (d.abs() - 0.5).abs().idxmin()
+            val = iv.loc[idx] if idx in iv.index else float("nan")
+            res[key] = float(val) if _np.isfinite(val) else float("nan")
+        res["T_med"] = T_med if _np.isfinite(T_med) else float("nan")
+        out[str(exp)] = res
+    return out
+
 def _blend(values: List[Tuple[float, float]], mode: str = "1/√T") -> Optional[float]:
     vals = [(float(v), float(T)) for v, T in values if np.isfinite(v) and np.isfinite(T) and T >= 1/252.0]
     if not vals:
@@ -231,8 +273,7 @@ def compute_metrics(
     S: Optional[float],
     price_df: Optional[pd.DataFrame] = None,
     selected_exps: Optional[List[str]] = None,
-    weight_mode: str = "1/√T"
-) -> Dict[str, Optional[float]]:
+    weight_mode: str = "1/√T", df_raw: 'pd.DataFrame | None' = None) -> Dict[str, Optional[float]]:
     metrics: Dict[str, Optional[float]] = {
         "S": float(S) if S is not None and np.isfinite(float(S)) else None,
         "VWAP": _compute_vwap_value(price_df),
@@ -314,7 +355,26 @@ def compute_metrics(
         metrics["em_1d"] = em_1d
         metrics["em_1w"] = em_1w
 
-    return metrics
+    
+    # Override skew with RAW-based calculation if provided
+    try:
+        if df_raw is not None and hasattr(df_raw, "empty") and not df_raw.empty:
+            per_raw = _per_exp_atm_iv_raw(df_raw, S if S is not None else float("nan"))
+            if selected_exps:
+                sel = set(map(str, selected_exps))
+                per_raw = {k:v for k,v in per_raw.items() if k in sel}
+            pairs_skew_T = []
+            for _, d in per_raw.items():
+                call_iv = d.get("atm_call_iv")
+                put_iv  = d.get("atm_put_iv")
+                T_med   = d.get("T_med")
+                if call_iv is not None and put_iv is not None and np.isfinite(call_iv) and np.isfinite(put_iv) and np.isfinite(T_med):
+                    pairs_skew_T.append((float(put_iv) - float(call_iv), float(T_med)))
+            if pairs_skew_T:
+                metrics["skew"] = _blend(pairs_skew_T, mode=weight_mode)
+    except Exception:
+        pass
+return metrics
 
 
 # ---------- Streamlit renderer ----------
@@ -328,12 +388,10 @@ def render_advanced_analysis_block(
     selected_exps: Optional[List[str]] = None,
     weight_mode: str = "1/√T",
     asset_class: str = "ETF",
-    caption_suffix: str = "Агрегировано по выбранным экспирациям."
-) -> Dict[str, Optional[float]]:
+    caption_suffix: str = "Агрегировано по выбранным экспирациям.", df_raw: 'pd.DataFrame | None' = None) -> Dict[str, Optional[float]]:
     m = compute_metrics(
         df_final=df_final, df_corr=df_corr, S=S, price_df=price_df,
-        selected_exps=selected_exps, weight_mode=weight_mode
-    )
+        selected_exps=selected_exps, weight_mode=weight_mode, df_raw=df_raw)
 
     st.markdown(f"### Advanced Options Market Analysis: {ticker}")
     c1, c2, c3, c4 = st.columns(4)
