@@ -437,17 +437,7 @@ def render_advanced_analysis_block(
     with c2:
         _colored_line('P/C Ratio (OI)', f"{_fmt_num(m['pc_oi'], 2)} {_bracket_pc(m.get('pc_oi'), vol=False)}", _color_for_pc(m.get('pc_oi'), vol=False))
         _colored_line('P/C Ratio (Volume)', f"{_fmt_num(m['pc_vol'], 2)} {_bracket_pc(m.get('pc_vol'), vol=True)}", _color_for_pc(m.get('pc_vol'), vol=True))
-        # Divergence detection between OI and Volume ratios
-        try:
-            oi = float(m.get('pc_oi')) if m.get('pc_oi') is not None else None
-            vo = float(m.get('pc_vol')) if m.get('pc_vol') is not None else None
-        except Exception:
-            oi, vo = None, None
-        if oi is not None and vo is not None:
-            if oi > 1.10 and vo < 0.90:
-                st.caption("Дивергенция: толпа vs умные деньги (бычья)")
-            elif oi < 0.90 and vo > 1.10:
-                st.caption("Дивергенция: толпа vs умные деньги (медвежья)")
+
 
 
     with c3:
