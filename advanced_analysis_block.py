@@ -48,11 +48,14 @@ def _compute_vwap_value(price_df: Optional[pd.DataFrame]) -> Optional[float]:
     return float(cand.iloc[-1]) if not cand.empty else None
 
 
+
 def _per_exp_atm_iv(df_corr: pd.DataFrame, S: float) -> Dict[str, Dict[str, float]]:
     """
     По каждой экспирации возвращает:
       {"atm_call_iv": ..., "atm_put_iv": ..., "T_med": ...}
-    Метод: ближайший к |Δ|=0.5 для C и P.
+    Метод: линейная интерполяция IV по целевой дельте до +0.5 (call) и −0.5 (put).
+    Фильтры: работаем строго в окне (если есть колонка), vol>0, 0.01≤IV≤3.0, T>0.
+    Обе стороны обязательны; иначе экспирация пропускается.
     """
     out: Dict[str, Dict[str, float]] = {}
     if df_corr is None or getattr(df_corr, "empty", True) or "exp" not in df_corr.columns:
@@ -61,24 +64,49 @@ def _per_exp_atm_iv(df_corr: pd.DataFrame, S: float) -> Dict[str, Dict[str, floa
     if not req_cols.issubset(set(df_corr.columns)):
         return out
 
-    for exp, g in df_corr.groupby("exp", sort=False):
-        res = {}
+    df = df_corr.copy()
+
+    # window-only if available
+    for wcol in ("in_window","is_in_window"):
+        if wcol in df.columns:
+            df = df[df[wcol] == True]
+            break
+
+    # numeric coercions
+    for c in ("iv_corr","delta_corr","T","vol"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # global gates
+    df = df[df["T"] > 0]
+
+    for exp, g in df.groupby("exp", sort=False):
+        gC = g[g.get("side")=="C"].copy()
+        gP = g[g.get("side")=="P"].copy()
+        if "vol" in gC.columns:
+            gC = gC[gC["vol"] > 0]
+        if "vol" in gP.columns:
+            gP = gP[gP["vol"] > 0]
+        gC = gC[(gC["iv_corr"] >= 0.01) & (gC["iv_corr"] <= 3.0)]
+        gP = gP[(gP["iv_corr"] >= 0.01) & (gP["iv_corr"] <= 3.0)]
+
+        if gC.empty or gP.empty:
+            continue
+
+        call_iv = _interp_iv_at_delta(gC,  0.5)
+        put_iv  = _interp_iv_at_delta(gP, -0.5)
+        if call_iv is None or put_iv is None:
+            continue
+
         T_med = float(pd.to_numeric(g.get("T"), errors="coerce").median()) if "T" in g.columns else float("nan")
-        for side, key in (("C","atm_call_iv"), ("P","atm_put_iv")):
-            gs = g[g.get("side")==side].copy()
-            if gs.empty:
-                res[key] = float("nan")
-                continue
-            d  = pd.to_numeric(gs.get("delta_corr"), errors="coerce")
-            iv = pd.to_numeric(gs.get("iv_corr"), errors="coerce")
-            if d.notna().any():
-                idx = (d.abs() - 0.5).abs().idxmin()
-                val = iv.loc[idx] if idx in iv.index else float("nan")
-            else:
-                val = float("nan")
-            res[key] = float(val) if np.isfinite(val) else float("nan")
-        res["T_med"] = T_med if np.isfinite(T_med) else float("nan")
-        out[str(exp)] = res
+        if not (np.isfinite(T_med) and T_med > 0):
+            continue
+
+        out[str(exp)] = {
+            "atm_call_iv": float(call_iv),
+            "atm_put_iv":  float(put_iv),
+            "T_med":       float(T_med),
+        }
     return out
 
 
