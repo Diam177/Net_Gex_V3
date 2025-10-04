@@ -303,9 +303,12 @@ def compute_metrics(
             elif put_iv is not None and np.isfinite(put_iv):
                 pairs_iv_T.append( (float(put_iv), float(T_med)) )
         metrics["atm_iv"] = _blend(pairs_iv_T, mode=weight_mode) if pairs_iv_T else None
+
         metrics["skew"]   = _blend(pairs_skew_T, mode=weight_mode) if pairs_skew_T else None
 
-    # Expected Moves
+    # disabled: skew from df_corr is not allowed by policy
+        metrics["skew"] = None
+# Expected Moves
     S_val = metrics["S"]
     iv_val = metrics["atm_iv"]
     if (S_val is not None) and (iv_val is not None):
