@@ -107,7 +107,10 @@ def _group_min_level(df: pd.DataFrame, value_col: str) -> Optional[float]:
     return float(g.iloc[i]["K"])
 
 def _compute_gflip_piecewise(df_final: pd.DataFrame, y_col: str = "NetGEX_1pct", spot: Optional[float] = None) -> Optional[float]:
-    if df_final is None or df_final.empty or "K" not in df_final.columns or y_col not in df_final.columns:
+    """G-Flip Variant A with tol=2% tie-break."""
+    import numpy as np
+    import pandas as pd
+    if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
         return None
     base = df_final[["K", y_col]].copy()
     base["K"] = pd.to_numeric(base["K"], errors="coerce")
@@ -118,26 +121,83 @@ def _compute_gflip_piecewise(df_final: pd.DataFrame, y_col: str = "NetGEX_1pct",
     g = base.groupby("K", as_index=False)[y_col].sum().sort_values("K").reset_index(drop=True)
     Ks = g["K"].to_numpy(dtype=float)
     Ys = g[y_col].to_numpy(dtype=float)
-    if len(Ks) < 2:
+    n = len(Ks)
+    if n < 2:
         return None
-    cand: List[float] = [float(Ks[i]) for i, v in enumerate(Ys) if v == 0.0]
-    sign = np.sign(Ys)
-    idx = np.where(sign[:-1] * sign[1:] < 0)[0]
-    for i in idx:
-        K0, K1 = float(Ks[i]), float(Ks[i+1])
-        y0, y1 = float(Ys[i]), float(Ys[i+1])
-        if y1 != y0:
-            root = K0 - y0 * (K1 - K0) / (y1 - y0)
-            root = max(min(root, K1), K0) if K1 >= K0 else max(min(root, K0), K1)
-            cand.append(float(root))
-    if not cand:
+    sgn = np.sign(Ys).astype(int)
+    if np.any(sgn == 0):
+        s = pd.Series(sgn).replace(0, pd.NA).ffill().bfill().fillna(0).to_numpy(dtype=int)
+    else:
+        s = sgn
+    def _interp_sign_at_spot():
+        if spot is None or not np.isfinite(spot):
+            i0 = int(np.argmin(np.abs(Ks - Ks.mean())))
+            return s[i0], i0, None
+        x = float(spot)
+        j = int(np.searchsorted(Ks, x) - 1)
+        if j < 0: j = 0
+        if j >= n-1: j = n-2
+        K0, K1 = Ks[j], Ks[j+1]
+        y0, y1 = Ys[j], Ys[j+1]
+        yx = y0 + (y1 - y0) * (x - K0) / (K1 - K0) if K1 != K0 else y0
+        if yx == 0.0: return 0, j, float(x)
+        anchor = j if abs(x - K0) <= abs(x - K1) else j + 1
+        return (1 if yx > 0 else -1), anchor, None
+    sign0, anchor, exact_root = _interp_sign_at_spot()
+    if exact_root is not None: return float(exact_root)
+    L = anchor
+    while L-1 >= 0 and s[L-1] == sign0: L -= 1
+    R = anchor
+    while R+1 < n and s[R+1] == sign0: R += 1
+    left_run = None
+    if L-1 >= 0 and s[L-1] == -sign0:
+        a = L-1
+        while a-1 >= 0 and s[a-1] == -sign0: a -= 1
+        left_run = (a, L-1)
+    right_run = None
+    if R+1 < n and s[R+1] == -sign0:
+        b = R+1
+        while b+1 < n and s[b+1] == -sign0: b += 1
+        right_run = (R+1, b)
+    if left_run is None and right_run is None: return None
+    def _mass(run):
+        if run is None: return 0.0
+        i0, i1 = run
+        return float(np.sum(np.abs(Ys[i0:i1+1])))
+    M_left = _mass(left_run); M_right = _mass(right_run)
+    if left_run is None:
+        side, run = 'right', right_run
+    elif right_run is None:
+        side, run = 'left', left_run
+    else:
+        mx = max(M_left, M_right); rel = 0.0 if mx == 0 else abs(M_left - M_right)/mx
+        if rel > 0.02:
+            side, run = (('left', left_run) if M_left > M_right else ('right', right_run))
+        else:
+            x = Ks[anchor] if (spot is None or not np.isfinite(spot)) else float(spot)
+            left_mid = 0.5*(Ks[left_run[1]] + Ks[L]) if left_run else float('inf')
+            right_mid = 0.5*(Ks[R] + Ks[right_run[0]]) if right_run else float('inf')
+            dl = abs(x - left_mid); dr = abs(x - right_mid)
+            if dl < dr: side, run = 'left', left_run
+            elif dr < dl: side, run = 'right', right_run
+            else:
+                dG_left = abs(Ys[L] - Ys[left_run[1]]) if left_run else -1.0
+                dG_right = abs(Ys[right_run[0]] - Ys[R]) if right_run else -1.0
+                side, run = (('left', left_run) if dG_left >= dG_right else ('right', right_run))
+    if side == 'left':
+        i_op, i_r0 = run[1], L
+    else:
+        i_r0, i_op = R, run[0]
+    K_r0, Y_r0 = Ks[i_r0], Ys[i_r0]; K_op, Y_op = Ks[i_op], Ys[i_op]
+    if Y_op == Y_r0:
+        if Y_r0 == 0.0: return float(K_r0)
+        if Y_op == 0.0: return float(K_op)
         return None
-    if spot is not None and np.isfinite(spot):
-        j = int(np.argmin(np.abs(np.array(cand) - float(spot))))
-        return float(cand[j])
-    mid = 0.5 * (float(Ks[0]) + float(Ks[-1]))
-    j = int(np.argmin(np.abs(np.array(cand) - mid)))
-    return float(cand[j])
+    Kstar = K_r0 - Y_r0 * (K_op - K_r0) / (Y_op - Y_r0)
+    lo, hi = (K_r0, K_op) if K_r0 <= K_op else (K_op, K_r0)
+    if Kstar < lo: Kstar = lo
+    if Kstar > hi: Kstar = hi
+    return float(Kstar)
 
 def _session_timerange(session_date: Optional[Union[str, pd.Timestamp]]) -> Tuple[pd.Timestamp, pd.Timestamp, pd.DatetimeIndex]:
     try:
@@ -496,37 +556,34 @@ def render_key_levels(
             y_min, y_max = 0.0, 1.0
 
     # Если цена выходит за пределы — расширяем до экстремумов цены
-    # Рассчитываем минимальный шаг страйка по всем K
-    Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
-    step = None
-    if len(Ks) >= 2:
-        diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
-        step = diffs[0] if diffs else None
-
-    # Учитываем экстремумы цены
-    pr_min = pr_max = None
     if price_df is not None and not price_df.empty and ("price" in price_df.columns):
         _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
         if not _pr.empty:
-            pr_min, pr_max = float(_pr.min()), float(_pr.max())
+            y_min = float(min(y_min, _pr.min()))
+            y_max = float(max(y_max, _pr.max()))
 
-    # Базовые границы: по уровням (groups) — уже заданы в y_min/y_max выше
-    # Объединяем с ценой
-    if pr_min is not None and pr_max is not None:
-        y_min = float(min(y_min, pr_min))
-        y_max = float(max(y_max, pr_max))
-
-    # Добавляем отступы ±2 шага страйка относительно крайних значений
-    if step:
-        y_min = float(y_min - 2*step)
-        y_max = float(y_max + 2*step)
-    # Тики: все страйки внутри окна + искусственные тики за пределами данных на ±2 шага
-    _Ks_all = sorted(float(k) for k in (pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []))
+    # Тики: все страйки из df_final внутри окна
+    _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []
+    _Ks_all = sorted(float(k) for k in _Ks_all)
     _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
-    if step and Ks:
-        minK, maxK = Ks[0], Ks[-1]
-        extra_ticks = [minK - 2*step, minK - step, maxK + step, maxK + 2*step]
-        _y_ticks = sorted(set(_y_ticks + extra_ticks))
+    
+    # Расширяем диапазон на ±2 шага страйка, если уровни не на крайних страйках окна
+    try:
+        Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
+        if len(Ks) >= 2:
+            diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
+            step = diffs[0] if diffs else None
+            minK, maxK = Ks[0], Ks[-1]
+            level_vals = [float(v) for v in (level_map or {}).values() if v is not None and np.isfinite(v)]
+            on_edge = any(abs(v - minK) < 1e-6 or abs(v - maxK) < 1e-6 for v in level_vals)
+            if step and not on_edge:
+                y_min = float(min(y_min, minK - 2*step))
+                y_max = float(max(y_max, maxK + 2*step))
+                extra_ticks = [minK - 2*step, minK - step, maxK + step, maxK + 2*step]
+                _y_ticks = sorted(set([k for k in Ks if (k >= y_min) and (k <= y_max)] + extra_ticks))
+    except Exception:
+        pass
+
     fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
 
     # Линии и подписи справа
