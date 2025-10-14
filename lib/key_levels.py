@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
+import math
 import streamlit as st
 def _y_range_from_levels(df_final: pd.DataFrame, groups: Dict[float, List[str]], price_df: Optional[pd.DataFrame], margin_strikes: int = 2):
     """
