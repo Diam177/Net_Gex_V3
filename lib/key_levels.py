@@ -496,34 +496,37 @@ def render_key_levels(
             y_min, y_max = 0.0, 1.0
 
     # Если цена выходит за пределы — расширяем до экстремумов цены
+    # Рассчитываем минимальный шаг страйка по всем K
+    Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
+    step = None
+    if len(Ks) >= 2:
+        diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
+        step = diffs[0] if diffs else None
+
+    # Учитываем экстремумы цены
+    pr_min = pr_max = None
     if price_df is not None and not price_df.empty and ("price" in price_df.columns):
         _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
         if not _pr.empty:
-            y_min = float(min(y_min, _pr.min()))
-            y_max = float(max(y_max, _pr.max()))
+            pr_min, pr_max = float(_pr.min()), float(_pr.max())
 
-    # Тики: все страйки из df_final внутри окна
-    _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []
-    _Ks_all = sorted(float(k) for k in _Ks_all)
+    # Базовые границы: по уровням (groups) — уже заданы в y_min/y_max выше
+    # Объединяем с ценой
+    if pr_min is not None and pr_max is not None:
+        y_min = float(min(y_min, pr_min))
+        y_max = float(max(y_max, pr_max))
+
+    # Добавляем отступы ±2 шага страйка относительно крайних значений
+    if step:
+        y_min = float(y_min - 2*step)
+        y_max = float(y_max + 2*step)
+    # Тики: все страйки внутри окна + искусственные тики за пределами данных на ±2 шага
+    _Ks_all = sorted(float(k) for k in (pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []))
     _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
-    
-    # Расширяем диапазон на ±2 шага страйка, если уровни не на крайних страйках окна
-    try:
-        Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
-        if len(Ks) >= 2:
-            diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
-            step = diffs[0] if diffs else None
-            minK, maxK = Ks[0], Ks[-1]
-            level_vals = [float(v) for v in (level_map or {}).values() if v is not None and np.isfinite(v)]
-            on_edge = any(abs(v - minK) < 1e-6 or abs(v - maxK) < 1e-6 for v in level_vals)
-            if step and not on_edge:
-                y_min = float(min(y_min, minK - 2*step))
-                y_max = float(max(y_max, maxK + 2*step))
-                extra_ticks = [minK - 2*step, minK - step, maxK + step, maxK + 2*step]
-                _y_ticks = sorted(set([k for k in Ks if (k >= y_min) and (k <= y_max)] + extra_ticks))
-    except Exception:
-        pass
-
+    if step and Ks:
+        minK, maxK = Ks[0], Ks[-1]
+        extra_ticks = [minK - 2*step, minK - step, maxK + step, maxK + 2*step]
+        _y_ticks = sorted(set(_y_ticks + extra_ticks))
     fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
 
     # Линии и подписи справа
