@@ -464,6 +464,7 @@ def render_netgex_bars(
         paper_bgcolor=BG_COLOR,
         plot_bgcolor=BG_COLOR,
         margin=dict(l=40, r=60, t=40, b=40),
+        height=900,
         showlegend=False,
         dragmode=False,
         xaxis=dict(
