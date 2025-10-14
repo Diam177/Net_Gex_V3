@@ -26,6 +26,71 @@ from typing import Dict, Iterable, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 import streamlit as st
+def _y_range_from_levels(df_final: pd.DataFrame, groups: Dict[float, List[str]], price_df: Optional[pd.DataFrame], margin_strikes: int = 2):
+    """
+    Диапазон Y «от левой шкалы».
+      - Крайние уровни берём из groups.keys().
+      - По страйкам df_final['K'] расширяем на ровно ±margin_strikes.
+      - Если цена выходит за границы — расширяем до ближайших страйков, покрывающих min/max цены.
+      - Возвращает (y_min, y_max, y_ticks).
+    """
+    # Страйки
+    Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if ("K" in df_final.columns) else []
+    if len(Ks) < 2:
+        # Фоллбек: базовый диапазон по цене либо [0,1]
+        if price_df is not None and ("price" in price_df.columns):
+            _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
+            if not _pr.empty:
+                smin, smax = float(_pr.min()), float(_pr.max())
+                return (smin, smax, sorted(set([smin, smax])))
+        return (0.0, 1.0, [0.0, 1.0])
+
+    # Крайние уровни
+    if groups:
+        level_vals = sorted(float(v) for v in groups.keys())
+        low_level, high_level = level_vals[0], level_vals[-1]
+    else:
+        # Фоллбек: вокруг медианной цены ±2 страйка
+        S_vals = pd.to_numeric(df_final.get("S"), errors="coerce").dropna().tolist() if "S" in df_final.columns else []
+        if S_vals:
+            S = float(pd.Series(S_vals).median())
+            # ближайший страйк к цене
+            import bisect
+            j = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, S)))
+            i0 = max(0, j - margin_strikes)
+            i1 = min(len(Ks)-1, j + margin_strikes)
+            y_min, y_max = float(Ks[i0]), float(Ks[i1])
+            return (y_min, y_max, [k for k in Ks if (k >= y_min and k <= y_max)])
+        # нет групп и нет цены — весь диапазон по страйкам
+        return (float(Ks[0]), float(Ks[-1]), Ks)
+
+    # Индексы ближайших страйков к крайним уровням
+    import bisect
+    il = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, low_level)))
+    ih = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, high_level)))
+
+    # Расширяем на ровно ±margin_strikes
+    il = max(0, il - margin_strikes)
+    ih = min(len(Ks)-1, ih + margin_strikes)
+
+    y_min = float(Ks[il])
+    y_max = float(Ks[ih])
+
+    # Расширение только по цене, без VWAP/OHLC
+    if price_df is not None and ("price" in price_df.columns):
+        _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
+        if not _pr.empty:
+            pmin, pmax = float(_pr.min()), float(_pr.max())
+            if pmin < y_min:
+                ilp = max(0, bisect.bisect_left(Ks, pmin) - 1)
+                y_min = float(min(y_min, Ks[ilp]))
+            if pmax > y_max:
+                ihp = min(len(Ks)-1, bisect.bisect_right(Ks, pmax))
+                y_max = float(max(y_max, Ks[ihp]))
+
+    y_ticks = [k for k in Ks if (k >= y_min and k <= y_max)]
+    return (y_min, y_max, y_ticks)
+
 
 
 # Фиксированный порядок легенды для всех трейсов (глобально)
@@ -443,71 +508,7 @@ def render_key_levels(
     
     # Отображаемые имена серий в легенде
     
-def _y_range_from_levels(df_final: pd.DataFrame, groups: Dict[float, List[str]], price_df: Optional[pd.DataFrame], margin_strikes: int = 2):
-    """
-    Диапазон Y «от левой шкалы».
-      - Крайние уровни берём из groups.keys().
-      - По страйкам df_final['K'] расширяем на ровно ±margin_strikes.
-      - Если цена выходит за границы — расширяем до ближайших страйков, покрывающих min/max цены.
-      - Возвращает (y_min, y_max, y_ticks).
-    """
-    # Страйки
-    Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if ("K" in df_final.columns) else []
-    if len(Ks) < 2:
-        # Фоллбек: базовый диапазон по цене либо [0,1]
-        if price_df is not None and ("price" in price_df.columns):
-            _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
-            if not _pr.empty:
-                smin, smax = float(_pr.min()), float(_pr.max())
-                return (smin, smax, sorted(set([smin, smax])))
-        return (0.0, 1.0, [0.0, 1.0])
-
-    # Крайние уровни
-    if groups:
-        level_vals = sorted(float(v) for v in groups.keys())
-        low_level, high_level = level_vals[0], level_vals[-1]
-    else:
-        # Фоллбек: вокруг медианной цены ±2 страйка
-        S_vals = pd.to_numeric(df_final.get("S"), errors="coerce").dropna().tolist() if "S" in df_final.columns else []
-        if S_vals:
-            S = float(pd.Series(S_vals).median())
-            # ближайший страйк к цене
-            import bisect
-            j = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, S)))
-            i0 = max(0, j - margin_strikes)
-            i1 = min(len(Ks)-1, j + margin_strikes)
-            y_min, y_max = float(Ks[i0]), float(Ks[i1])
-            return (y_min, y_max, [k for k in Ks if (k >= y_min and k <= y_max)])
-        # нет групп и нет цены — весь диапазон по страйкам
-        return (float(Ks[0]), float(Ks[-1]), Ks)
-
-    # Индексы ближайших страйков к крайним уровням
-    import bisect
-    il = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, low_level)))
-    ih = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, high_level)))
-
-    # Расширяем на ровно ±margin_strikes
-    il = max(0, il - margin_strikes)
-    ih = min(len(Ks)-1, ih + margin_strikes)
-
-    y_min = float(Ks[il])
-    y_max = float(Ks[ih])
-
-    # Расширение только по цене, без VWAP/OHLC
-    if price_df is not None and ("price" in price_df.columns):
-        _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
-        if not _pr.empty:
-            pmin, pmax = float(_pr.min()), float(_pr.max())
-            if pmin < y_min:
-                ilp = max(0, bisect.bisect_left(Ks, pmin) - 1)
-                y_min = float(min(y_min, Ks[ilp]))
-            if pmax > y_max:
-                ihp = min(len(Ks)-1, bisect.bisect_right(Ks, pmax))
-                y_max = float(max(y_max, Ks[ihp]))
-
-    y_ticks = [k for k in Ks if (k >= y_min and k <= y_max)]
-    return (y_min, y_max, y_ticks)
-display_name_map = {
+    display_name_map = {
         "Max Neg GEX": "N1",
         "Max Pos GEX": "P1",
         "Max Put OI": "Put OI",
@@ -523,7 +524,7 @@ display_name_map = {
         "P3": "P3",
         "N2": "N2",
         "N3": "N3",
-}
+    }
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
@@ -569,7 +570,7 @@ display_name_map = {
 
     # Диапазон Y от левой шкалы: фиксированно ±2 страйка и расширение только по цене
     y_min, y_max, _y_ticks = _y_range_from_levels(df_final, groups, price_df, margin_strikes=2)
-fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
+    fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
 
 
     # --- G-Flip shading band ---
