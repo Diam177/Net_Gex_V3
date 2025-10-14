@@ -25,90 +25,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
-import math
 import streamlit as st
-def _y_range_from_levels(df_final: pd.DataFrame, groups: Dict[float, List[str]], price_df: Optional[pd.DataFrame], margin_strikes: int = 2):
-    """
-    Диапазон Y «от левой шкалы».
-      - Крайние уровни берём из groups.keys().
-      - По страйкам df_final['K'] расширяем на ровно ±margin_strikes.
-      - Если цена выходит за границы — расширяем до ближайших страйков, покрывающих min/max цены.
-      - Возвращает (y_min, y_max, y_ticks).
-    """
-    # Страйки
-    Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if ("K" in df_final.columns) else []
-    if len(Ks) < 2:
-        # Фоллбек: базовый диапазон по цене либо [0,1]
-        if price_df is not None and ("price" in price_df.columns):
-            _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
-            if not _pr.empty:
-                smin, smax = float(_pr.min()), float(_pr.max())
-                return (smin, smax, sorted(set([smin, smax])))
-        return (0.0, 1.0, [0.0, 1.0])
-
-    # Крайние уровни
-    if groups:
-        level_vals = sorted(float(v) for v in groups.keys())
-        low_level, high_level = level_vals[0], level_vals[-1]
-    else:
-        # Фоллбек: вокруг медианной цены ±2 страйка
-        S_vals = pd.to_numeric(df_final.get("S"), errors="coerce").dropna().tolist() if "S" in df_final.columns else []
-        if S_vals:
-            S = float(pd.Series(S_vals).median())
-            # ближайший страйк к цене
-            import bisect
-            j = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, S)))
-            i0 = max(0, j - margin_strikes)
-            i1 = min(len(Ks)-1, j + margin_strikes)
-            y_min, y_max = float(Ks[i0]), float(Ks[i1])
-            return (y_min, y_max, [k for k in Ks if (k >= y_min and k <= y_max)])
-        # нет групп и нет цены — весь диапазон по страйкам
-        return (float(Ks[0]), float(Ks[-1]), Ks)
-
-    # Индексы ближайших страйков к крайним уровням
-    import bisect
-    il = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, low_level)))
-    ih = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, high_level)))
-
-    # Расширяем на ровно ±margin_strikes
-    il = max(0, il - margin_strikes)
-    ih = min(len(Ks)-1, ih + margin_strikes)
-
-    y_min = float(Ks[il])
-    y_max = float(Ks[ih])
-
-    # Расширение только по цене, без VWAP/OHLC
-    if price_df is not None and ("price" in price_df.columns):
-        _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
-        if not _pr.empty:
-            pmin, pmax = float(_pr.min()), float(_pr.max())
-            # шаг страйка
-            diffs = [b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0]
-            step = min(diffs) if diffs else None
-            # нижняя граница: до ближайшего страйка ниже цены; если цена ниже всех страйков — добавляем синтетические шаги
-            if pmin < y_min and step:
-                n_steps = math.ceil((y_min - pmin) / step)
-                y_min = float(y_min - n_steps * step)
-            elif pmin < y_min:
-                # без шага просто приравняем к цене
-                y_min = float(pmin)
-            # верхняя граница
-            if pmax > y_max and step:
-                n_steps = math.ceil((pmax - y_max) / step)
-                y_max = float(y_max + n_steps * step)
-            elif pmax > y_max:
-                y_max = float(pmax)
-        # Тики: сетка страйков с равным шагом; включает синтетические, если границы ушли за край
-    diffs = [b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0]
-    step = min(diffs) if diffs else None
-    if step:
-        import numpy as _np
-        _grid = list(_np.arange(y_min, y_max + step*0.1, step))
-        y_ticks = sorted(set(x for x in _grid))
-    else:
-        y_ticks = [k for k in Ks if (k >= y_min and k <= y_max)]
-    return (y_min, y_max, y_ticks)
-
 
 
 # Фиксированный порядок легенды для всех трейсов (глобально)
@@ -354,16 +271,42 @@ def render_key_levels(
             if len(g_ag_sorted) >= 2:
                 ag2_k = float(g_ag_sorted.iloc[1]["K"])
                 ag2_v = float(g_ag_sorted.iloc[1]["V"])
-                level_map["AG2"] = ag2_k
-                if ag2_v < 0.9 * ag1_val:
-                    attach_only_names.add("AG2")
+                # скрыть AG2, если он на соседнем страйке с AG1
+                try:
+                    _Ks_ag = g_ag["K"].to_numpy(dtype=float)
+                    import bisect
+                    if ag1_k is not None:
+                        _i1 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag1_k))))
+                        _i2 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag2_k))))
+                        _adjacent_ag2 = (abs(_i2 - _i1) == 1)
+                    else:
+                        _adjacent_ag2 = False
+                except Exception:
+                    _adjacent_ag2 = False
+                if not _adjacent_ag2:
+                    level_map["AG2"] = ag2_k
+                    if ag2_v < 0.9 * ag1_val:
+                        attach_only_names.add("AG2")
             # AG3
             if len(g_ag_sorted) >= 3:
                 ag3_k = float(g_ag_sorted.iloc[2]["K"])
                 ag3_v = float(g_ag_sorted.iloc[2]["V"])
-                level_map["AG3"] = ag3_k
-                if ag3_v < 0.9 * ag1_val:
-                    attach_only_names.add("AG3")
+                # скрыть AG3, если он на соседнем страйке с AG1
+                try:
+                    _Ks_ag = g_ag["K"].to_numpy(dtype=float)
+                    import bisect
+                    if ag1_k is not None:
+                        _i1 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag1_k))))
+                        _i3 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag3_k))))
+                        _adjacent_ag3 = (abs(_i3 - _i1) == 1)
+                    else:
+                        _adjacent_ag3 = False
+                except Exception:
+                    _adjacent_ag3 = False
+                if not _adjacent_ag3:
+                    level_map["AG3"] = ag3_k
+                    if ag3_v < 0.9 * ag1_val:
+                        attach_only_names.add("AG3")
 
     # P2/P3 for positive NetGEX, N2/N3 for negative NetGEX
     if y_ng:
@@ -525,7 +468,6 @@ def render_key_levels(
 
     
     # Отображаемые имена серий в легенде
-    
     display_name_map = {
         "Max Neg GEX": "N1",
         "Max Pos GEX": "P1",
@@ -542,7 +484,7 @@ def render_key_levels(
         "P3": "P3",
         "N2": "N2",
         "N3": "N3",
-    }
+}
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
@@ -586,79 +528,30 @@ def render_key_levels(
             y_min = float(min(y_min, _pr.min()))
             y_max = float(max(y_max, _pr.max()))
 
-    # Диапазон Y от левой шкалы: фиксированно ±2 страйка и расширение только по цене
-    y_min, y_max, _y_ticks = _y_range_from_levels(df_final, groups, price_df, margin_strikes=2)
+    # Тики: все страйки из df_final внутри окна
+    _Ks_all = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().unique().tolist() if "K" in df_final.columns else []
+    _Ks_all = sorted(float(k) for k in _Ks_all)
+    _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
+    
+    # Расширяем диапазон на ±2 шага страйка, если уровни не на крайних страйках окна
+    try:
+        Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
+        if len(Ks) >= 2:
+            diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
+            step = diffs[0] if diffs else None
+            minK, maxK = Ks[0], Ks[-1]
+            level_vals = [float(v) for v in (level_map or {}).values() if v is not None and np.isfinite(v)]
+            on_edge = any(abs(v - minK) < 1e-6 or abs(v - maxK) < 1e-6 for v in level_vals)
+            if step and not on_edge:
+                y_min = float(min(y_min, minK - 2*step))
+                y_max = float(max(y_max, maxK + 2*step))
+                extra_ticks = [minK - 2*step, minK - step, maxK + step, maxK + 2*step]
+                _y_ticks = sorted(set([k for k in Ks if (k >= y_min) and (k <= y_max)] + extra_ticks))
+    except Exception:
+        pass
+
     fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
 
-
-    # --- G-Flip shading band ---
-    try:
-        _gflip_val = level_map.get("G-Flip", None)
-        if _gflip_val is not None and y_ng:
-            # Aggregate NetGEX by strike and build clean sign vector
-            _g = (
-                df_final[["K", y_ng]].copy()
-                .assign(K=lambda x: pd.to_numeric(x["K"], errors="coerce"),
-                        V=lambda x: pd.to_numeric(x[y_ng], errors="coerce"))
-                .dropna()
-                .groupby("K", as_index=False)["V"].sum()
-                .sort_values("K")
-                .reset_index(drop=True)
-            )
-            if not _g.empty and len(_g) >= 2:
-                _K = _g["K"].to_numpy(dtype=float)
-                _V = _g["V"].to_numpy(dtype=float)
-                _s = np.sign(_V).astype(int)
-                # propagate zeros toward neighbors
-                for _i in range(1, len(_s)):
-                    if _s[_i] == 0 and _s[_i-1] != 0:
-                        _s[_i] = _s[_i-1]
-                for _i in range(len(_s)-2, -1, -1):
-                    if _s[_i] == 0 and _s[_i+1] != 0:
-                        _s[_i] = _s[_i+1]
-                # majority filter window=3 to remove single-point islands
-                for _i in range(1, len(_s)-1):
-                    if _s[_i] != 0 and _s[_i-1] == _s[_i+1] and _s[_i] != _s[_i-1]:
-                        _s[_i] = _s[_i-1]
-
-                # locate index of g-flip strike
-                _j = int(np.argmin(np.abs(_K - float(_gflip_val))))
-                # pick neighboring strike with opposite sign
-                _cand = []
-                if _j > 0 and _s[_j-1] != 0 and _s[_j-1] != _s[_j]:
-                    _cand.append(_j-1)
-                if _j+1 < len(_s) and _s[_j+1] != 0 and _s[_j+1] != _s[_j]:
-                    _cand.append(_j+1)
-                if not _cand:
-                    # fallback: nearest strike with opposite sign
-                    _opp_idx = [i for i in range(len(_s)) if _s[i] != 0 and _s[i] != _s[_j]]
-                    if _opp_idx:
-                        _cand = [min(_opp_idx, key=lambda i: abs(_K[i]-_K[_j]))]
-                if _cand:
-                    _k2 = _cand[0]
-                    _y0, _y1 = float(min(_K[_j], _K[_k2])), float(max(_K[_j], _K[_k2]))
-                    # same color as line, transparent fill
-                    def _hex_to_rgba(_hx: str, _a: float) -> str:
-                        _hx = _hx.strip()
-                        if _hx.startswith("#"):
-                            _hx = _hx[1:]
-                        r = int(_hx[0:2], 16) if len(_hx) >= 6 else 170
-                        g = int(_hx[2:4], 16) if len(_hx) >= 6 else 170
-                        b = int(_hx[4:6], 16) if len(_hx) >= 6 else 170
-                        return f"rgba({r},{g},{b},{_a})"
-                    _fill = _hex_to_rgba(COLOR_GFLIP, 0.18)
-                    fig.add_shape(
-                        type="rect",
-                        xref="x", yref="y",
-                        x0=x_left, x1=x_right,
-                        y0=_y0, y1=_y1,
-                        line=dict(width=0),
-                        fillcolor=_fill,
-                        layer="below"
-                    )
-    except Exception as _e:
-        # fail-safe: do not break rendering if shading fails
-        pass
     # Линии и подписи справа
     for y, members in sorted(groups.items(), key=lambda kv: kv[0]):
         labels_sorted = sorted(members, key=lambda s: s)
