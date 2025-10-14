@@ -508,21 +508,56 @@ def render_key_levels(
     _y_ticks = [k for k in _Ks_all if (k >= y_min) and (k <= y_max)]
     
     # Расширяем диапазон на ±2 шага страйка, если уровни не на крайних страйках окна
-    try:
-        Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
-        if len(Ks) >= 2:
-            diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
-            step = diffs[0] if diffs else None
-            minK, maxK = Ks[0], Ks[-1]
-            level_vals = [float(v) for v in (level_map or {}).values() if v is not None and np.isfinite(v)]
-            on_edge = any(abs(v - minK) < 1e-6 or abs(v - maxK) < 1e-6 for v in level_vals)
-            if step and not on_edge:
-                y_min = float(min(y_min, minK - 2*step))
-                y_max = float(max(y_max, maxK + 2*step))
-                extra_ticks = [minK - 2*step, minK - step, maxK + step, maxK + 2*step]
-                _y_ticks = sorted(set([k for k in Ks if (k >= y_min) and (k <= y_max)] + extra_ticks))
-    except Exception:
+try:
+    # Новый алгоритм диапазона Y относительно «левой шкалы»:
+    # 1) найти крайние уровни (верх/низ) из labels/groups;
+    # 2) расширить на ±2 ближайших страйка относительно этих крайних уровней;
+    # 3) если цена выходит за пределы — расширить до ближайших страйков, покрывающих min/max цены.
+    Ks = sorted(set(pd.to_numeric(df_final.get("K"), errors="coerce").dropna().astype(float))) if "K" in df_final.columns else []
+    if len(Ks) >= 2 and groups:
+        # шаг страйка как минимальная положительная разница
+        diffs = sorted([b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0])
+        step = diffs[0] if diffs else None
+
+        level_vals = sorted(float(v) for v in groups.keys())
+        low_level  = level_vals[0]
+        high_level = level_vals[-1]
+
+        # индексы ближайших страйков к крайним уровням
+        import bisect
+        il = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, low_level)))
+        ih = max(0, min(len(Ks)-1, bisect.bisect_left(Ks, high_level)))
+
+        # взять именно существующие страйки и добавить по два шага
+        il = max(0, il - 2)
+        ih = min(len(Ks)-1, ih + 2)
+
+        y_min = float(Ks[il])
+        y_max = float(Ks[ih])
+
+        # если есть цена — расширить при выходе за границы
+        try:
+            if price_df is not None and not price_df.empty and ("price" in price_df.columns):
+                _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
+                if not _pr.empty:
+                    pmin, pmax = float(_pr.min()), float(_pr.max())
+                    if pmin < y_min:
+                        ilp = max(0, bisect.bisect_left(Ks, pmin) - 1)
+                        y_min = float(min(y_min, Ks[ilp]))
+                    if pmax > y_max:
+                        ihp = min(len(Ks)-1, bisect.bisect_right(Ks, pmax))
+                        y_max = float(max(y_max, Ks[ihp]))
+        except Exception:
+            pass
+
+        # финальные тики = все страйки между y_min и y_max
+        _y_ticks = [k for k in Ks if (k >= y_min) and (k <= y_max)]
+    else:
+        # фоллбек к прежним y_min/y_max и тикам, уже рассчитанным выше
         pass
+    
+except Exception:
+    pass
 
     fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
 
