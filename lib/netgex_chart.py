@@ -15,6 +15,16 @@ from __future__ import annotations
 from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
+try:
+    _bg = st.get_option('theme.backgroundColor')
+    if not _bg:
+        _base = (st.get_option('theme.base') or 'dark').lower()
+        _bg = '#0E1117' if _base == 'dark' else '#FFFFFF'
+except Exception:
+    _bg = '#0E1117'
+BG_COLOR = _bg
+FG_COLOR = '#e0e0e0'
+GRID_COLOR = 'rgba(255,255,255,0.10)'
 import numpy as _np
 
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
