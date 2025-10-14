@@ -81,14 +81,31 @@ def _y_range_from_levels(df_final: pd.DataFrame, groups: Dict[float, List[str]],
         _pr = pd.to_numeric(price_df["price"], errors="coerce").dropna()
         if not _pr.empty:
             pmin, pmax = float(_pr.min()), float(_pr.max())
-            if pmin < y_min:
-                ilp = max(0, bisect.bisect_left(Ks, pmin) - 1)
-                y_min = float(min(y_min, Ks[ilp]))
-            if pmax > y_max:
-                ihp = min(len(Ks)-1, bisect.bisect_right(Ks, pmax))
-                y_max = float(max(y_max, Ks[ihp]))
-
-    y_ticks = [k for k in Ks if (k >= y_min and k <= y_max)]
+            # шаг страйка
+            diffs = [b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0]
+            step = min(diffs) if diffs else None
+            # нижняя граница: до ближайшего страйка ниже цены; если цена ниже всех страйков — добавляем синтетические шаги
+            if pmin < y_min and step:
+                n_steps = math.ceil((y_min - pmin) / step)
+                y_min = float(y_min - n_steps * step)
+            elif pmin < y_min:
+                # без шага просто приравняем к цене
+                y_min = float(pmin)
+            # верхняя граница
+            if pmax > y_max and step:
+                n_steps = math.ceil((pmax - y_max) / step)
+                y_max = float(y_max + n_steps * step)
+            elif pmax > y_max:
+                y_max = float(pmax)
+        # Тики: сетка страйков с равным шагом; включает синтетические, если границы ушли за край
+    diffs = [b - a for a, b in zip(Ks, Ks[1:]) if (b - a) > 0]
+    step = min(diffs) if diffs else None
+    if step:
+        import numpy as _np
+        _grid = list(_np.arange(y_min, y_max + step*0.1, step))
+        y_ticks = sorted(set(x for x in _grid))
+    else:
+        y_ticks = [k for k in Ks if (k >= y_min and k <= y_max)]
     return (y_min, y_max, y_ticks)
 
 
