@@ -16,71 +16,160 @@ from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
 import numpy as _np
+
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
     """
-    G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак.
-    Метод: кусочно-линейная интерполяция между соседними страйками и поиск корня.
-    K* = K0 - y0*(K1-K0)/(y1-y0)
-    Если несколько корней — выбираем ближайший к spot (если известен), иначе к середине диапазона.
+    G-Flip (K*): граница текущего режима гаммы около spot.
+    Алгоритм (без порогов):
+      1) Агрегируем NetGEX по страйку и сортируем (K, G).
+      2) Определяем знак в точке spot (линейной интерполяцией по соседним узлам).
+      3) Находим непрерывный сегмент R0 текущего знака, содержащий spot.
+      4) С каждой стороны R0 берём прилегающий сегмент противоположного знака (непрерывный),
+         считаем его массу M = sum(|G|) по этому сегменту.
+      5) Выбираем сторону с бóльшей массой (при равенстве — ближайшую к spot).
+      6) Возвращаем корень между последним узлом R0 и первым узлом противоположного сегмента на выбранной стороне.
     """
-    import pandas as _pd
+    import pandas as _pd, numpy as _np
     if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
         return None
-    base = df_final.copy()
-    base["K"] = _pd.to_numeric(base["K"], errors="coerce")
-    base[y_col] = _pd.to_numeric(base[y_col], errors="coerce")
-    base = base.dropna(subset=["K", y_col])
-    if base.empty:
+
+    g = (df_final
+         .assign(K=_pd.to_numeric(df_final["K"], errors="coerce"),
+                 V=_pd.to_numeric(df_final[y_col], errors="coerce"))[["K","V"]]
+         .dropna()
+         .groupby("K", as_index=False)["V"].sum()
+         .sort_values("K")
+         .reset_index(drop=True))
+    if g.empty or len(g) < 2:
         return None
-    g = base.groupby("K", as_index=False)[y_col].sum().sort_values("K").reset_index(drop=True)
     Ks = g["K"].to_numpy(dtype=float)
-    Ys = g[y_col].to_numpy(dtype=float)
-    if len(Ks) < 2:
-        return None
-    # прямые нули и смена знака
-    cand = [float(Ks[i]) for i,v in enumerate(Ys) if v == 0.0]
-    sign = _np.sign(Ys)
-    idx = _np.where(sign[:-1]*sign[1:] < 0)[0]
-    for i in idx:
-        K0, K1 = Ks[i], Ks[i+1]
-        y0, y1 = Ys[i], Ys[i+1]
-        if y1 == y0: 
-            continue
-        Kstar = K0 - y0*(K1-K0)/(y1-y0)
-        if min(K0,K1) <= Kstar <= max(K0,K1):
-            cand.append(float(Kstar))
-    if not cand:
-        return None
-    if spot is not None and _np.isfinite(spot):
+    Ys = g["V"].to_numpy(dtype=float)
+    n = len(Ks)
+
+    # --- знак в точке spot ---
+    def _interp_y_at(x: float) -> float:
+        pos = _np.searchsorted(Ks, x, side="left")
+        if pos <= 0:
+            return float(Ys[0])
+        if pos >= n:
+            return float(Ys[-1])
+        K0, K1 = Ks[pos-1], Ks[pos]
+        y0, y1 = Ys[pos-1], Ys[pos]
+        if K1 == K0:
+            return float(y0)
+        t = (float(x) - K0) / (K1 - K0)
+        return float(y0 + t*(y1 - y0))
+
+    if spot is None or not _np.isfinite(spot):
+        # fallback: середина диапазона
+        spot = 0.5*(Ks[0] + Ks[-1])
+
+    yspot = _interp_y_at(float(spot))
+    s0 = _np.sign(yspot)
+    if s0 == 0:
+        # берём знак ближайшего незерового узла
+        idx_near = int(_np.argmin(_np.abs(Ks - float(spot))))
+        left = idx_near
+        right = idx_near
+        while left >= 0 and Ys[left] == 0:
+            left -= 1
+        while right < n and Ys[right] == 0:
+            right += 1
+        cand_signs = []
+        if left >= 0 and Ys[left] != 0:
+            cand_signs.append(_np.sign(Ys[left]))
+        if right < n and Ys[right] != 0:
+            cand_signs.append(_np.sign(Ys[right]))
+        s0 = cand_signs[0] if cand_signs else 1.0  # по умолчанию +
+
+    # --- сегмент R0 (содержит spot) ---
+    pos = int(_np.searchsorted(Ks, float(spot), side="left"))
+    i = max(0, min(n-1, pos))
+    # включаем нули в текущий режим
+    def _same_reg(val: float) -> bool:
+        return (_np.sign(val) == s0) or (val == 0.0)
+
+    L = i
+    while L-1 >= 0 and _same_reg(Ys[L-1]):
+        L -= 1
+    R = i
+    while R+1 < n and _same_reg(Ys[R+1]):
+        R += 1
+
+    # --- масса противоположного сегмента слева ---
+    M_left = 0.0
+    left_pair = None  # (i0_in_R0, i1_in_opp) для интерполяции: (R0_index, Opp_index)
+    j = L-1
+    if j >= 0 and _np.sign(Ys[j]) == -s0:
+        k = j
+        while k-1 >= 0 and (_np.sign(Ys[k-1]) == -s0 or Ys[k-1] == 0.0):
+            k -= 1
+        # сегмент противоположного знака: [k .. j]
+        M_left = float(_np.sum(_np.abs(Ys[k:j+1])))
+        left_pair = (L, j)  # граница между j (opp) и L (R0)
+
+    # --- масса противоположного сегмента справа ---
+    M_right = 0.0
+    right_pair = None
+    j = R+1
+    if j < n and _np.sign(Ys[j]) == -s0:
+        k = j
+        while k+1 < n and (_np.sign(Ys[k+1]) == -s0 or Ys[k+1] == 0.0):
+            k += 1
+        # сегмент противоположного знака: [j .. k]
+        M_right = float(_np.sum(_np.abs(Ys[j:k+1])))
+        right_pair = (R, j)  # граница между R (R0) и j (opp)
+
+    # если нет противоположных сегментов — вернём стандартный корень ближайший к spot
+    if left_pair is None and right_pair is None:
+        # классический поиск корней
+        cand = [float(Ks[t]) for t,v in enumerate(Ys) if v == 0.0]
+        sign = _np.sign(Ys)
+        idx = _np.where(sign[:-1]*sign[1:] < 0)[0]
+        for t in idx:
+            K0, K1 = Ks[t], Ks[t+1]
+            y0, y1 = Ys[t], Ys[t+1]
+            if y1 == y0:
+                continue
+            Kstar = K0 - y0*(K1-K0)/(y1-y0)
+            if min(K0, K1) <= Kstar <= max(K0, K1):
+                cand.append(float(Kstar))
+        if not cand:
+            return None
         j = int(_np.argmin(_np.abs(_np.array(cand) - float(spot))))
         return float(cand[j])
-    mid = 0.5*(float(Ks[0]) + float(Ks[-1]))
-    j = int(_np.argmin(_np.abs(_np.array(cand) - mid)))
-    return float(cand[j])
 
-try:
-    import plotly.graph_objects as go
-except Exception as e:
-    raise RuntimeError("Требуется пакет 'plotly' (plotly>=5.22.0)") from e
+    # выбор стороны
+    pick = None
+    if left_pair and right_pair:
+        if abs(M_left - M_right) > 1e-12:
+            pick = left_pair if (M_left > M_right) else right_pair
+        else:
+            # равные массы: ближе к spot
+            kL = Ks[left_pair[0]]  # R0 index near boundary
+            kR = Ks[right_pair[0]]
+            pick = left_pair if abs(kL - float(spot)) <= abs(kR - float(spot)) else right_pair
+    else:
+        pick = left_pair or right_pair
 
-# --- Цвета/оформление ---
-COLOR_NEG = '#D9493A'    # красный
-COLOR_POS = '#60A5E7'    # бирюзовый
-COLOR_PRICE = '#E4A339'  # оранжевая линия цены
-try:
-    _bg = st.get_option('theme.backgroundColor')
-    if not _bg:
-        _base = (st.get_option('theme.base') or 'dark').lower()
-        _bg = '#0E1117' if _base == 'dark' else '#FFFFFF'
-except Exception:
-    _bg = '#0E1117'
-BG_COLOR = _bg
-FG_COLOR = '#e0e0e0'
-GRID_COLOR = 'rgba(255,255,255,0.10)'
-
-def _to_num(a: Sequence) -> _np.ndarray:
-    return _np.array(_pd.to_numeric(a, errors='coerce'), dtype=float)
-
+    i0, i1 = pick  # i0 in R0, i1 in opposite
+    # точные нули на границе
+    if Ys[i0] == 0.0:
+        return float(Ks[i0])
+    if Ys[i1] == 0.0:
+        return float(Ks[i1])
+    # линейная интерполяция
+    K0, K1 = Ks[min(i0, i1)], Ks[max(i0, i1)]
+    y0, y1 = Ys[min(i0, i1)], Ys[max(i0, i1)]
+    if K1 == K0 or y1 == y0:
+        return float(Ks[i0])
+    Kstar = K0 - y0*(K1-K0)/(y1-y0)
+    # ограничим корень интервалом
+    if Kstar < min(K0, K1):
+        Kstar = min(K0, K1)
+    elif Kstar > max(K0, K1):
+        Kstar = max(K0, K1)
+    return float(Kstar)
 def render_netgex_bars(
     df_final: _pd.DataFrame,
     ticker: str,
@@ -464,7 +553,6 @@ def render_netgex_bars(
         paper_bgcolor=BG_COLOR,
         plot_bgcolor=BG_COLOR,
         margin=dict(l=40, r=60, t=40, b=40),
-        height=900,
         showlegend=False,
         dragmode=False,
         xaxis=dict(
