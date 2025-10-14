@@ -41,6 +41,12 @@ LEGEND_RANK = {
     "Call Vol": 90,
     "AG": 100,
     "PZ": 110,
+    "N2": 41,
+    "N3": 42,
+    "P2": 51,
+    "P3": 52,
+    "AG2": 101,
+    "AG3": 102,
 }
 # --- Цвета (совместимые с netgex_chart.py) ---
 COLOR_PUT_OI    = "#800020"
@@ -235,6 +241,64 @@ def render_key_levels(
     if g_flip is not None and np.isfinite(g_flip):
         level_map["G-Flip"] = float(g_flip)
 
+    # --- Additional secondary/tertiary levels ---
+    attach_only_names = set()  # names that should not draw standalone lines
+
+    # Helper: group by K for a column
+    def _group_sum_series(df: pd.DataFrame, col: str) -> pd.DataFrame:
+        _g = (
+            df[["K", col]].copy()
+            .assign(K=lambda x: pd.to_numeric(x["K"], errors="coerce"),
+                    V=lambda x: pd.to_numeric(x[col], errors="coerce"))
+            .dropna()
+            .groupby("K", as_index=False)["V"].sum()
+            .sort_values("K")
+            .reset_index(drop=True)
+        )
+        return _g
+
+    # AG2/AG3 logic
+    if y_ag:
+        g_ag = _group_sum_series(df_final, y_ag)
+        if not g_ag.empty:
+            g_ag_sorted = g_ag.sort_values("V", ascending=False).reset_index(drop=True)
+            ag1_k = level_map.get("AG", None)
+            try:
+                ag1_val = float(g_ag.loc[g_ag["K"] == float(ag1_k), "V"].iloc[0]) if ag1_k is not None else float(g_ag_sorted.iloc[0]["V"])
+            except Exception:
+                ag1_val = float(g_ag_sorted.iloc[0]["V"])
+            # AG2
+            if len(g_ag_sorted) >= 2:
+                ag2_k = float(g_ag_sorted.iloc[1]["K"])
+                ag2_v = float(g_ag_sorted.iloc[1]["V"])
+                level_map["AG2"] = ag2_k
+                if ag2_v < 0.9 * ag1_val:
+                    attach_only_names.add("AG2")
+            # AG3
+            if len(g_ag_sorted) >= 3:
+                ag3_k = float(g_ag_sorted.iloc[2]["K"])
+                ag3_v = float(g_ag_sorted.iloc[2]["V"])
+                level_map["AG3"] = ag3_k
+                if ag3_v < 0.9 * ag1_val:
+                    attach_only_names.add("AG3")
+
+    # P2/P3 for positive NetGEX, N2/N3 for negative NetGEX
+    if y_ng:
+        g_ng = _group_sum_series(df_final, y_ng)
+        if not g_ng.empty:
+            pos = g_ng[g_ng["V"] > 0].sort_values("V", ascending=False).reset_index(drop=True)
+            neg = g_ng[g_ng["V"] < 0].sort_values("V", ascending=True).reset_index(drop=True)  # most negative first
+            # P2, P3
+            if len(pos) >= 2:
+                level_map["P2"] = float(pos.iloc[1]["K"])
+            if len(pos) >= 3:
+                level_map["P3"] = float(pos.iloc[2]["K"])
+            # N2, N3
+            if len(neg) >= 2:
+                level_map["N2"] = float(neg.iloc[1]["K"])
+            if len(neg) >= 3:
+                level_map["N3"] = float(neg.iloc[2]["K"])
+
     # --- Временная ось ---
     t0, t1, t_idx = _session_timerange(session_date)
     x_left, x_right = t0, t1
@@ -368,7 +432,13 @@ def render_key_levels(
         "AG": COLOR_AG,
         "PZ": COLOR_PZ,
         "G-Flip": COLOR_GFLIP,
-    }
+            "AG2": COLOR_AG,
+        "AG3": COLOR_AG,
+        "P2": COLOR_MAX_POS_GEX,
+        "P3": COLOR_MAX_POS_GEX,
+        "N2": COLOR_MAX_NEG_GEX,
+        "N3": COLOR_MAX_NEG_GEX,
+}
 
     
     # Отображаемые имена серий в легенде
@@ -382,7 +452,13 @@ def render_key_levels(
         "AG": "AG",
         "PZ": "PZ",
         "G-Flip": "G-Flip",
-    }
+            "AG2": "AG2",
+        "AG3": "AG3",
+        "P2": "P2",
+        "P3": "P3",
+        "N2": "N2",
+        "N3": "N3",
+}
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     # Сгруппируем совпадающие значения (±0.05) для подписи справа
     eps = 0.05
@@ -461,22 +537,28 @@ def render_key_levels(
             color = color_map.get(pick, "#CCCCCC")
 
         # Отдельные трейсы по сериям — для кликабельной легенды и имён с уровнем
-        for _orig in labels_sorted:
-            _disp = display_name_map.get(_orig, _orig)
-            _clr = COLOR_GFLIP if _orig == "G-Flip" else color_map.get(_orig, color)
-            _nm = f"{_disp} ({float(y):g})" if _orig not in ["Price","VWAP"] else _disp
-            fig.add_trace(go.Scatter(
-                x=[x_left, x_right], y=[float(y), float(y)],
-                mode="lines",
-                line=dict(color=_clr, width=1.4, dash=("dash" if _orig in {"AG","PZ","G-Flip"} else "solid")),
-                name=_nm, showlegend=True,
-                legendrank=LEGEND_RANK.get(display_name_map.get(_orig, _orig), 999),
-            ))
+        # patched: attach-only and dotted styles
+        labels_for_lines = [n for n in labels_sorted if 'attach_only_names' not in globals() or n not in attach_only_names]
+        if not labels_for_lines and (('attach_only_names' in globals()) and all((n in attach_only_names) for n in labels_sorted)):
+            pass
+        else:
+            for _orig in labels_for_lines:
+                _disp = display_name_map.get(_orig, _orig)
+                _clr = COLOR_GFLIP if _orig == 'G-Flip' else color_map.get(_orig, color)
+                _nm = f"{_disp} ({float(y):g})" if _orig not in ['Price','VWAP'] else _disp
+                _dash = 'dot' if _orig in {'AG2','AG3','P2','P3','N2','N3'} else ('dash' if _orig in {'AG','PZ','G-Flip'} else 'solid')
+                fig.add_trace(go.Scatter(
+                    x=[x_left, x_right], y=[float(y), float(y)],
+                    mode='lines',
+                    line=dict(color=_clr, width=1.4, dash=_dash),
+                    name=_nm, showlegend=True,
+                    legendrank=LEGEND_RANK.get(display_name_map.get(_orig, _orig), 999),
+                ))
         # Сводная подпись справа (над линией, у правого края)
         fig.add_annotation(
             x=1.0, xref="paper",
             y=float(y), yref="y",
-            text=" + ".join([display_name_map.get(n,n) for n in labels_sorted]),
+            text=" + ".join([display_name_map.get(n,n) for n in (labels_sorted if ('attach_only_names' not in globals() or not all((n in attach_only_names) for n in labels_sorted)) else [])]),
             showarrow=False,
             xanchor="right", yanchor="bottom",
             yshift=6,
