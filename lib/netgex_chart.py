@@ -15,6 +15,108 @@ from __future__ import annotations
 from typing import Optional, Sequence
 import pandas as _pd
 import streamlit as st
+import numpy as _np
+def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
+    """G-Flip Variant A with tol=2% tie-break."""
+    import numpy as _np
+    import pandas as _pd
+    if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
+        return None
+    base = df_final[["K", y_col]].copy()
+    base["K"] = _pd.to_numeric(base["K"], errors="coerce")
+    base[y_col] = _pd.to_numeric(base[y_col], errors="coerce")
+    base = base.dropna()
+    if base.empty:
+        return None
+    g = base.groupby("K", as_index=False)[y_col].sum().sort_values("K").reset_index(drop=True)
+    Ks = g["K"].to_numpy(dtype=float)
+    Ys = g[y_col].to_numpy(dtype=float)
+    n = len(Ks)
+    if n < 2:
+        return None
+    sgn = _np.sign(Ys).astype(int)
+    if _np.any(sgn == 0):
+        s = _pd.Series(sgn).replace(0, _pd.NA).ffill().bfill().fillna(0).to_numpy(dtype=int)
+    else:
+        s = sgn
+    def _interp_sign_at_spot():
+        if spot is None or not _np.isfinite(spot):
+            i0 = int(_np.argmin(_np.abs(Ks - Ks.mean())))
+            return s[i0], i0, None
+        x = float(spot)
+        j = int(_np.searchsorted(Ks, x) - 1)
+        if j < 0: j = 0
+        if j >= n-1: j = n-2
+        K0, K1 = Ks[j], Ks[j+1]
+        y0, y1 = Ys[j], Ys[j+1]
+        yx = y0 + (y1 - y0) * (x - K0) / (K1 - K0) if K1 != K0 else y0
+        if yx == 0.0: return 0, j, float(x)
+        anchor = j if abs(x - K0) <= abs(x - K1) else j + 1
+        return (1 if yx > 0 else -1), anchor, None
+    sign0, anchor, exact_root = _interp_sign_at_spot()
+    if exact_root is not None: return float(exact_root)
+    L = anchor
+    while L-1 >= 0 and s[L-1] == sign0: L -= 1
+    R = anchor
+    while R+1 < n and s[R+1] == sign0: R += 1
+    left_run = None
+    if L-1 >= 0 and s[L-1] == -sign0:
+        a = L-1
+        while a-1 >= 0 and s[a-1] == -sign0: a -= 1
+        left_run = (a, L-1)
+    right_run = None
+    if R+1 < n and s[R+1] == -sign0:
+        b = R+1
+        while b+1 < n and s[b+1] == -sign0: b += 1
+        right_run = (R+1, b)
+    if left_run is None and right_run is None: return None
+    def _mass(run):
+        if run is None: return 0.0
+        i0, i1 = run
+        return float(_np.sum(_np.abs(Ys[i0:i1+1])))
+    M_left = _mass(left_run); M_right = _mass(right_run)
+    if left_run is None:
+        side, run = 'right', right_run
+    elif right_run is None:
+        side, run = 'left', left_run
+    else:
+        mx = max(M_left, M_right); rel = 0.0 if mx == 0 else abs(M_left - M_right)/mx
+        if rel > 0.02:
+            side, run = (('left', left_run) if M_left > M_right else ('right', right_run))
+        else:
+            x = Ks[anchor] if (spot is None or not _np.isfinite(spot)) else float(spot)
+            left_mid = 0.5*(Ks[left_run[1]] + Ks[L]) if left_run else float('inf')
+            right_mid = 0.5*(Ks[R] + Ks[right_run[0]]) if right_run else float('inf')
+            dl = abs(x - left_mid); dr = abs(x - right_mid)
+            if dl < dr: side, run = 'left', left_run
+            elif dr < dl: side, run = 'right', right_run
+            else:
+                dG_left = abs(Ys[L] - Ys[left_run[1]]) if left_run else -1.0
+                dG_right = abs(Ys[right_run[0]] - Ys[R]) if right_run else -1.0
+                side, run = (('left', left_run) if dG_left >= dG_right else ('right', right_run))
+    if side == 'left':
+        i_op, i_r0 = run[1], L
+    else:
+        i_r0, i_op = R, run[0]
+    K_r0, Y_r0 = Ks[i_r0], Ys[i_r0]; K_op, Y_op = Ks[i_op], Ys[i_op]
+    if Y_op == Y_r0:
+        if Y_r0 == 0.0: return float(K_r0)
+        if Y_op == 0.0: return float(K_op)
+        return None
+    Kstar = K_r0 - Y_r0 * (K_op - K_r0) / (Y_op - Y_r0)
+    lo, hi = (K_r0, K_op) if K_r0 <= K_op else (K_op, K_r0)
+    if Kstar < lo: Kstar = lo
+    if Kstar > hi: Kstar = hi
+    return float(Kstar)
+try:
+    import plotly.graph_objects as go
+except Exception as e:
+    raise RuntimeError("Требуется пакет 'plotly' (plotly>=5.22.0)") from e
+
+# --- Цвета/оформление ---
+COLOR_NEG = '#D9493A'    # красный
+COLOR_POS = '#60A5E7'    # бирюзовый
+COLOR_PRICE = '#E4A339'  # оранжевая линия цены
 try:
     _bg = st.get_option('theme.backgroundColor')
     if not _bg:
@@ -25,164 +127,10 @@ except Exception:
 BG_COLOR = _bg
 FG_COLOR = '#e0e0e0'
 GRID_COLOR = 'rgba(255,255,255,0.10)'
-COLOR_NEG = '#D9493A'
-COLOR_POS = '#60A5E7'
-COLOR_PRICE = '#E4A339'
-import numpy as _np
 
-def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
-    """
-    G-Flip (K*): граница текущего режима гаммы около spot.
-    Алгоритм (без порогов):
-      1) Агрегируем NetGEX по страйку и сортируем (K, G).
-      2) Определяем знак в точке spot (линейной интерполяцией по соседним узлам).
-      3) Находим непрерывный сегмент R0 текущего знака, содержащий spot.
-      4) С каждой стороны R0 берём прилегающий сегмент противоположного знака (непрерывный),
-         считаем его массу M = sum(|G|) по этому сегменту.
-      5) Выбираем сторону с бóльшей массой (при равенстве — ближайшую к spot).
-      6) Возвращаем корень между последним узлом R0 и первым узлом противоположного сегмента на выбранной стороне.
-    """
-    import pandas as _pd, numpy as _np
-    if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
-        return None
+def _to_num(a: Sequence) -> _np.ndarray:
+    return _np.array(_pd.to_numeric(a, errors='coerce'), dtype=float)
 
-    g = (df_final
-         .assign(K=_pd.to_numeric(df_final["K"], errors="coerce"),
-                 V=_pd.to_numeric(df_final[y_col], errors="coerce"))[["K","V"]]
-         .dropna()
-         .groupby("K", as_index=False)["V"].sum()
-         .sort_values("K")
-         .reset_index(drop=True))
-    if g.empty or len(g) < 2:
-        return None
-    Ks = g["K"].to_numpy(dtype=float)
-    Ys = g["V"].to_numpy(dtype=float)
-    n = len(Ks)
-
-    # --- знак в точке spot ---
-    def _interp_y_at(x: float) -> float:
-        pos = _np.searchsorted(Ks, x, side="left")
-        if pos <= 0:
-            return float(Ys[0])
-        if pos >= n:
-            return float(Ys[-1])
-        K0, K1 = Ks[pos-1], Ks[pos]
-        y0, y1 = Ys[pos-1], Ys[pos]
-        if K1 == K0:
-            return float(y0)
-        t = (float(x) - K0) / (K1 - K0)
-        return float(y0 + t*(y1 - y0))
-
-    if spot is None or not _np.isfinite(spot):
-        # fallback: середина диапазона
-        spot = 0.5*(Ks[0] + Ks[-1])
-
-    yspot = _interp_y_at(float(spot))
-    s0 = _np.sign(yspot)
-    if s0 == 0:
-        # берём знак ближайшего незерового узла
-        idx_near = int(_np.argmin(_np.abs(Ks - float(spot))))
-        left = idx_near
-        right = idx_near
-        while left >= 0 and Ys[left] == 0:
-            left -= 1
-        while right < n and Ys[right] == 0:
-            right += 1
-        cand_signs = []
-        if left >= 0 and Ys[left] != 0:
-            cand_signs.append(_np.sign(Ys[left]))
-        if right < n and Ys[right] != 0:
-            cand_signs.append(_np.sign(Ys[right]))
-        s0 = cand_signs[0] if cand_signs else 1.0  # по умолчанию +
-
-    # --- сегмент R0 (содержит spot) ---
-    pos = int(_np.searchsorted(Ks, float(spot), side="left"))
-    i = max(0, min(n-1, pos))
-    # включаем нули в текущий режим
-    def _same_reg(val: float) -> bool:
-        return (_np.sign(val) == s0) or (val == 0.0)
-
-    L = i
-    while L-1 >= 0 and _same_reg(Ys[L-1]):
-        L -= 1
-    R = i
-    while R+1 < n and _same_reg(Ys[R+1]):
-        R += 1
-
-    # --- масса противоположного сегмента слева ---
-    M_left = 0.0
-    left_pair = None  # (i0_in_R0, i1_in_opp) для интерполяции: (R0_index, Opp_index)
-    j = L-1
-    if j >= 0 and _np.sign(Ys[j]) == -s0:
-        k = j
-        while k-1 >= 0 and (_np.sign(Ys[k-1]) == -s0 or Ys[k-1] == 0.0):
-            k -= 1
-        # сегмент противоположного знака: [k .. j]
-        M_left = float(_np.sum(_np.abs(Ys[k:j+1])))
-        left_pair = (L, j)  # граница между j (opp) и L (R0)
-
-    # --- масса противоположного сегмента справа ---
-    M_right = 0.0
-    right_pair = None
-    j = R+1
-    if j < n and _np.sign(Ys[j]) == -s0:
-        k = j
-        while k+1 < n and (_np.sign(Ys[k+1]) == -s0 or Ys[k+1] == 0.0):
-            k += 1
-        # сегмент противоположного знака: [j .. k]
-        M_right = float(_np.sum(_np.abs(Ys[j:k+1])))
-        right_pair = (R, j)  # граница между R (R0) и j (opp)
-
-    # если нет противоположных сегментов — вернём стандартный корень ближайший к spot
-    if left_pair is None and right_pair is None:
-        # классический поиск корней
-        cand = [float(Ks[t]) for t,v in enumerate(Ys) if v == 0.0]
-        sign = _np.sign(Ys)
-        idx = _np.where(sign[:-1]*sign[1:] < 0)[0]
-        for t in idx:
-            K0, K1 = Ks[t], Ks[t+1]
-            y0, y1 = Ys[t], Ys[t+1]
-            if y1 == y0:
-                continue
-            Kstar = K0 - y0*(K1-K0)/(y1-y0)
-            if min(K0, K1) <= Kstar <= max(K0, K1):
-                cand.append(float(Kstar))
-        if not cand:
-            return None
-        j = int(_np.argmin(_np.abs(_np.array(cand) - float(spot))))
-        return float(cand[j])
-
-    # выбор стороны
-    pick = None
-    if left_pair and right_pair:
-        if abs(M_left - M_right) > 1e-12:
-            pick = left_pair if (M_left > M_right) else right_pair
-        else:
-            # равные массы: ближе к spot
-            kL = Ks[left_pair[0]]  # R0 index near boundary
-            kR = Ks[right_pair[0]]
-            pick = left_pair if abs(kL - float(spot)) <= abs(kR - float(spot)) else right_pair
-    else:
-        pick = left_pair or right_pair
-
-    i0, i1 = pick  # i0 in R0, i1 in opposite
-    # точные нули на границе
-    if Ys[i0] == 0.0:
-        return float(Ks[i0])
-    if Ys[i1] == 0.0:
-        return float(Ks[i1])
-    # линейная интерполяция
-    K0, K1 = Ks[min(i0, i1)], Ks[max(i0, i1)]
-    y0, y1 = Ys[min(i0, i1)], Ys[max(i0, i1)]
-    if K1 == K0 or y1 == y0:
-        return float(Ks[i0])
-    Kstar = K0 - y0*(K1-K0)/(y1-y0)
-    # ограничим корень интервалом
-    if Kstar < min(K0, K1):
-        Kstar = min(K0, K1)
-    elif Kstar > max(K0, K1):
-        Kstar = max(K0, K1)
-    return float(Kstar)
 def render_netgex_bars(
     df_final: _pd.DataFrame,
     ticker: str,
@@ -566,6 +514,7 @@ def render_netgex_bars(
         paper_bgcolor=BG_COLOR,
         plot_bgcolor=BG_COLOR,
         margin=dict(l=40, r=60, t=40, b=40),
+        height=900,
         showlegend=False,
         dragmode=False,
         xaxis=dict(
