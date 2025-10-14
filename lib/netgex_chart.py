@@ -17,97 +17,47 @@ import pandas as _pd
 import streamlit as st
 import numpy as _np
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
-    """G-Flip Variant A with tol=2% tie-break."""
-    import numpy as _np
+    """
+    G-Flip (K*): страйк, где агрегированный Net GEX(K) меняет знак.
+    Метод: кусочно-линейная интерполяция между соседними страйками и поиск корня.
+    K* = K0 - y0*(K1-K0)/(y1-y0)
+    Если несколько корней — выбираем ближайший к spot (если известен), иначе к середине диапазона.
+    """
     import pandas as _pd
     if df_final is None or len(df_final) == 0 or "K" not in df_final.columns or y_col not in df_final.columns:
         return None
-    base = df_final[["K", y_col]].copy()
+    base = df_final.copy()
     base["K"] = _pd.to_numeric(base["K"], errors="coerce")
     base[y_col] = _pd.to_numeric(base[y_col], errors="coerce")
-    base = base.dropna()
+    base = base.dropna(subset=["K", y_col])
     if base.empty:
         return None
     g = base.groupby("K", as_index=False)[y_col].sum().sort_values("K").reset_index(drop=True)
     Ks = g["K"].to_numpy(dtype=float)
     Ys = g[y_col].to_numpy(dtype=float)
-    n = len(Ks)
-    if n < 2:
+    if len(Ks) < 2:
         return None
-    sgn = _np.sign(Ys).astype(int)
-    if _np.any(sgn == 0):
-        s = _pd.Series(sgn).replace(0, _pd.NA).ffill().bfill().fillna(0).to_numpy(dtype=int)
-    else:
-        s = sgn
-    def _interp_sign_at_spot():
-        if spot is None or not _np.isfinite(spot):
-            i0 = int(_np.argmin(_np.abs(Ks - Ks.mean())))
-            return s[i0], i0, None
-        x = float(spot)
-        j = int(_np.searchsorted(Ks, x) - 1)
-        if j < 0: j = 0
-        if j >= n-1: j = n-2
-        K0, K1 = Ks[j], Ks[j+1]
-        y0, y1 = Ys[j], Ys[j+1]
-        yx = y0 + (y1 - y0) * (x - K0) / (K1 - K0) if K1 != K0 else y0
-        if yx == 0.0: return 0, j, float(x)
-        anchor = j if abs(x - K0) <= abs(x - K1) else j + 1
-        return (1 if yx > 0 else -1), anchor, None
-    sign0, anchor, exact_root = _interp_sign_at_spot()
-    if exact_root is not None: return float(exact_root)
-    L = anchor
-    while L-1 >= 0 and s[L-1] == sign0: L -= 1
-    R = anchor
-    while R+1 < n and s[R+1] == sign0: R += 1
-    left_run = None
-    if L-1 >= 0 and s[L-1] == -sign0:
-        a = L-1
-        while a-1 >= 0 and s[a-1] == -sign0: a -= 1
-        left_run = (a, L-1)
-    right_run = None
-    if R+1 < n and s[R+1] == -sign0:
-        b = R+1
-        while b+1 < n and s[b+1] == -sign0: b += 1
-        right_run = (R+1, b)
-    if left_run is None and right_run is None: return None
-    def _mass(run):
-        if run is None: return 0.0
-        i0, i1 = run
-        return float(_np.sum(_np.abs(Ys[i0:i1+1])))
-    M_left = _mass(left_run); M_right = _mass(right_run)
-    if left_run is None:
-        side, run = 'right', right_run
-    elif right_run is None:
-        side, run = 'left', left_run
-    else:
-        mx = max(M_left, M_right); rel = 0.0 if mx == 0 else abs(M_left - M_right)/mx
-        if rel > 0.02:
-            side, run = (('left', left_run) if M_left > M_right else ('right', right_run))
-        else:
-            x = Ks[anchor] if (spot is None or not _np.isfinite(spot)) else float(spot)
-            left_mid = 0.5*(Ks[left_run[1]] + Ks[L]) if left_run else float('inf')
-            right_mid = 0.5*(Ks[R] + Ks[right_run[0]]) if right_run else float('inf')
-            dl = abs(x - left_mid); dr = abs(x - right_mid)
-            if dl < dr: side, run = 'left', left_run
-            elif dr < dl: side, run = 'right', right_run
-            else:
-                dG_left = abs(Ys[L] - Ys[left_run[1]]) if left_run else -1.0
-                dG_right = abs(Ys[right_run[0]] - Ys[R]) if right_run else -1.0
-                side, run = (('left', left_run) if dG_left >= dG_right else ('right', right_run))
-    if side == 'left':
-        i_op, i_r0 = run[1], L
-    else:
-        i_r0, i_op = R, run[0]
-    K_r0, Y_r0 = Ks[i_r0], Ys[i_r0]; K_op, Y_op = Ks[i_op], Ys[i_op]
-    if Y_op == Y_r0:
-        if Y_r0 == 0.0: return float(K_r0)
-        if Y_op == 0.0: return float(K_op)
+    # прямые нули и смена знака
+    cand = [float(Ks[i]) for i,v in enumerate(Ys) if v == 0.0]
+    sign = _np.sign(Ys)
+    idx = _np.where(sign[:-1]*sign[1:] < 0)[0]
+    for i in idx:
+        K0, K1 = Ks[i], Ks[i+1]
+        y0, y1 = Ys[i], Ys[i+1]
+        if y1 == y0: 
+            continue
+        Kstar = K0 - y0*(K1-K0)/(y1-y0)
+        if min(K0,K1) <= Kstar <= max(K0,K1):
+            cand.append(float(Kstar))
+    if not cand:
         return None
-    Kstar = K_r0 - Y_r0 * (K_op - K_r0) / (Y_op - Y_r0)
-    lo, hi = (K_r0, K_op) if K_r0 <= K_op else (K_op, K_r0)
-    if Kstar < lo: Kstar = lo
-    if Kstar > hi: Kstar = hi
-    return float(Kstar)
+    if spot is not None and _np.isfinite(spot):
+        j = int(_np.argmin(_np.abs(_np.array(cand) - float(spot))))
+        return float(cand[j])
+    mid = 0.5*(float(Ks[0]) + float(Ks[-1]))
+    j = int(_np.argmin(_np.abs(_np.array(cand) - mid)))
+    return float(cand[j])
+
 try:
     import plotly.graph_objects as go
 except Exception as e:
