@@ -25,6 +25,9 @@ except Exception:
 BG_COLOR = _bg
 FG_COLOR = '#e0e0e0'
 GRID_COLOR = 'rgba(255,255,255,0.10)'
+COLOR_NEG = '#D9493A'
+COLOR_POS = '#60A5E7'
+COLOR_PRICE = '#E4A339'
 import numpy as _np
 
 def _compute_gamma_flip_from_table(df_final, y_col: str, spot: float | None) -> float | None:
