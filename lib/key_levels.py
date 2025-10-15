@@ -271,42 +271,16 @@ def render_key_levels(
             if len(g_ag_sorted) >= 2:
                 ag2_k = float(g_ag_sorted.iloc[1]["K"])
                 ag2_v = float(g_ag_sorted.iloc[1]["V"])
-                # скрыть AG2, если он на соседнем страйке с AG1
-                try:
-                    _Ks_ag = g_ag["K"].to_numpy(dtype=float)
-                    import bisect
-                    if ag1_k is not None:
-                        _i1 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag1_k))))
-                        _i2 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag2_k))))
-                        _adjacent_ag2 = (abs(_i2 - _i1) == 1)
-                    else:
-                        _adjacent_ag2 = False
-                except Exception:
-                    _adjacent_ag2 = False
-                if not _adjacent_ag2:
-                    level_map["AG2"] = ag2_k
-                    if ag2_v < 0.9 * ag1_val:
-                        attach_only_names.add("AG2")
+                level_map["AG2"] = ag2_k
+                if ag2_v < 0.9 * ag1_val:
+                    attach_only_names.add("AG2")
             # AG3
             if len(g_ag_sorted) >= 3:
                 ag3_k = float(g_ag_sorted.iloc[2]["K"])
                 ag3_v = float(g_ag_sorted.iloc[2]["V"])
-                # скрыть AG3, если он на соседнем страйке с AG1
-                try:
-                    _Ks_ag = g_ag["K"].to_numpy(dtype=float)
-                    import bisect
-                    if ag1_k is not None:
-                        _i1 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag1_k))))
-                        _i3 = max(0, min(len(_Ks_ag)-1, bisect.bisect_left(_Ks_ag, float(ag3_k))))
-                        _adjacent_ag3 = (abs(_i3 - _i1) == 1)
-                    else:
-                        _adjacent_ag3 = False
-                except Exception:
-                    _adjacent_ag3 = False
-                if not _adjacent_ag3:
-                    level_map["AG3"] = ag3_k
-                    if ag3_v < 0.9 * ag1_val:
-                        attach_only_names.add("AG3")
+                level_map["AG3"] = ag3_k
+                if ag3_v < 0.9 * ag1_val:
+                    attach_only_names.add("AG3")
 
     # P2/P3 for positive NetGEX, N2/N3 for negative NetGEX
     if y_ng:
@@ -552,6 +526,76 @@ def render_key_levels(
 
     fig.update_yaxes(range=[y_min, y_max], tickmode="array", tickvals=_y_ticks, ticktext=[f"{v:g}" for v in _y_ticks])
 
+
+    # --- G-Flip shading band ---
+    try:
+        _gflip_val = level_map.get("G-Flip", None)
+        _ycol = "NetGEX_1pct_M" if "NetGEX_1pct_M" in df_final.columns else ("NetGEX_1pct" if "NetGEX_1pct" in df_final.columns else None)
+        if _gflip_val is not None and _ycol:
+            # Aggregate NetGEX by strike and build clean sign vector
+            _g = (
+                df_final[["K", _ycol]].copy()
+                .assign(K=lambda x: pd.to_numeric(x["K"], errors="coerce"),
+                        V=lambda x: pd.to_numeric(x[_ycol], errors="coerce"))
+                .dropna()
+                .groupby("K", as_index=False)["V"].sum()
+                .sort_values("K")
+                .reset_index(drop=True)
+            )
+            if not _g.empty and len(_g) >= 2:
+                _K = _g["K"].to_numpy(dtype=float)
+                _V = _g["V"].to_numpy(dtype=float)
+                _s = np.sign(_V).astype(int)
+                # propagate zeros toward neighbors
+                for _i in range(1, len(_s)):
+                    if _s[_i] == 0 and _s[_i-1] != 0:
+                        _s[_i] = _s[_i-1]
+                for _i in range(len(_s)-2, -1, -1):
+                    if _s[_i] == 0 and _s[_i+1] != 0:
+                        _s[_i] = _s[_i+1]
+                # majority filter window=3 to remove single-point islands
+                for _i in range(1, len(_s)-1):
+                    if _s[_i] != 0 and _s[_i-1] == _s[_i+1] and _s[_i] != _s[_i-1]:
+                        _s[_i] = _s[_i-1]
+
+                # locate index of g-flip strike
+                _j = int(np.argmin(np.abs(_K - float(_gflip_val))))
+                # pick neighboring strike with opposite sign
+                _cand = []
+                if _j > 0 and _s[_j-1] != 0 and _s[_j-1] != _s[_j]:
+                    _cand.append(_j-1)
+                if _j+1 < len(_s) and _s[_j+1] != 0 and _s[_j+1] != _s[_j]:
+                    _cand.append(_j+1)
+                if not _cand:
+                    # fallback: nearest strike with opposite sign
+                    _opp_idx = [i for i in range(len(_s)) if _s[i] != 0 and _s[i] != _s[_j]]
+                    if _opp_idx:
+                        _cand = [min(_opp_idx, key=lambda i: abs(_K[i]-_K[_j]))]
+                if _cand:
+                    _k2 = _cand[0]
+                    _y0, _y1 = float(min(_K[_j], _K[_k2])), float(max(_K[_j], _K[_k2]))
+                    # same color as line, transparent fill
+                    def _hex_to_rgba(_hx: str, _a: float) -> str:
+                        _hx = _hx.strip()
+                        if _hx.startswith("#"):
+                            _hx = _hx[1:]
+                        r = int(_hx[0:2], 16) if len(_hx) >= 6 else 170
+                        g = int(_hx[2:4], 16) if len(_hx) >= 6 else 170
+                        b = int(_hx[4:6], 16) if len(_hx) >= 6 else 170
+                        return f"rgba({r},{g},{b},{_a})"
+                    _fill = _hex_to_rgba(COLOR_GFLIP, 0.18)
+                    fig.add_shape(
+                        type="rect",
+                        xref="x", yref="y",
+                        x0=x_left, x1=x_right,
+                        y0=_y0, y1=_y1,
+                        line=dict(width=0),
+                        fillcolor=_fill,
+                        layer="below"
+                    )
+    except Exception as _e:
+        # fail-safe: do not break rendering if shading fails
+        pass
     # Линии и подписи справа
     for y, members in sorted(groups.items(), key=lambda kv: kv[0]):
         labels_sorted = sorted(members, key=lambda s: s)
