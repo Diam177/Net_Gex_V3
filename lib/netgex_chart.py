@@ -175,15 +175,7 @@ def render_netgex_bars(
 
     Ks = df["K"].to_numpy(dtype=float)
     Ys = df[y_col].to_numpy(dtype=float)
-    g_flip = _find_gflip_run_start(df_final, y_col, spot)
-    if g_flip is None and len(Ks) >= 3:
-        g_flip = _compute_gamma_flip_from_table(df, y_col, spot)
-    # snap to nearest strike if possible
-    if g_flip is not None and len(Ks) > 0:
-        try:
-            g_flip = float(Ks[_np.argmin(_np.abs(Ks - float(g_flip)))])
-        except Exception:
-            pass
+    g_flip = _compute_gamma_flip_from_table(df, y_col, spot)
     
     # Последовательные позиции без "пустых" промежутков между страйками
     x_idx = _np.arange(len(Ks), dtype=float)
@@ -536,3 +528,88 @@ def render_netgex_bars(
     )
     st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={'displayModeBar': False})
+
+
+def _find_gflip_run_start(df_like, y_col: str, spot: float | None):
+    """
+    Старт непрерывной массы противоположного знака NetGEX относительно ближайшего к цене страйка.
+    Возвращает float(strike) или None.
+    """
+    import pandas as _pd
+    import numpy as _np
+    if df_like is None or y_col not in getattr(df_like, "columns", []):
+        return None
+    if "K" not in df_like.columns:
+        return None
+
+    g = (df_like[["K", y_col]].copy()
+           .assign(K=lambda x: _pd.to_numeric(x["K"], errors="coerce"),
+                   V=lambda x: _pd.to_numeric(x[y_col], errors="coerce"))
+           .dropna()
+           .groupby("K", as_index=False)["V"].sum()
+           .sort_values("K").reset_index(drop=True))
+    if g.empty or len(g) < 3:
+        return None
+
+    K = g["K"].to_numpy(dtype=float)
+    G = g["V"].to_numpy(dtype=float)
+    s = _np.sign(G).astype(int)
+
+    for i in range(1, len(s)):
+        if s[i] == 0 and s[i-1] != 0:
+            s[i] = s[i-1]
+    for i in range(len(s)-2, -1, -1):
+        if s[i] == 0 and s[i+1] != 0:
+            s[i] = s[i+1]
+
+    for i in range(1, len(s)-1):
+        if s[i] != 0 and s[i-1] == s[i+1] and s[i] != s[i-1]:
+            s[i] = s[i-1]
+
+    S = None
+    if spot is not None and _np.isfinite(spot):
+        S = float(spot)
+    elif "S" in df_like.columns:
+        _S = _pd.to_numeric(df_like["S"], errors="coerce").dropna()
+        if not _S.empty:
+            S = float(_S.iloc[0])
+    if S is None:
+        return None
+
+    j = int(_np.argmin(_np.abs(K - S)))
+    s0 = s[j]
+    if s0 == 0:
+        left = next((s[k] for k in range(j-1, -1, -1) if s[k] != 0), 0)
+        right = next((s[k] for k in range(j+1, len(s)) if s[k] != 0), 0)
+        s0 = left or right
+    if s0 == 0:
+        return None
+
+    ir = None
+    for k in range(j, len(s)-1):
+        if s[k] == s0 and s[k+1] == -s0:
+            ir = k + 1
+            break
+    il = None
+    for k in range(j, 0, -1):
+        if s[k] == s0 and s[k-1] == -s0:
+            il = k - 1
+            break
+
+    if il is None and ir is None:
+        return None
+    if il is None:
+        return float(K[ir])
+    if ir is None:
+        return float(K[il])
+
+    d_left  = abs(S - K[il])
+    d_right = abs(K[ir] - S)
+    if d_left < d_right:
+        return float(K[il])
+    if d_right < d_left:
+        return float(K[ir])
+
+    wl = float(_np.sum(_np.abs(G[il: min(il+2, len(G))])))
+    wr = float(_np.sum(_np.abs(G[ir: min(ir+2, len(G))])))
+    return float(K[il]) if wl >= wr else float(K[ir])
