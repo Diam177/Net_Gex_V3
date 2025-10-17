@@ -303,6 +303,34 @@ def _spot_from_json(raw: list[dict]) -> float | None:
 
     return None
 
+
+# --- Raw JSON loader (session/local) -----------------------------------------
+raw_records = st.session_state.get("raw_records")
+if not raw_records:
+    # try to infer ticker and expiration from session state if present
+    _ticker = st.session_state.get("ticker")
+    _exp = (st.session_state.get("expiration_selected")
+            or st.session_state.get("expiration_date")
+            or st.session_state.get("exp_date"))
+    # try to read local files if available
+    _cands = []
+    if _ticker and _exp:
+        _cands = [f"{_ticker}_{_exp}.json", f"./data/{_ticker}_{_exp}.json", f"/mnt/data/{_ticker}_{_exp}.json"]
+    else:
+        _cands = ["/mnt/data/SPX_2025-10-17.json"]  # fallback for local dev
+    for _p in _cands:
+        try:
+            with open(_p, "r", encoding="utf-8") as _f:
+                _js = json.load(_f)
+            raw_records = (_js.get("results") if isinstance(_js, dict) else _js) or []
+            if raw_records:
+                st.session_state["raw_records"] = raw_records
+                break
+        except Exception:
+            pass
+# Ensure list type
+if raw_records is None:
+    raw_records = []
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
 if raw_records:
