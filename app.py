@@ -83,7 +83,7 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
 
     # SPY proxy only for SPX if vwap still NaN
     t_up = (ticker or "").upper()
-    if t_up in {"SPX","^SPX"} and (df["vwap"].isna().all() or not df["vwap"].notna().any()):
+    if t_up in {"SPX","^SPX","I:SPX"} and (df["vwap"].isna().all() or not df["vwap"].notna().any()):
         try:
             base = "https://api.polygon.io"
             url_spy = (f"{base}/v2/aggs/ticker/SPY/range/1/minute/"
@@ -187,6 +187,76 @@ from lib.tiker_data import (
     PolygonError,
 )
 
+
+# --- RAW helpers (price and finals) ------------------------------------------
+def _extract_spot_from_raw(raw_records):
+    """
+    Extract underlying spot strictly from RAW JSON structure.
+    Expects j["results"][i]["underlying_asset"]["value"].
+    """
+    def _pick(it):
+        for r in it:
+            ua = r.get("underlying_asset") if isinstance(r, dict) else None
+            if isinstance(ua, dict) and ("value" in ua):
+                try:
+                    return float(ua["value"])
+                except Exception:
+                    continue
+        raise ValueError("RAW spot not found in underlying_asset.value")
+
+    if raw_records is None:
+        raise ValueError("raw_records is None")
+    if isinstance(raw_records, dict):
+        for key in ("results","options","data","raw","records"):
+            v = raw_records.get(key)
+            if isinstance(v, list):
+                return _pick(v)
+        if "underlying_asset" in raw_records and "value" in (raw_records.get("underlying_asset") or {}):
+            return float(raw_records["underlying_asset"]["value"])
+        raise ValueError("Unsupported RAW layout")
+    if isinstance(raw_records, list):
+        return _pick(raw_records)
+    raise ValueError("Unsupported RAW type")
+
+def _sum_finals_from_raw(finals_by_exp, selected_exps, scale_millions=1_000_000):
+    """
+    Build aggregated df_final_multi from per-exp finals dict produced by process_from_raw.
+    Uses intersection of strikes to avoid NaNs. S is median across frames.
+    """
+    import pandas as pd
+    import numpy as np
+    frames = []
+    for exp in selected_exps:
+        df = finals_by_exp.get(exp)
+        if df is None or getattr(df, "empty", True):
+            continue
+        keep = [c for c in ["K","S","AG_1pct","NetGEX_1pct","AG_1pct_M","NetGEX_1pct_M"] if c in df.columns]
+        frames.append(df[keep].copy())
+    if not frames:
+        return None
+    # intersection of K
+    common_K = set(frames[0]["K"].unique())
+    for df in frames[1:]:
+        common_K &= set(df["K"].unique())
+    if not common_K:
+        return None
+    common_K = sorted(common_K)
+    base = __import__("pandas").DataFrame({"K": common_K})
+    # median S
+    base["S"] = float(__import__("numpy").nanmedian(__import__("pandas").concat(frames)["S"].values))
+    # sum AG and NetGEX
+    base["AG_1pct"] = 0.0
+    base["NetGEX_1pct"] = 0.0
+    for df in frames:
+        m = df[df["K"].isin(common_K)].groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
+        base = base.merge(m, left_on="K", right_index=True, how="left", suffixes=("","_add")).fillna(0.0)
+        base["AG_1pct"] += base.pop("AG_1pct_add")
+        base["NetGEX_1pct"] += base.pop("NetGEX_1pct_add")
+    if scale_millions:
+        base["AG_1pct_M"] = base["AG_1pct"] / scale_millions
+        base["NetGEX_1pct_M"] = base["NetGEX_1pct"] / scale_millions
+    return base.sort_values("K").reset_index(drop=True)
+# -----------------------------------------------------------------------------    
 st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
 # --- Helpers -----------------------------------------------------------------
@@ -536,7 +606,7 @@ if raw_records:
                                         zf.writestr(f"{exp_key}/{name}.csv", csv_bytes)
                                 # write per-exp finals
                                 try:
-                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig
+                                    from lib.final_table import build_final_tables_from_corr, FinalTableConfig, process_from_raw
                                     finals = build_final_tables_from_corr(df_corr, windows, cfg=FinalTableConfig())
                                     for exp_key, fin in (finals or {}).items():
                                         if fin is None or getattr(fin, "empty", True):
@@ -730,13 +800,25 @@ if raw_records:
 
                         
                         # --- Суммарная финальная таблица (Multi) через final_table.build_final_sum_from_corr ---
-                        df_final_multi = build_final_sum_from_corr(
-                            df_corr=df_corr,
-                            windows=windows,
-                            selected_exps=exp_list,
-                            weight_mode=weight_mode,
-                            cfg=final_cfg,
-                        )
+                        # RAW-first multi aggregation
+                        _raw = st.session_state.get("raw_records")
+                        if _raw is not None:
+                            try:
+                                _Sraw = _extract_spot_from_raw(_raw)
+                                _finals = process_from_raw(_raw, S=float(_Sraw), final_cfg=final_cfg)
+                                # Respect selected_exps and weights external to this call
+                                df_final_multi = _sum_finals_from_raw(_finals, exp_list, scale_millions=getattr(final_cfg, "scale_millions", 1_000_000))
+                            except Exception as _rawm_e:
+                                st.error(f"RAW->df_final_multi error: {_rawm_e}")
+                                df_final_multi = None
+                        else:
+                            df_final_multi = build_final_sum_from_corr(
+                                df_corr=df_corr,
+                                windows=windows,
+                                selected_exps=exp_list,
+                                weight_mode=weight_mode,
+                                caption_suffix="Агрегировано по выбранным экспирациям."
+                            )
 
                         # --- QA: Sidebar Multi diagnostics for aggregated table ---
                         try:
@@ -872,11 +954,18 @@ if raw_records:
                         except Exception as _klm_e:
                             st.error('Failed to display Key Levels chart (Multi)')
                             st.exception(_klm_e)
-
-
                     else:
-                        # --- SINGLE режим: как было ---
-                        final_tables = build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
+                        # --- SINGLE режим: RAW-first ---
+                        _raw = st.session_state.get("raw_records")
+                        if _raw is not None:
+                            try:
+                                _Sraw = _extract_spot_from_raw(_raw)
+                                final_tables = process_from_raw(_raw, S=float(_Sraw), final_cfg=final_cfg)
+                            except Exception as _raw_e:
+                                st.error(f"RAW->final_tables error: {_raw_e}")
+                                final_tables = {}
+                        else:
+                            final_tables = build_final_tables_from_corr(df_corr, windows, cfg=final_cfg)
                         exps = list(final_tables.keys())
                         if exps:
                             exp_to_show = expiration if 'expiration' in locals() and expiration in final_tables else exps[0]
