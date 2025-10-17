@@ -141,16 +141,6 @@ def build_final_tables_from_corr(
             df_corr, exp, windows=windows,
             cfg=NetGEXAGConfig(scale=cfg.scale_millions, aggregate="none")
         )
-        # Принудительно задаём S только из df_corr (сырой JSON) для этой экспирации
-        _S_vals = df_corr.loc[df_corr['exp']==exp, 'S']
-        _S_vals = pd.to_numeric(_S_vals, errors='coerce')
-        _S_vals = _S_vals[pd.notna(_S_vals)]
-        _S = float(_S_vals.iloc[0]) if len(_S_vals)>0 else float('nan')
-        if 'S' in net_tbl.columns:
-            net_tbl['S'] = _S
-        else:
-            net_tbl.insert(1, 'S', _S)
-
         # 1.b) добавим объёмы по сторонам из df_corr
         g_exp = df_corr[df_corr["exp"] == exp].copy()
         agg_vol = g_exp.groupby(["K","side"], as_index=False)["vol"].sum()
@@ -175,7 +165,7 @@ def build_final_tables_from_corr(
 
         # 3) PZ/ER по формуле проекта
         pz = compute_power_zone(
-            S=float(np.nanmedian(df_corr.loc[df_corr["exp"]==exp, "S"].values)),
+            S=float(df_corr.loc[df_corr['exp']==exp, 'S'].dropna().iloc[0]) if len(df_corr.loc[df_corr['exp']==exp, 'S'].dropna())>0 else float('nan'),
             strikes_eval=strikes_eval,
             all_series_ctx=[series_ctx_map[exp]],
             day_high=cfg.day_high,
@@ -261,17 +251,19 @@ def build_final_sum_from_corr(
         K_union = sorted(set().union(*K_sets))
     base = pd.DataFrame({"K": list(K_union)}, dtype=float)
 
-    # 4) S/F из сырого df_corr (S — только из raw JSON)
-    S_vals = []
-    if 'S' in df_corr.columns:
-        _S_all = df_corr.loc[df_corr['exp'].isin(exp_list), 'S']
-        _S_all = pd.to_numeric(_S_all, errors='coerce')
-        _S_all = _S_all[pd.notna(_S_all)]
-        if len(_S_all)>0:
-            S_vals.append(float(_S_all.iloc[0]))
-    base['S'] = float(S_vals[0]) if S_vals else float('nan')
+    # 4) медианные S/F
+    S_vals: List[float] = []
+    F_vals: List[float] = []
+    for e, nt in per_exp.items():
+        if "S" in nt.columns and nt["S"].notna().any():
+            S_vals.append(float(np.nanmedian(nt["S"].astype(float))))
+        if "F" in nt.columns and nt["F"].notna().any():
+            F_vals.append(float(np.nanmedian(nt["F"].astype(float))))
+    base["S"] = float(np.nanmedian(S_vals)) if S_vals else np.nan
+    if F_vals:
+        base["F"] = float(np.nanmedian(F_vals))
 
-    # 5)    # 5) взвешенные суммы AG и NetGEX на K_union
+    # 5) взвешенные суммы AG и NetGEX на K_union
     base["AG_1pct"] = 0.0
     base["NetGEX_1pct"] = 0.0
     for e, nt in per_exp.items():
