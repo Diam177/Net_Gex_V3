@@ -55,7 +55,7 @@ def compute_netgex_ag_per_expiry(df_corr: pd.DataFrame, exp: str,
     pivot.columns = [f"{v}_{s.lower()}" for v,s in pivot.columns]
     pivot = pivot.reset_index()
 
-    S_exp = float(np.nanmedian(g["S"].values)); pivot["S"]=S_exp
+    S_exp = float(g['S'].dropna().iloc[0]) if len(g['S'].dropna())>0 else float('nan'); pivot["S"]=S_exp
     if "F" in g.columns: pivot["F"]=float(np.nanmedian(g["F"].values))
 
     pivot = pivot.rename(columns={
