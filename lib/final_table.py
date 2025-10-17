@@ -165,7 +165,7 @@ def build_final_tables_from_corr(
 
         # 3) PZ/ER по формуле проекта
         pz = compute_power_zone(
-            S=float(df_corr.loc[df_corr['exp']==exp, 'S'].dropna().iloc[0]) if len(df_corr.loc[df_corr['exp']==exp, 'S'].dropna())>0 else float('nan'),
+            S=float(np.nanmedian(df_corr.loc[df_corr["exp"]==exp, "S"].values)),
             strikes_eval=strikes_eval,
             all_series_ctx=[series_ctx_map[exp]],
             day_high=cfg.day_high,
@@ -259,7 +259,7 @@ def build_final_sum_from_corr(
             S_vals.append(float(np.nanmedian(nt["S"].astype(float))))
         if "F" in nt.columns and nt["F"].notna().any():
             F_vals.append(float(np.nanmedian(nt["F"].astype(float))))
-    base["S"] = float(df_corr.loc[df_corr["exp"].isin(exp_list), "S"].dropna().iloc[0]) if len(df_corr.loc[df_corr["exp"].isin(exp_list), "S"].dropna())>0 else float("nan")
+    base["S"] = float(np.nanmedian(S_vals)) if S_vals else np.nan
     if F_vals:
         base["F"] = float(np.nanmedian(F_vals))
 
