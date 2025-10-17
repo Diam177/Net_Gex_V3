@@ -19,7 +19,7 @@ except Exception:
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
     import pandas as pd
-    import pytz
+    from zoneinfo import ZoneInfo
     t_raw = (ticker or '').strip()
     t = t_raw.upper()
     if t in {'SPX','NDX','VIX','RUT','DJX'} and not t_raw.startswith('I:'):
@@ -38,7 +38,7 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     res = js.get("results") or []
     if not res:
         return None
-    tz = pytz.timezone("America/New_York")
+    tz = ZoneInfo("America/New_York")
     # Build dataframe
     times   = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
     price   = [x.get("c") for x in res]
@@ -94,8 +94,9 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
             js2 = r2.json() or {}
             res2 = js2.get("results") or []
             if res2:
-                import pandas as pd, numpy as np, pytz
-                tz = pytz.timezone("America/New_York")
+                import pandas as pd, numpy as np
+from zoneinfo import ZoneInfo
+                tz = ZoneInfo("America/New_York")
                 spy_time = pd.to_datetime([x.get("t") for x in res2], unit="ms", utc=True).tz_convert(tz)
                 spy_df = pd.DataFrame({
                     "time": spy_time,
@@ -818,7 +819,7 @@ if raw_records:
 
                         # --- Key Levels chart (Multi) ---
                         try:
-                            import pandas as pd, pytz
+                            import pandas as pd
                             # Подбор столбца NetGEX и spot для G-Flip
                             _ycol_m = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
                             _spot_m = float(pd.to_numeric(df_final_multi.get("S"), errors="coerce").median()) if ("S" in df_final_multi.columns) else None
@@ -831,7 +832,7 @@ if raw_records:
                             except Exception:
                                 pass
                             # Дата сессии и прайс‑лента для Key Levels
-                            _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                            _session_date_str_m = pd.Timestamp.now(tz=None).strftime("%Y-%m-%d")
                             _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
                             # Рендер
                             render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
@@ -840,8 +841,8 @@ if raw_records:
                             try:
                                 if render_advanced_analysis_block is not None:
                                     try:
-                                        import pandas as pd, pytz
-                                        _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                        import pandas as pd
+                                        _session_date_str_m = pd.Timestamp.now(tz=None).strftime("%Y-%m-%d")
                                         _price_df_m = _load_session_price_df_for_key_levels(
                                             ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", "")
                                         )
@@ -896,21 +897,15 @@ if raw_records:
                                             _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
                                     except Exception:
                                         pass
-                                    _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                    _session_date_str = pd.Timestamp.now(tz=None).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
 
                                     # --- Advanced Analysis Block (Single) — placed under Key Levels ---
                                     try:
                                         if render_advanced_analysis_block is not None:
-                                            try:
-                                                import pandas as pd, pytz
-                                                _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
-                                                _price_df = _load_session_price_df_for_key_levels(
-                                                    ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", "")
-                                                )
-                                            except Exception:
-                                                _price_df = None
+                                            _session_date_str = None
+_price_df = None
                                             render_advanced_analysis_block(
                                                 ticker=ticker,
                                                 df_final=df_final,
