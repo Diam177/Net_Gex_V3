@@ -8,7 +8,6 @@ import requests
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
-from zoneinfo import ZoneInfo
 
 
 
@@ -19,8 +18,155 @@ except Exception:
     render_advanced_analysis_block = None
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
-    # Disabled: external price source not allowed.
-    return None
+    import pandas as pd
+    import pytz
+    t_raw = (ticker or '').strip()
+    t = t_raw.upper()
+    if t in {'SPX','NDX','VIX','RUT','DJX'} and not t_raw.startswith('I:'):
+        t = f'I:{t}'
+    if not t or not session_date_str:
+        return None
+    base = "https://api.polygon.io"
+    url = f"{base}/v2/aggs/ticker/{t}/range/1/minute/{session_date_str}/{session_date_str}?adjusted=true&sort=asc&limit=50000"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    try:
+        r = requests.get(url, headers=headers, timeout=timeout)
+        r.raise_for_status()
+        js = r.json()
+    except Exception:
+        return None
+    res = js.get("results") or []
+    if not res:
+        return None
+    tz = pytz.timezone("America/New_York")
+    # Build dataframe
+    times   = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
+    price   = [x.get("c") for x in res]
+    volume  = [x.get("v") for x in res]
+    vwap_api= [x.get("vw") for x in res]
+    opens   = [x.get("o") for x in res]
+    highs   = [x.get("h") for x in res]
+    lows    = [x.get("l") for x in res]
+    closes  = [x.get("c") for x in res]
+    df = pd.DataFrame({
+        "time":   times,
+        "price":  pd.to_numeric(price,  errors="coerce"),
+        "volume": pd.to_numeric(volume, errors="coerce"),
+    })
+    # Add OHLC columns (used by candlesticks)
+    try:
+        df["open"]  = pd.to_numeric(opens,  errors="coerce")
+        df["high"]  = pd.to_numeric(highs,  errors="coerce")
+        df["low"]   = pd.to_numeric(lows,   errors="coerce")
+        df["close"] = pd.to_numeric(closes, errors="coerce")
+    except Exception:
+        pass
+    
+    # --- VWAP logic with SPX proxy ---
+    # expose per-bar 'vw' for indices
+    try:
+        df["vw"] = pd.to_numeric(vwap_api, errors="coerce")
+    except Exception:
+        pass
+
+    total_vol = float(df["volume"].fillna(0.0).sum())
+    if "vw" in df.columns and df["vw"].notna().any() and total_vol == 0.0:
+        # index case: use Polygon per-bar 'vw' directly
+        df["vwap"] = df["vw"]
+    elif any(v is not None for v in vwap_api) and total_vol > 0.0:
+        vw = pd.Series(pd.to_numeric(vwap_api, errors="coerce"), index=df.index)
+        vol = df["volume"].fillna(0.0)
+        cum_vol = vol.cumsum().replace(0, pd.NA)
+        df["vwap"] = (vw * vol).cumsum() / cum_vol
+    else:
+        df["vwap"] = pd.NA
+
+    # SPY proxy only for SPX if vwap still NaN
+    t_up = (ticker or "").upper()
+    if t_up in {"SPX","^SPX"} and (df["vwap"].isna().all() or not df["vwap"].notna().any()):
+        try:
+            base = "https://api.polygon.io"
+            url_spy = (f"{base}/v2/aggs/ticker/SPY/range/1/minute/"
+                       f"{session_date_str}/{session_date_str}"
+                       f"?adjusted=true&sort=asc&limit=50000&apiKey={api_key}")
+            r2 = requests.get(url_spy, timeout=timeout)
+            r2.raise_for_status()
+            js2 = r2.json() or {}
+            res2 = js2.get("results") or []
+            if res2:
+                import pandas as pd, numpy as np, pytz
+                tz = pytz.timezone("America/New_York")
+                spy_time = pd.to_datetime([x.get("t") for x in res2], unit="ms", utc=True).tz_convert(tz)
+                spy_df = pd.DataFrame({
+                    "time": spy_time,
+                    "spy_close": pd.Series(pd.to_numeric([x.get("c") for x in res2], errors="coerce")),
+                    "spy_vol":   pd.Series(pd.to_numeric([x.get("v") for x in res2], errors="coerce")).fillna(0.0),
+                    "spy_vw":    pd.Series(pd.to_numeric([x.get("vw") for x in res2], errors="coerce")),
+                }).sort_values("time")
+                # RTH filter
+                spy_df = spy_df.set_index("time").between_time("09:30", "16:00").reset_index()
+                px = spy_df["spy_vw"].where(spy_df["spy_vw"].notna(), spy_df["spy_close"])
+                cumv = spy_df["spy_vol"].cumsum().replace(0, pd.NA)
+                spy_df["spy_vwap"] = (px.mul(spy_df["spy_vol"])).cumsum() / cumv
+                spy_df["minute"] = spy_df["time"].dt.floor("min")
+
+                # SPX minutes in ET
+                df_et = df.copy()
+                try:
+                    df_et["time"] = df_et["time"].dt.tz_convert(tz)
+                except Exception:
+                    df_et["time"] = pd.to_datetime(df_et["time"], utc=True).dt.tz_convert(tz)
+                df_et["minute"] = df_et["time"].dt.floor("min")
+
+                merged = pd.merge(df_et[["minute","price"]].rename(columns={"price":"spx_price"}),
+                                  spy_df[["minute","spy_close"]], on="minute", how="inner").sort_values("minute")
+                if not merged.empty and merged["spy_close"].iloc[0] and merged["spx_price"].iloc[0]:
+                    alpha0 = float(merged["spx_price"].iloc[0]) / float(merged["spy_close"].iloc[0])
+                else:
+                    alpha0 = 10.0
+
+                ratio_map = (merged.set_index("minute")["spx_price"] / merged.set_index("minute")["spy_close"]).dropna()
+                minutes = spy_df["minute"].drop_duplicates().sort_values().reset_index(drop=True)
+                alphas = []
+                last_alpha = alpha0
+                session_start = minutes.iloc[0] if len(minutes) else None
+                for m in minutes:
+                    w_start = m - pd.Timedelta(minutes=15)
+                    r_win = ratio_map[(ratio_map.index > w_start) & (ratio_map.index <= m)]
+                    if len(r_win) >= 5:
+                        q1, q99 = r_win.quantile(0.01), r_win.quantile(0.99)
+                        raw_alpha = r_win.clip(q1, q99).median()
+                    else:
+                        raw_alpha = last_alpha
+                    if session_start is not None and (m - session_start) <= pd.Timedelta(minutes=30):
+                        low = 0.98 * alpha0; high = 1.02 * alpha0
+                        raw_alpha = min(max(raw_alpha, low), high)
+                    delta = raw_alpha - last_alpha
+                    max_step = 0.005 * last_alpha
+                    if abs(delta) > abs(max_step):
+                        raw_alpha = last_alpha + (max_step if delta > 0 else -max_step)
+                    alphas.append(raw_alpha)
+                    last_alpha = raw_alpha
+                alpha_series = pd.Series(alphas, index=minutes, name="alpha")
+
+                alpha_aligned = pd.merge(df_et[["minute"]], alpha_series, left_on="minute", right_index=True, how="left")["alpha"].fillna(method="ffill")
+                spy_vwap_aligned = pd.merge(df_et[["minute"]], spy_df[["minute","spy_vwap"]], on="minute", how="left")["spy_vwap"].fillna(method="ffill")
+                proxy_vwap = alpha_aligned.values * spy_vwap_aligned.values
+
+                df["vwap"] = df["vwap"].where(df["vwap"].notna(), proxy_vwap)
+        except Exception as e:
+            try:
+                import streamlit as st
+                code = getattr(getattr(e, "response", None), "status_code", None)
+                st.warning(f"SPY proxy VWAP недоступен ({code}) {type(e).__name__}: {e}. Использую TWAP.", icon="⚠️")
+            except Exception:
+                pass
+
+    # Final fallback: TWAP
+    if df["vwap"].isna().all():
+        pr = df["price"].fillna(method="ffill")
+        df["vwap"] = pr.expanding().mean()
+    return df
 
 # --- Helpers to hide tables from main page ---
 def _st_hide_df(*args, **kwargs):
@@ -107,123 +253,115 @@ def _get_api_key() -> str | None:
     return key
 
 
+# --- UI: Controls -------------------------------------------------------------
 
-# --- Spot from raw JSON only --------------------------------------------------
-
-# --- Spot from raw JSON only --------------------------------------------------
-def _spot_from_json(raw: list[dict]) -> float | None:
-    """
-    Robust extraction of underlying spot strictly from the already-fetched JSON.
-    Looks for numeric fields named like 'underlying_*price*', 'underlying_*value*',
-    or plain 'price'/'value' under typical blocks.
-    """
-    import math
-
-    def yield_numbers(obj):
-        # Breadth-limited DFS to avoid huge traversals
-        stack = [(obj, 0)]
-        while stack:
-            node, d = stack.pop()
-            if isinstance(node, dict):
-                for k, v in node.items():
-                    # prefer keys that imply underlying
-                    k_low = str(k).lower()
-                    if isinstance(v, (int, float)) and math.isfinite(float(v)):
-                        if ("underlying" in k_low) or (k_low in {"value","price","spot","s"}):
-                            yield float(v), k_low
-                    if d < 3 and isinstance(v, (dict, list, tuple)):
-                        stack.append((v, d+1))
-            elif isinstance(node, (list, tuple)):
-                for v in node:
-                    if d < 3:
-                        stack.append((v, d+1))
-
-    # Pass 1: any field whose key contains 'underlying' and ends with 'price'/'value'
-    cand = []
-    for r in (raw or []):
-        for val, key in yield_numbers(r):
-            cand.append((key, val))
-    if cand:
-        # rank: keys with 'underlying' highest, then 'value', then 'price', else spot/S
-        def score(k):
-            s = 0
-            if "underlying" in k: s += 4
-            if "value" in k: s += 3
-            if "price" in k: s += 2
-            if k in {"spot","s"}: s += 1
-            return s
-        cand.sort(key=lambda kv: (-score(kv[0]), abs(kv[1])))
-        return float(cand[0][1])
-
-    return None
+api_key = _get_api_key()
+if not api_key:
+    st.error("POLYGON_API_KEY is not set in Streamlit Secrets or environment variables.")
+    st.stop()
 
 
-# --- Spot from raw JSON only --------------------------------------------------
-def _spot_from_json(raw: list[dict]) -> float | None:
-    """
-    Strict: return the first numeric underlying_asset.value from raw contracts.
-    No heuristics. No alternate sources.
-    """
-    for r in raw or []:
-        ua = r.get("underlying_asset") or {}
-        v = ua.get("value") if isinstance(ua, dict) else None
-        if v is None:
-            continue
+
+# --- Input state helpers ------------------------------------------------------
+if "ticker" not in st.session_state:
+    st.session_state["ticker"] = "SPY"
+
+def _normalize_ticker():
+    t = st.session_state.get("ticker", "")
+    st.session_state["ticker"] = (t or "").strip().upper()
+
+# --- Controls moved to sidebar ----------------------------------------------
+with st.sidebar:
+    st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
+    ticker = st.session_state.get("ticker", "")
+
+    # Получаем список будущих экспираций под выбранный тикер
+    expirations: list[str] = st.session_state.get(f"expirations:{ticker}", [])
+    if not expirations and ticker:
         try:
-            return float(v)
-        except Exception:
-            continue
-    return None
+            expirations = list_future_expirations(ticker, api_key)
+            st.session_state[f"expirations:{ticker}"] = expirations
+        except Exception as e:
+            st.error(f"Unable to retrieve expiration dates: {e}")
+            expirations = []
 
-# --- Raw JSON loader (session/local) -----------------------------------------
-raw_records = st.session_state.get("raw_records")
+    if expirations:
+        # по умолчанию ближайшая дата — первая в списке
+        default_idx = 0
+        sel = st.selectbox("Expiration date", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
+        expiration = sel
 
-if not raw_records:
-    _ticker = (st.session_state.get("ticker") or "").strip().upper()
-    _exp    = (st.session_state.get("expiration_selected")
-               or st.session_state.get("expiration_date")
-               or st.session_state.get("exp_date")
-               or "")
-    _exp = str(_exp)
+        # --- Режим агрегации экспираций ---
+        mode_exp = st.radio("Expiration mode", ["Single","Multi"], index=0, horizontal=True)
+        selected_exps = []
+        weight_mode = "equal"
+        if mode_exp == "Single":
+            selected_exps = [expiration]
+        else:
+            selected_exps = st.multiselect("Select expiration", options=expirations, default=expirations[:2])
+            weight_mode = st.selectbox("Weighing", ["equal","1/T","1/√T"], index=2)
+    else:
+        expiration = ""
+        st.warning("Нет доступных дат экспираций для тикера.")
 
-    # Candidate file paths
-    cands = []
-    if _ticker and _exp:
-        cands += [
-            f"{_ticker}_{_exp}.json",
-            f"./data/{_ticker}_{_exp}.json",
-            f"/mnt/data/{_ticker}_{_exp}.json",
-            # also try SPX for the same expiry
-            f"SPX_{_exp}.json",
-            f"./data/SPX_{_exp}.json",
-            f"/mnt/data/SPX_{_exp}.json",
-        ]
-    # hard fallback for dev
-    cands += ["/mnt/data/SPX_2025-10-17.json"]
 
-    for path in cands:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                js = json.load(f)
-            raw_records = (js.get("results") if isinstance(js, dict) else js) or []
-            if raw_records:
-                st.session_state["raw_records"] = raw_records
-                break
-        except Exception:
-            continue
 
-# Ensure list
-if raw_records is None:
-    raw_records = []
+# --- Empty state guard for Multi with no selected expirations ---
+try:
+    if ('mode_exp' in locals()) and (mode_exp == 'Multi') and (not selected_exps):
+        st.info('Select expiration date')
+        st.stop()
+except Exception:
+    pass
+
+# --- Data fetch ---------------------------------------------------------------
+raw_records: List[Dict] | None = None
+snapshot_js: Dict | None = None
+
+if ticker and expiration:
+    try:
+        snapshot_js = download_snapshot_json(ticker, expiration, api_key)
+        raw_records = _coerce_results(snapshot_js)
+        st.session_state["raw_records"] = raw_records
+    except PolygonError as e:
+        st.error(f"Ошибка Polygon: {e}")
+    except Exception as e:
+        st.error(f"Ошибка при загрузке snapshot JSON: {e}")
+
+# --- Sidebar: download raw provider JSON -------------------------------------
+if snapshot_js:
+    try:
+        raw_bytes = json.dumps(snapshot_js, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        fname = f"{ticker}_{expiration}.json"
+        st.sidebar.download_button(
+            label="Download JSON",
+            data=raw_bytes,
+            file_name=fname,
+            mime="application/json",
+            use_container_width=True,
+        )
+    except Exception as e:
+        st.sidebar.error(f"Failed to prepare JSON for download: {e}")
+else:
+    st.sidebar.info("Select the ticker and expiration date to download the snapshot and JSON.")
+
+# --- Download tables button placeholder (below raw JSON) ---------------------
+dl_tables_container = st.sidebar.empty()
 
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
-if raw_records:
-    S = _spot_from_json(raw_records)
-if S is None:
-    st.error('Spot not found in JSON. Aborting to avoid alternate sources.')
-    st.stop()
-
+if ticker:
+    try:
+        S, ts_ms, src = get_spot_price(ticker, api_key)
+        # spot caption hidden per UI request
+    except Exception:
+        S = None
+# 3) из snapshot (fallback)
+if S is None and raw_records:
+    S = _infer_spot_from_snapshot(raw_records)
+    if S:
+        # spot fallback caption hidden per UI request
+        pass
 
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
@@ -484,7 +622,7 @@ if raw_records:
                             if 0 <= int(i) < len(g):
                                 rows.append({"exp": exp, "row_index": int(i), "K": float(g.loc[int(i), "K"]),
                                              "w_blend": float(g.loc[int(i), "w_blend"])})
-                    import pandas as pd
+                    import pandas as pd  # локальный импорт безопасен
                     df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
                     _st_hide_subheader()
                     # Приведём тип w_blend к float64 и зададим формат — уберёт предупреждение 2^53 в браузере
@@ -689,7 +827,7 @@ if raw_records:
 
                         # --- Key Levels chart (Multi) ---
                         try:
-                            import pandas as pd
+                            import pandas as pd, pytz
                             # Подбор столбца NetGEX и spot для G-Flip
                             _ycol_m = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
                             _spot_m = float(pd.to_numeric(df_final_multi.get("S"), errors="coerce").median()) if ("S" in df_final_multi.columns) else None
@@ -702,7 +840,7 @@ if raw_records:
                             except Exception:
                                 pass
                             # Дата сессии и прайс‑лента для Key Levels
-                            _session_date_str_m = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+                            _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                             _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
                             # Рендер
                             render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
@@ -711,8 +849,8 @@ if raw_records:
                             try:
                                 if render_advanced_analysis_block is not None:
                                     try:
-                                        import pandas as pd
-                                        _session_date_str_m = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+                                        import pandas as pd, pytz
+                                        _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                         _price_df_m = _load_session_price_df_for_key_levels(
                                             ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", "")
                                         )
@@ -767,13 +905,17 @@ if raw_records:
                                             _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
                                     except Exception:
                                         pass
+                                    import pytz, pandas as pd
+                                    _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                    _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
+                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
 
                                     # --- Advanced Analysis Block (Single) — placed under Key Levels ---
                                     try:
                                         if render_advanced_analysis_block is not None:
                                             try:
-                                                import pandas as pd
-                                                _session_date_str = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+                                                import pandas as pd, pytz
+                                                _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                                 _price_df = _load_session_price_df_for_key_levels(
                                                     ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", "")
                                                 )
