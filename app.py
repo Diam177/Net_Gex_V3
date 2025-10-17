@@ -253,6 +253,31 @@ def _get_api_key() -> str | None:
     return key
 
 
+
+# --- Spot from raw JSON only --------------------------------------------------
+def _spot_from_json(raw: list[dict]) -> float | None:
+    def get_nested(d, keys, blocks=("underlying_asset","underlying","details","day","greeks")):
+        for k in keys:
+            if k in d and d[k] is not None:
+                return d[k]
+        for b in blocks:
+            sub = d.get(b, {})
+            if isinstance(sub, dict):
+                for k in keys:
+                    if k in sub and sub[k] is not None:
+                        return sub[k]
+        return None
+    vals = []
+    for r in (raw or []):
+        v = get_nested(r, ["value","price","underlying_price","underlyingPrice","S","spot"])
+        if v is not None:
+            try:
+                vals.append(float(v))
+            except Exception:
+                pass
+    if vals:
+        return float(vals[0])  # первый валидный из JSON как источник истины
+    return None
 # --- UI: Controls -------------------------------------------------------------
 
 api_key = _get_api_key()
@@ -350,18 +375,12 @@ dl_tables_container = st.sidebar.empty()
 
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
-if ticker:
-    try:
-        S, ts_ms, src = get_spot_price(ticker, api_key)
-        # spot caption hidden per UI request
-    except Exception:
-        S = None
-# 3) из snapshot (fallback)
-if S is None and raw_records:
-    S = _infer_spot_from_snapshot(raw_records)
-    if S:
-        # spot fallback caption hidden per UI request
-        pass
+if raw_records:
+    S = _spot_from_json(raw_records)
+if S is None:
+    st.error('Spot not found in JSON. Aborting to avoid alternate sources.')
+    st.stop()
+
 
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
