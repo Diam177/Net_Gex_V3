@@ -154,7 +154,8 @@ def _poly_get_json(url: str, api_key: str, params: dict | None = None, timeout: 
     except Exception:
         return {}
 
-def get_spot_price(ticker: str, api_key: str, *, now_utc: datetime | None = None, timeout: float = 10.0) -> tuple[float, int, str]:
+# Renamed to keep original implementation alive
+def _get_spot_price_original__ASTRA(ticker: str, api_key: str, *, now_utc: datetime | None = None, timeout: float = 10.0) -> tuple[float, int, str]:
     """Возвращает (spot, ts_ms, source) с иерархией источников:
        1) v3 last trade  -> /v3/trades/{ticker}?limit=1&sort=desc
        2) v2 last minute -> /v2/aggs/ticker/{ticker}/range/1/minute/{from}/{to}?sort=desc&limit=1
@@ -208,3 +209,88 @@ def get_spot_price(ticker: str, api_key: str, *, now_utc: datetime | None = None
 
     raise PolygonError(f"get_spot_price: unable to resolve spot for {ticker}")
 # --- END: spot price helper ---------------------------------------------------
+
+# --- BEGIN: index snapshot spot override (appended) ---------------------------
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+def _get_index_snapshot_price__ASTRA(ticker: str, api_key: str, timeout: float = 10.0):
+    """
+    Primary source for indices: /v3/snapshot/indices?ticker=I:SPX
+    Returns (spot_float, last_updated_ns, "snapshot").
+    """
+    url = f"{POLYGON_BASE}/v3/snapshot/indices"
+    params = {"ticker": ticker, "apiKey": api_key}
+    r = requests.get(url, params=params, timeout=timeout)
+    if not r.ok:
+        return None
+    j = r.json() or {}
+    arr = j.get("results") or []
+    if not arr:
+        return None
+    r0 = arr[0]
+    val = r0.get("value")
+    ts  = r0.get("last_updated")
+    if val is None or ts is None:
+        return None
+    try:
+        return float(val), int(ts), "snapshot"
+    except Exception:
+        return None
+
+def get_spot_price(ticker: str, api_key: str, *, now_utc: "_dt" | None = None, timeout: float = 10.0):
+    """
+    Override placed at end of module to keep minimal diff.
+    For indices (ticker startswith "I:"), use snapshot -> last minute -> prev close.
+    For all other tickers, fall back to original helpers if present.
+    """
+    t = (ticker or "").strip().upper()
+    if t.startswith("I:"):
+        # 1) snapshot
+        res = _get_index_snapshot_price__ASTRA(t, api_key, timeout=timeout)
+        if res:
+            return res
+        # 2) last minute bar
+        if now_utc is None:
+            now_utc = _dt.now(_tz.utc)
+        d = (now_utc - _td(days=0)).date().isoformat()
+        u = f"{POLYGON_BASE}/v2/aggs/ticker/{t}/range/1/minute/{d}/{d}"
+        try:
+            r = requests.get(u, params={"adjusted": "true", "sort": "desc", "limit": 1, "apiKey": api_key}, timeout=timeout)
+            if r.ok:
+                j = r.json() or {}
+                resu = j.get("results") or []
+                if resu:
+                    c = resu[0].get("c"); ts = resu[0].get("t")
+                    if c is not None and ts is not None:
+                        return float(c), int(ts), "minute"
+        except Exception:
+            pass
+        # 3) previous close
+        try:
+            r = requests.get(f"{POLYGON_BASE}/v2/aggs/ticker/{t}/prev", params={"adjusted":"true","apiKey": api_key}, timeout=timeout)
+            if r.ok:
+                j = r.json() or {}
+                resu = j.get("results") or []
+                if resu:
+                    c = resu[0].get("c"); ts = resu[0].get("t")
+                    if c is not None and ts is not None:
+                        return float(c), int(ts), "prev_close"
+        except Exception:
+            pass
+        raise PolygonError(f"get_spot_price: unable to resolve spot for {t}")
+    # Non-index: delegate to existing implementation if available
+    # Try to find original name to avoid recursion. If not found, raise.
+    _g = globals()
+    _orig = _g.get("_get_spot_price_original__ASTRA")
+    if _orig:
+        return _orig(ticker, api_key, now_utc=now_utc, timeout=timeout)
+    # Fallback to minimal previous-close approach
+    r = requests.get(f"{POLYGON_BASE}/v2/aggs/ticker/{t}/prev", params={"adjusted":"true","apiKey": api_key}, timeout=timeout)
+    j = r.json() if r.ok else {}
+    resu = (j or {}).get("results") or []
+    if resu:
+        c = resu[0].get("c"); ts = resu[0].get("t")
+        if c is not None and ts is not None:
+            return float(c), int(ts), "prev_close"
+    raise PolygonError(f"get_spot_price: unable to resolve spot for {t}")
+# --- END: index snapshot spot override ---------------------------------------
