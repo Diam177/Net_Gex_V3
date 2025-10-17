@@ -255,123 +255,53 @@ def _get_api_key() -> str | None:
 
 
 # --- Spot from raw JSON only --------------------------------------------------
+
+# --- Spot from raw JSON only --------------------------------------------------
 def _spot_from_json(raw: list[dict]) -> float | None:
-    def get_nested(d, keys, blocks=("underlying_asset","underlying","details","day","greeks")):
-        for k in keys:
-            if k in d and d[k] is not None:
-                return d[k]
-        for b in blocks:
-            sub = d.get(b, {})
-            if isinstance(sub, dict):
-                for k in keys:
-                    if k in sub and sub[k] is not None:
-                        return sub[k]
-        return None
-    vals = []
+    """
+    Robust extraction of underlying spot strictly from the already-fetched JSON.
+    Looks for numeric fields named like 'underlying_*price*', 'underlying_*value*',
+    or plain 'price'/'value' under typical blocks.
+    """
+    import math
+
+    def yield_numbers(obj):
+        # Breadth-limited DFS to avoid huge traversals
+        stack = [(obj, 0)]
+        while stack:
+            node, d = stack.pop()
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    # prefer keys that imply underlying
+                    k_low = str(k).lower()
+                    if isinstance(v, (int, float)) and math.isfinite(float(v)):
+                        if ("underlying" in k_low) or (k_low in {"value","price","spot","s"}):
+                            yield float(v), k_low
+                    if d < 3 and isinstance(v, (dict, list, tuple)):
+                        stack.append((v, d+1))
+            elif isinstance(node, (list, tuple)):
+                for v in node:
+                    if d < 3:
+                        stack.append((v, d+1))
+
+    # Pass 1: any field whose key contains 'underlying' and ends with 'price'/'value'
+    cand = []
     for r in (raw or []):
-        v = get_nested(r, ["value","price","underlying_price","underlyingPrice","S","spot"])
-        if v is not None:
-            try:
-                vals.append(float(v))
-            except Exception:
-                pass
-    if vals:
-        return float(vals[0])  # первый валидный из JSON как источник истины
+        for val, key in yield_numbers(r):
+            cand.append((key, val))
+    if cand:
+        # rank: keys with 'underlying' highest, then 'value', then 'price', else spot/S
+        def score(k):
+            s = 0
+            if "underlying" in k: s += 4
+            if "value" in k: s += 3
+            if "price" in k: s += 2
+            if k in {"spot","s"}: s += 1
+            return s
+        cand.sort(key=lambda kv: (-score(kv[0]), abs(kv[1])))
+        return float(cand[0][1])
+
     return None
-# --- UI: Controls -------------------------------------------------------------
-
-api_key = _get_api_key()
-if not api_key:
-    st.error("POLYGON_API_KEY is not set in Streamlit Secrets or environment variables.")
-    st.stop()
-
-
-
-# --- Input state helpers ------------------------------------------------------
-if "ticker" not in st.session_state:
-    st.session_state["ticker"] = "SPY"
-
-def _normalize_ticker():
-    t = st.session_state.get("ticker", "")
-    st.session_state["ticker"] = (t or "").strip().upper()
-
-# --- Controls moved to sidebar ----------------------------------------------
-with st.sidebar:
-    st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
-    ticker = st.session_state.get("ticker", "")
-
-    # Получаем список будущих экспираций под выбранный тикер
-    expirations: list[str] = st.session_state.get(f"expirations:{ticker}", [])
-    if not expirations and ticker:
-        try:
-            expirations = list_future_expirations(ticker, api_key)
-            st.session_state[f"expirations:{ticker}"] = expirations
-        except Exception as e:
-            st.error(f"Unable to retrieve expiration dates: {e}")
-            expirations = []
-
-    if expirations:
-        # по умолчанию ближайшая дата — первая в списке
-        default_idx = 0
-        sel = st.selectbox("Expiration date", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
-        expiration = sel
-
-        # --- Режим агрегации экспираций ---
-        mode_exp = st.radio("Expiration mode", ["Single","Multi"], index=0, horizontal=True)
-        selected_exps = []
-        weight_mode = "equal"
-        if mode_exp == "Single":
-            selected_exps = [expiration]
-        else:
-            selected_exps = st.multiselect("Select expiration", options=expirations, default=expirations[:2])
-            weight_mode = st.selectbox("Weighing", ["equal","1/T","1/√T"], index=2)
-    else:
-        expiration = ""
-        st.warning("Нет доступных дат экспираций для тикера.")
-
-
-
-# --- Empty state guard for Multi with no selected expirations ---
-try:
-    if ('mode_exp' in locals()) and (mode_exp == 'Multi') and (not selected_exps):
-        st.info('Select expiration date')
-        st.stop()
-except Exception:
-    pass
-
-# --- Data fetch ---------------------------------------------------------------
-raw_records: List[Dict] | None = None
-snapshot_js: Dict | None = None
-
-if ticker and expiration:
-    try:
-        snapshot_js = download_snapshot_json(ticker, expiration, api_key)
-        raw_records = _coerce_results(snapshot_js)
-        st.session_state["raw_records"] = raw_records
-    except PolygonError as e:
-        st.error(f"Ошибка Polygon: {e}")
-    except Exception as e:
-        st.error(f"Ошибка при загрузке snapshot JSON: {e}")
-
-# --- Sidebar: download raw provider JSON -------------------------------------
-if snapshot_js:
-    try:
-        raw_bytes = json.dumps(snapshot_js, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        fname = f"{ticker}_{expiration}.json"
-        st.sidebar.download_button(
-            label="Download JSON",
-            data=raw_bytes,
-            file_name=fname,
-            mime="application/json",
-            use_container_width=True,
-        )
-    except Exception as e:
-        st.sidebar.error(f"Failed to prepare JSON for download: {e}")
-else:
-    st.sidebar.info("Select the ticker and expiration date to download the snapshot and JSON.")
-
-# --- Download tables button placeholder (below raw JSON) ---------------------
-dl_tables_container = st.sidebar.empty()
 
 # --- Spot price ---------------------------------------------------------------
 S: float | None = None
