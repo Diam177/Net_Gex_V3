@@ -307,44 +307,67 @@ def _spot_from_json(raw: list[dict]) -> float | None:
     return None
 
 
+# --- Spot from raw JSON only --------------------------------------------------
+def _spot_from_json(raw: list[dict]) -> float | None:
+    """
+    Strict: return the first numeric underlying_asset.value from raw contracts.
+    No heuristics. No alternate sources.
+    """
+    for r in raw or []:
+        ua = r.get("underlying_asset") or {}
+        v = ua.get("value") if isinstance(ua, dict) else None
+        if v is None:
+            continue
+        try:
+            return float(v)
+        except Exception:
+            continue
+    return None
+
 # --- Raw JSON loader (session/local) -----------------------------------------
 raw_records = st.session_state.get("raw_records")
+
 if not raw_records:
-    # try to infer ticker and expiration from session state if present
-    _ticker = st.session_state.get("ticker")
-    _exp = (st.session_state.get("expiration_selected")
-            or st.session_state.get("expiration_date")
-            or st.session_state.get("exp_date"))
-    # try to read local files if available
-    _cands = []
-    tu = (_ticker or '').strip().upper()
-    eu = str(_exp) if _exp is not None else ''
-    if tu and eu:
-        _cands = [
-            f"{tu}_{eu}.json",
-            f"./data/{tu}_{eu}.json",
-            f"/mnt/data/{tu}_{eu}.json",
-            f"SPX_{eu}.json",
-            f"./data/SPX_{eu}.json",
-            f"/mnt/data/SPX_{eu}.json",
+    _ticker = (st.session_state.get("ticker") or "").strip().upper()
+    _exp    = (st.session_state.get("expiration_selected")
+               or st.session_state.get("expiration_date")
+               or st.session_state.get("exp_date")
+               or "")
+    _exp = str(_exp)
+
+    # Candidate file paths
+    cands = []
+    if _ticker and _exp:
+        cands += [
+            f"{_ticker}_{_exp}.json",
+            f"./data/{_ticker}_{_exp}.json",
+            f"/mnt/data/{_ticker}_{_exp}.json",
+            # also try SPX for the same expiry
+            f"SPX_{_exp}.json",
+            f"./data/SPX_{_exp}.json",
+            f"/mnt/data/SPX_{_exp}.json",
         ]
-    # Absolute fallback
-    _cands += ["/mnt/data/SPX_2025-10-17.json"]
-    # fallback for local dev
-    for _p in _cands:
+    # hard fallback for dev
+    cands += ["/mnt/data/SPX_2025-10-17.json"]
+
+    for path in cands:
         try:
-            with open(_p, "r", encoding="utf-8") as _f:
-                _js = json.load(_f)
-            raw_records = (_js.get("results") if isinstance(_js, dict) else _js) or []
+            with open(path, "r", encoding="utf-8") as f:
+                js = json.load(f)
+            raw_records = (js.get("results") if isinstance(js, dict) else js) or []
             if raw_records:
                 st.session_state["raw_records"] = raw_records
                 break
         except Exception:
-            pass
-# Ensure list type
+            continue
+
+# Ensure list
 if raw_records is None:
     raw_records = []
+
 # --- Spot price ---------------------------------------------------------------
+# --- Spot price ---------------------------------------------------------------
+ ---------------------------------------------------------------
 S: float | None = None
 if raw_records:
     S = _spot_from_json(raw_records)
