@@ -19,7 +19,8 @@ except Exception:
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
     import pandas as pd
-    import pytz
+from zoneinfo import ZoneInfo
+
     t_raw = (ticker or '').strip()
     t = t_raw.upper()
     if t in {'SPX','NDX','VIX','RUT','DJX'} and not t_raw.startswith('I:'):
@@ -38,7 +39,7 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
     res = js.get("results") or []
     if not res:
         return None
-    tz = pytz.timezone("America/New_York")
+    tz = ZoneInfo("America/New_York")
     # Build dataframe
     times   = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
     price   = [x.get("c") for x in res]
@@ -94,8 +95,10 @@ def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, ap
             js2 = r2.json() or {}
             res2 = js2.get("results") or []
             if res2:
-                import pandas as pd, numpy as np, pytz
-                tz = pytz.timezone("America/New_York")
+                import pandas as pd
+from zoneinfo import ZoneInfo
+import numpy as np
+                tz = ZoneInfo("America/New_York")
                 spy_time = pd.to_datetime([x.get("t") for x in res2], unit="ms", utc=True).tz_convert(tz)
                 spy_df = pd.DataFrame({
                     "time": spy_time,
@@ -370,6 +373,7 @@ if raw_records:
                     st.sidebar.write("Selected dates: ?")
 
                 import pandas as pd
+from zoneinfo import ZoneInfo
                 df_corr_multi_list = []
                 windows_multi = {}
 
@@ -450,6 +454,7 @@ if raw_records:
                     try:
                         import io, zipfile
                         import pandas as pd
+from zoneinfo import ZoneInfo
 
                         multi_exports = {}  # exp -> {name: DataFrame}
                         for _exp in selected_exps:
@@ -609,7 +614,8 @@ if raw_records:
                             if 0 <= int(i) < len(g):
                                 rows.append({"exp": exp, "row_index": int(i), "K": float(g.loc[int(i), "K"]),
                                              "w_blend": float(g.loc[int(i), "w_blend"])})
-                    import pandas as pd  # локальный импорт безопасен
+                    import pandas as pd
+from zoneinfo import ZoneInfo  # локальный импорт безопасен
                     df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
                     _st_hide_subheader()
                     # Приведём тип w_blend к float64 и зададим формат — уберёт предупреждение 2^53 в браузере
@@ -684,6 +690,7 @@ if raw_records:
                 from lib.power_zone_er import compute_power_zone
                 import numpy as np
                 import pandas as pd
+from zoneinfo import ZoneInfo
                 import math
 
                 final_cfg = FinalTableConfig()
@@ -769,6 +776,7 @@ if raw_records:
                             # weights table
                             try:
                                 import pandas as pd
+from zoneinfo import ZoneInfo
                                 _w_rows = [{"exp": e, "T": t_map.get(e), "w": weights.get(e)} for e in (exp_list or [])]
                                 _wdf = pd.DataFrame(_w_rows)
                                 with st.sidebar.expander("Weights"):
@@ -814,7 +822,8 @@ if raw_records:
 
                         # --- Key Levels chart (Multi) ---
                         try:
-                            import pandas as pd, pytz
+                            import pandas as pd
+from zoneinfo import ZoneInfo
                             # Подбор столбца NetGEX и spot для G-Flip
                             _ycol_m = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
                             _spot_m = float(pd.to_numeric(df_final_multi.get("S"), errors="coerce").median()) if ("S" in df_final_multi.columns) else None
@@ -827,7 +836,7 @@ if raw_records:
                             except Exception:
                                 pass
                             # Дата сессии и прайс‑лента для Key Levels
-                            _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                            _session_date_str_m = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
                             _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
                             # Рендер
                             render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
@@ -836,8 +845,9 @@ if raw_records:
                             try:
                                 if render_advanced_analysis_block is not None:
                                     try:
-                                        import pandas as pd, pytz
-                                        _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                        import pandas as pd
+from zoneinfo import ZoneInfo
+                                        _session_date_str_m = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
                                         _price_df_m = _load_session_price_df_for_key_levels(
                                             ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", "")
                                         )
@@ -887,13 +897,14 @@ if raw_records:
                                     # --- Snap G-Flip to nearest available strike from df_final['K'] (no math rounding) ---
                                     try:
                                         import pandas as pd
+from zoneinfo import ZoneInfo
                                         _Ks = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final.columns) else []
                                         if (_gflip_val is not None) and _Ks:
                                             _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
                                     except Exception:
                                         pass
-                                    import pytz, pandas as pd
-                                    _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                    import , pandas as pd
+                                    _session_date_str = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
 
@@ -901,8 +912,9 @@ if raw_records:
                                     try:
                                         if render_advanced_analysis_block is not None:
                                             try:
-                                                import pandas as pd, pytz
-                                                _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
+                                                import pandas as pd
+from zoneinfo import ZoneInfo
+                                                _session_date_str = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
                                                 _price_df = _load_session_price_df_for_key_levels(
                                                     ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", "")
                                                 )
