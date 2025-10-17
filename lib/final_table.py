@@ -259,7 +259,7 @@ def build_final_sum_from_corr(
             S_vals.append(float(np.nanmedian(nt["S"].astype(float))))
         if "F" in nt.columns and nt["F"].notna().any():
             F_vals.append(float(np.nanmedian(nt["F"].astype(float))))
-    base["S"] = float(np.nanmedian(S_vals)) if S_vals else np.nan
+    base["S"] = float(df_corr.loc[df_corr["exp"].isin(exp_list), "S"].dropna().iloc[0]) if len(df_corr.loc[df_corr["exp"].isin(exp_list), "S"].dropna())>0 else float("nan")
     if F_vals:
         base["F"] = float(np.nanmedian(F_vals))
 
