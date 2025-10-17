@@ -314,10 +314,20 @@ if not raw_records:
             or st.session_state.get("exp_date"))
     # try to read local files if available
     _cands = []
-    if _ticker and _exp:
-        _cands = [f"{_ticker}_{_exp}.json", f"./data/{_ticker}_{_exp}.json", f"/mnt/data/{_ticker}_{_exp}.json"]
-    else:
-        _cands = ["/mnt/data/SPX_2025-10-17.json"]  # fallback for local dev
+    tu = (_ticker or '').strip().upper()
+    eu = str(_exp) if _exp is not None else ''
+    if tu and eu:
+        _cands = [
+            f"{tu}_{eu}.json",
+            f"./data/{tu}_{eu}.json",
+            f"/mnt/data/{tu}_{eu}.json",
+            f"SPX_{eu}.json",
+            f"./data/SPX_{eu}.json",
+            f"/mnt/data/SPX_{eu}.json",
+        ]
+    # Absolute fallback
+    _cands += ["/mnt/data/SPX_2025-10-17.json"]
+    # fallback for local dev
     for _p in _cands:
         try:
             with open(_p, "r", encoding="utf-8") as _f:
