@@ -8,6 +8,7 @@ import requests
 from typing import Any, Dict, List, Tuple
 
 import streamlit as st
+from zoneinfo import ZoneInfo
 
 
 
@@ -18,158 +19,8 @@ except Exception:
     render_advanced_analysis_block = None
 # --- Intraday price loader for Key Levels (Polygon v2 aggs 1-minute) ---
 def _load_session_price_df_for_key_levels(ticker: str, session_date_str: str, api_key: str, timeout: int = 30):
-    import pandas as pd
-from zoneinfo import ZoneInfo
-
-    t_raw = (ticker or '').strip()
-    t = t_raw.upper()
-    if t in {'SPX','NDX','VIX','RUT','DJX'} and not t_raw.startswith('I:'):
-        t = f'I:{t}'
-    if not t or not session_date_str:
-        return None
-    base = "https://api.polygon.io"
-    url = f"{base}/v2/aggs/ticker/{t}/range/1/minute/{session_date_str}/{session_date_str}?adjusted=true&sort=asc&limit=50000"
-    headers = {"Authorization": f"Bearer {api_key}"}
-    try:
-        r = requests.get(url, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        js = r.json()
-    except Exception:
-        return None
-    res = js.get("results") or []
-    if not res:
-        return None
-    tz = ZoneInfo("America/New_York")
-    # Build dataframe
-    times   = [pd.to_datetime(x.get("t"), unit="ms", utc=True).tz_convert(tz) for x in res]
-    price   = [x.get("c") for x in res]
-    volume  = [x.get("v") for x in res]
-    vwap_api= [x.get("vw") for x in res]
-    opens   = [x.get("o") for x in res]
-    highs   = [x.get("h") for x in res]
-    lows    = [x.get("l") for x in res]
-    closes  = [x.get("c") for x in res]
-    df = pd.DataFrame({
-        "time":   times,
-        "price":  pd.to_numeric(price,  errors="coerce"),
-        "volume": pd.to_numeric(volume, errors="coerce"),
-    })
-    # Add OHLC columns (used by candlesticks)
-    try:
-        df["open"]  = pd.to_numeric(opens,  errors="coerce")
-        df["high"]  = pd.to_numeric(highs,  errors="coerce")
-        df["low"]   = pd.to_numeric(lows,   errors="coerce")
-        df["close"] = pd.to_numeric(closes, errors="coerce")
-    except Exception:
-        pass
-    
-    # --- VWAP logic with SPX proxy ---
-    # expose per-bar 'vw' for indices
-    try:
-        df["vw"] = pd.to_numeric(vwap_api, errors="coerce")
-    except Exception:
-        pass
-
-    total_vol = float(df["volume"].fillna(0.0).sum())
-    if "vw" in df.columns and df["vw"].notna().any() and total_vol == 0.0:
-        # index case: use Polygon per-bar 'vw' directly
-        df["vwap"] = df["vw"]
-    elif any(v is not None for v in vwap_api) and total_vol > 0.0:
-        vw = pd.Series(pd.to_numeric(vwap_api, errors="coerce"), index=df.index)
-        vol = df["volume"].fillna(0.0)
-        cum_vol = vol.cumsum().replace(0, pd.NA)
-        df["vwap"] = (vw * vol).cumsum() / cum_vol
-    else:
-        df["vwap"] = pd.NA
-
-    # SPY proxy only for SPX if vwap still NaN
-    t_up = (ticker or "").upper()
-    if t_up in {"SPX","^SPX","I:SPX"} and (df["vwap"].isna().all() or not df["vwap"].notna().any()):
-        try:
-            base = "https://api.polygon.io"
-            url_spy = (f"{base}/v2/aggs/ticker/SPY/range/1/minute/"
-                       f"{session_date_str}/{session_date_str}"
-                       f"?adjusted=true&sort=asc&limit=50000&apiKey={api_key}")
-            r2 = requests.get(url_spy, timeout=timeout)
-            r2.raise_for_status()
-            js2 = r2.json() or {}
-            res2 = js2.get("results") or []
-            if res2:
-                import pandas as pd
-from zoneinfo import ZoneInfo
-import numpy as np
-                tz = ZoneInfo("America/New_York")
-                spy_time = pd.to_datetime([x.get("t") for x in res2], unit="ms", utc=True).tz_convert(tz)
-                spy_df = pd.DataFrame({
-                    "time": spy_time,
-                    "spy_close": pd.Series(pd.to_numeric([x.get("c") for x in res2], errors="coerce")),
-                    "spy_vol":   pd.Series(pd.to_numeric([x.get("v") for x in res2], errors="coerce")).fillna(0.0),
-                    "spy_vw":    pd.Series(pd.to_numeric([x.get("vw") for x in res2], errors="coerce")),
-                }).sort_values("time")
-                # RTH filter
-                spy_df = spy_df.set_index("time").between_time("09:30", "16:00").reset_index()
-                px = spy_df["spy_vw"].where(spy_df["spy_vw"].notna(), spy_df["spy_close"])
-                cumv = spy_df["spy_vol"].cumsum().replace(0, pd.NA)
-                spy_df["spy_vwap"] = (px.mul(spy_df["spy_vol"])).cumsum() / cumv
-                spy_df["minute"] = spy_df["time"].dt.floor("min")
-
-                # SPX minutes in ET
-                df_et = df.copy()
-                try:
-                    df_et["time"] = df_et["time"].dt.tz_convert(tz)
-                except Exception:
-                    df_et["time"] = pd.to_datetime(df_et["time"], utc=True).dt.tz_convert(tz)
-                df_et["minute"] = df_et["time"].dt.floor("min")
-
-                merged = pd.merge(df_et[["minute","price"]].rename(columns={"price":"spx_price"}),
-                                  spy_df[["minute","spy_close"]], on="minute", how="inner").sort_values("minute")
-                if not merged.empty and merged["spy_close"].iloc[0] and merged["spx_price"].iloc[0]:
-                    alpha0 = float(merged["spx_price"].iloc[0]) / float(merged["spy_close"].iloc[0])
-                else:
-                    alpha0 = 10.0
-
-                ratio_map = (merged.set_index("minute")["spx_price"] / merged.set_index("minute")["spy_close"]).dropna()
-                minutes = spy_df["minute"].drop_duplicates().sort_values().reset_index(drop=True)
-                alphas = []
-                last_alpha = alpha0
-                session_start = minutes.iloc[0] if len(minutes) else None
-                for m in minutes:
-                    w_start = m - pd.Timedelta(minutes=15)
-                    r_win = ratio_map[(ratio_map.index > w_start) & (ratio_map.index <= m)]
-                    if len(r_win) >= 5:
-                        q1, q99 = r_win.quantile(0.01), r_win.quantile(0.99)
-                        raw_alpha = r_win.clip(q1, q99).median()
-                    else:
-                        raw_alpha = last_alpha
-                    if session_start is not None and (m - session_start) <= pd.Timedelta(minutes=30):
-                        low = 0.98 * alpha0; high = 1.02 * alpha0
-                        raw_alpha = min(max(raw_alpha, low), high)
-                    delta = raw_alpha - last_alpha
-                    max_step = 0.005 * last_alpha
-                    if abs(delta) > abs(max_step):
-                        raw_alpha = last_alpha + (max_step if delta > 0 else -max_step)
-                    alphas.append(raw_alpha)
-                    last_alpha = raw_alpha
-                alpha_series = pd.Series(alphas, index=minutes, name="alpha")
-
-                alpha_aligned = pd.merge(df_et[["minute"]], alpha_series, left_on="minute", right_index=True, how="left")["alpha"].fillna(method="ffill")
-                spy_vwap_aligned = pd.merge(df_et[["minute"]], spy_df[["minute","spy_vwap"]], on="minute", how="left")["spy_vwap"].fillna(method="ffill")
-                proxy_vwap = alpha_aligned.values * spy_vwap_aligned.values
-
-                df["vwap"] = df["vwap"].where(df["vwap"].notna(), proxy_vwap)
-        except Exception as e:
-            try:
-                import streamlit as st
-                code = getattr(getattr(e, "response", None), "status_code", None)
-                st.warning(f"SPY proxy VWAP недоступен ({code}) {type(e).__name__}: {e}. Использую TWAP.", icon="⚠️")
-            except Exception:
-                pass
-
-    # Final fallback: TWAP
-    if df["vwap"].isna().all():
-        pr = df["price"].fillna(method="ffill")
-        df["vwap"] = pr.expanding().mean()
-    return df
+    # Disabled: external price source not allowed.
+    return None
 
 # --- Helpers to hide tables from main page ---
 def _st_hide_df(*args, **kwargs):
@@ -366,8 +217,6 @@ if raw_records is None:
     raw_records = []
 
 # --- Spot price ---------------------------------------------------------------
-# --- Spot price ---------------------------------------------------------------
- ---------------------------------------------------------------
 S: float | None = None
 if raw_records:
     S = _spot_from_json(raw_records)
@@ -396,7 +245,6 @@ if raw_records:
                     st.sidebar.write("Selected dates: ?")
 
                 import pandas as pd
-from zoneinfo import ZoneInfo
                 df_corr_multi_list = []
                 windows_multi = {}
 
@@ -477,7 +325,6 @@ from zoneinfo import ZoneInfo
                     try:
                         import io, zipfile
                         import pandas as pd
-from zoneinfo import ZoneInfo
 
                         multi_exports = {}  # exp -> {name: DataFrame}
                         for _exp in selected_exps:
@@ -638,7 +485,6 @@ from zoneinfo import ZoneInfo
                                 rows.append({"exp": exp, "row_index": int(i), "K": float(g.loc[int(i), "K"]),
                                              "w_blend": float(g.loc[int(i), "w_blend"])})
                     import pandas as pd
-from zoneinfo import ZoneInfo  # локальный импорт безопасен
                     df_windows = pd.DataFrame(rows, columns=["exp","row_index","K","w_blend"]).sort_values(["exp","K"])
                     _st_hide_subheader()
                     # Приведём тип w_blend к float64 и зададим формат — уберёт предупреждение 2^53 в браузере
@@ -713,7 +559,6 @@ from zoneinfo import ZoneInfo  # локальный импорт безопас�
                 from lib.power_zone_er import compute_power_zone
                 import numpy as np
                 import pandas as pd
-from zoneinfo import ZoneInfo
                 import math
 
                 final_cfg = FinalTableConfig()
@@ -799,7 +644,6 @@ from zoneinfo import ZoneInfo
                             # weights table
                             try:
                                 import pandas as pd
-from zoneinfo import ZoneInfo
                                 _w_rows = [{"exp": e, "T": t_map.get(e), "w": weights.get(e)} for e in (exp_list or [])]
                                 _wdf = pd.DataFrame(_w_rows)
                                 with st.sidebar.expander("Weights"):
@@ -846,7 +690,6 @@ from zoneinfo import ZoneInfo
                         # --- Key Levels chart (Multi) ---
                         try:
                             import pandas as pd
-from zoneinfo import ZoneInfo
                             # Подбор столбца NetGEX и spot для G-Flip
                             _ycol_m = "NetGEX_1pct_M" if ("NetGEX_1pct_M" in df_final_multi.columns) else ("NetGEX_1pct" if "NetGEX_1pct" in df_final_multi.columns else None)
                             _spot_m = float(pd.to_numeric(df_final_multi.get("S"), errors="coerce").median()) if ("S" in df_final_multi.columns) else None
@@ -869,7 +712,6 @@ from zoneinfo import ZoneInfo
                                 if render_advanced_analysis_block is not None:
                                     try:
                                         import pandas as pd
-from zoneinfo import ZoneInfo
                                         _session_date_str_m = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
                                         _price_df_m = _load_session_price_df_for_key_levels(
                                             ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", "")
@@ -920,23 +762,17 @@ from zoneinfo import ZoneInfo
                                     # --- Snap G-Flip to nearest available strike from df_final['K'] (no math rounding) ---
                                     try:
                                         import pandas as pd
-from zoneinfo import ZoneInfo
                                         _Ks = pd.to_numeric(df_final.get("K"), errors="coerce").dropna().tolist() if ("K" in df_final.columns) else []
                                         if (_gflip_val is not None) and _Ks:
                                             _gflip_val = float(min(_Ks, key=lambda x: abs(float(x) - float(_gflip_val))))
                                     except Exception:
                                         pass
-                                    import , pandas as pd
-                                    _session_date_str = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-                                    _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
-                                    render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
 
                                     # --- Advanced Analysis Block (Single) — placed under Key Levels ---
                                     try:
                                         if render_advanced_analysis_block is not None:
                                             try:
                                                 import pandas as pd
-from zoneinfo import ZoneInfo
                                                 _session_date_str = pd.Timestamp.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
                                                 _price_df = _load_session_price_df_for_key_levels(
                                                     ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", "")
