@@ -452,13 +452,13 @@ def render_advanced_analysis_block(
         if m.get('em_1d') is not None and S_val is not None:
             em = float(m['em_1d']); pct = 100.0 * em / float(S_val) if float(S_val)!=0 else float('nan')
             lo = float(S_val) - em; hi = float(S_val) + em
-            st.markdown(f"<div style='white-space:nowrap;'><b>Expected Move (1d):</b> ±{_fmt_num(em, 2)} ({_fmt_num(pct, 2)}%) — диапазон [{_fmt_num(lo,2)}; {_fmt_num(hi,2)}]</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='white-space:nowrap;'><b>Expected Move (1d):</b> ±{_fmt_num(em, 2)} ({_fmt_num(pct, 2)}%) — range [{_fmt_num(lo,2)}; {_fmt_num(hi,2)}]</div>", unsafe_allow_html=True)
         else:
             st.markdown("<div style='white-space:nowrap;'><b>Expected Move (1d):</b> —</div>", unsafe_allow_html=True)
         if m.get('em_1w') is not None and S_val is not None:
             emw = float(m['em_1w']); pctw = 100.0 * emw / float(S_val) if float(S_val)!=0 else float('nan')
             low = float(S_val) - emw; hiw = float(S_val) + emw
-            st.markdown(f"<div style='white-space:nowrap;'><b>Expected Move (1w):</b> ±{_fmt_num(emw, 2)} ({_fmt_num(pctw, 2)}%) — диапазон [{_fmt_num(low,2)}; {_fmt_num(hiw,2)}]</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='white-space:nowrap;'><b>Expected Move (1w):</b> ±{_fmt_num(emw, 2)} ({_fmt_num(pctw, 2)}%) — range [{_fmt_num(low,2)}; {_fmt_num(hiw,2)}]</div>", unsafe_allow_html=True)
         else:
             st.markdown("<div style='white-space:nowrap;'><b>Expected Move (1w):</b> —</div>", unsafe_allow_html=True)
 
