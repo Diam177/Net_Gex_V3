@@ -183,7 +183,7 @@ from lib.sanitize_window import sanitize_and_window_pipeline
 from lib.tiker_data import (
     list_future_expirations,
     download_snapshot_json,
-    get_spot_snapshot,
+    get_spot_price,
     PolygonError,
 )
 
@@ -352,17 +352,10 @@ dl_tables_container = st.sidebar.empty()
 S: float | None = None
 if ticker:
     try:
-        S = get_spot_snapshot(ticker, api_key)
+        S, ts_ms, src = get_spot_price(ticker, api_key)
         # spot caption hidden per UI request
     except Exception:
         S = None
-# 3) из snapshot (fallback)
-if S is None and raw_records:
-    S = _infer_spot_from_snapshot(raw_records)
-    if S:
-        # spot fallback caption hidden per UI request
-        pass
-
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
     try:
@@ -736,6 +729,7 @@ if raw_records:
                             selected_exps=exp_list,
                             weight_mode=weight_mode,
                             cfg=final_cfg,
+                            s_override=S,
                         )
 
                         # --- QA: Sidebar Multi diagnostics for aggregated table ---
