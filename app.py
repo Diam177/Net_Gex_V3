@@ -272,6 +272,7 @@ def _normalize_ticker():
 
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
+    st.markdown("### ASTRA")
     st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
     ticker = st.session_state.get("ticker", "")
 
@@ -823,6 +824,8 @@ if raw_records:
                         _st_hide_df(df_final_multi, use_container_width=True, hide_index=True)
                         # --- Net GEX chart (Multi: aggregated) ---
                         try:
+                            st.markdown("### Net GEX")
+
                             render_netgex_bars(df_final=df_final_multi, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_multi')
                         except Exception as _chart_em:
                             st.error('Unable to display Net GEX chart (Multi)')
@@ -846,6 +849,8 @@ if raw_records:
                             _session_date_str_m = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                             _price_df_m = _load_session_price_df_for_key_levels(ticker, _session_date_str_m, st.secrets.get("POLYGON_API_KEY", ""))
                             # Рендер
+                            st.markdown("### Key Levels")
+
                             render_key_levels(df_final=df_final_multi, ticker=ticker, g_flip=_gflip_m, price_df=_price_df_m, session_date=_session_date_str_m, toggle_key="key_levels_multi")
 
                             # --- Advanced Analysis Block (Multi) — placed under Key Levels ---
@@ -889,6 +894,7 @@ if raw_records:
                                 _st_hide_df(df_final, use_container_width=True, hide_index=True)
                                 # --- Net GEX chart (under the final table) ---
                                 try:
+st.markdown("### Net GEX")
                                     render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
                                 except Exception as _chart_e:
                                     st.error('Unable to display Net GEX chart')
@@ -911,6 +917,7 @@ if raw_records:
                                     import pytz, pandas as pd
                                     _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
+st.markdown("### Key Levels")
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
 
                                     # --- Advanced Analysis Block (Single) — placed under Key Levels ---
