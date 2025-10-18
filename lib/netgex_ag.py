@@ -38,7 +38,7 @@ def compute_netgex_ag_per_expiry(df_corr: pd.DataFrame, exp: str,
     _ensure_required_columns(df_corr)
     g = df_corr.loc[df_corr["exp"]==exp].copy()
     if g.empty:
-        return pd.DataFrame(columns=["exp","K","S","F","call_oi","put_oi","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct","AG_1pct_M","NetGEX_1pct_M"])
+        return pd.DataFrame(columns=["exp","K","S","call_oi","put_oi","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct","AG_1pct_M","NetGEX_1pct_M"])
 
     Ks_keep = set(_window_strikes_for_exp(df_corr, exp, windows))
 
@@ -56,8 +56,6 @@ def compute_netgex_ag_per_expiry(df_corr: pd.DataFrame, exp: str,
     pivot = pivot.reset_index()
 
     S_exp = float(np.nanmedian(g["S"].values)); pivot["S"]=S_exp
-    if "F" in g.columns: pivot["F"]=float(np.nanmedian(g["F"].values))
-
     pivot = pivot.rename(columns={
         "oi_side_c":"call_oi","oi_side_p":"put_oi",
         "dg1pct_side_c":"dg1pct_call","dg1pct_side_p":"dg1pct_put",
@@ -73,7 +71,7 @@ def compute_netgex_ag_per_expiry(df_corr: pd.DataFrame, exp: str,
         pivot["NetGEX_1pct_M"] = pivot["NetGEX_1pct"]/cfg.scale
 
     pivot.insert(0,"exp",exp)
-    cols=["exp","K","S"] + (["F"] if "F" in pivot.columns else []) + ["call_oi","put_oi","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
+    cols=["exp","K","S"]  + ["call_oi","put_oi","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
     if "AG_1pct_M" in pivot.columns: cols += ["AG_1pct_M","NetGEX_1pct_M"]
     pivot = pivot[cols].sort_values("K").reset_index(drop=True)
     return pivot
@@ -88,10 +86,8 @@ def compute_netgex_ag(df_corr: pd.DataFrame, windows: Optional[Dict[str, np.ndar
         return results
 
     frames = []
-    with_F = any(("F" in d.columns) for d in results.values())
     for exp, df in results.items():
         keep = ["K","S","AG_1pct","NetGEX_1pct"]
-        if with_F and "F" in df.columns: keep.insert(2,"F")
         df2 = df[keep].copy(); df2["exp"]=exp
         frames.append(df2)
 
@@ -106,7 +102,6 @@ def compute_netgex_ag(df_corr: pd.DataFrame, windows: Optional[Dict[str, np.ndar
             return pd.DataFrame(columns=["K","S","AG_1pct","NetGEX_1pct","AG_1pct_M","NetGEX_1pct_M"])
         base = pd.DataFrame({"K": common_K})
         base["S"] = float(np.nanmedian(pd.concat(frames)["S"].values))
-        if with_F: base["F"] = float(np.nanmedian(pd.concat(frames).get("F", pd.Series(dtype=float)).values)) if any("F" in df.columns for df in frames) else np.nan
         base["AG_1pct"]=0.0; base["NetGEX_1pct"]=0.0
         for df in frames:
             m = df[df["K"].isin(common_K)].groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
@@ -116,7 +111,7 @@ def compute_netgex_ag(df_corr: pd.DataFrame, windows: Optional[Dict[str, np.ndar
         if cfg.scale and cfg.scale>0:
             base["AG_1pct_M"] = base["AG_1pct"]/cfg.scale
             base["NetGEX_1pct_M"] = base["NetGEX_1pct"]/cfg.scale
-        cols=["K","S"] + (["F"] if "F" in base.columns else []) + ["AG_1pct","NetGEX_1pct"]
+        cols=["K","S"]  + ["AG_1pct","NetGEX_1pct"]
         if "AG_1pct_M" in base.columns: cols+=["AG_1pct_M","NetGEX_1pct_M"]
         return base[cols].sort_values("K").reset_index(drop=True)
 
@@ -124,7 +119,6 @@ def compute_netgex_ag(df_corr: pd.DataFrame, windows: Optional[Dict[str, np.ndar
         all_K = sorted(set().union(*[set(df["K"].unique()) for df in frames]))
         base = pd.DataFrame({"K": all_K})
         base["S"] = float(np.nanmedian(pd.concat(frames)["S"].values))
-        if with_F: base["F"] = float(np.nanmedian(pd.concat(frames).get("F", pd.Series(dtype=float)).values)) if any("F" in df.columns for df in frames) else np.nan
         base["AG_1pct"]=0.0; base["NetGEX_1pct"]=0.0
         for df in frames:
             m = df.groupby("K")[["AG_1pct","NetGEX_1pct"]].sum()
@@ -134,7 +128,7 @@ def compute_netgex_ag(df_corr: pd.DataFrame, windows: Optional[Dict[str, np.ndar
         if cfg.scale and cfg.scale>0:
             base["AG_1pct_M"] = base["AG_1pct"]/cfg.scale
             base["NetGEX_1pct_M"] = base["NetGEX_1pct"]/cfg.scale
-        cols=["K","S"] + (["F"] if "F" in base.columns else []) + ["AG_1pct","NetGEX_1pct"]
+        cols=["K","S"]  + ["AG_1pct","NetGEX_1pct"]
         if "AG_1pct_M" in base.columns: cols+=["AG_1pct_M","NetGEX_1pct_M"]
         return base[cols].sort_values("K").reset_index(drop=True)
 
