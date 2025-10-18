@@ -191,17 +191,32 @@ st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
 st.markdown("""
 <style>
-[data-testid="stSidebarNav"]::before {
-  content: "ASTRA";
+[data-testid="stSidebarNav"] {
+  position: relative;
+}
+
+[data-testid="stSidebarNav"]::after {
+  content: "gammASTRAtegy";
   display: block;
+  text-align: center;
   font-size: 34px;
   font-weight: 800;
   line-height: 1.1;
   margin: 10px 0 8px 0;
-  padding-left: 0.85rem;          /* align with nav button left padding */
-  box-sizing: border-box;
+  opacity: 0.85;
 }
-
+[data-testid="stSidebarNav"]::before {
+  content: "ASTRA";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 10px;
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1.1;
+  opacity: 1;
+  pointer-events: none;
+}
 </style>
 """, unsafe_allow_html=True)
 # --- Helpers -----------------------------------------------------------------
