@@ -284,7 +284,7 @@ def _normalize_ticker():
 
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
-        st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
+    st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
     ticker = st.session_state.get("ticker", "")
 
     # Получаем список будущих экспираций под выбранный тикер
