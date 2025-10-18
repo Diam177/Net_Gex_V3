@@ -194,7 +194,7 @@ st.markdown("""
 [data-testid="stSidebarNav"]::before {
   content: "ASTRA";
   display: block;
-  font-size: 26px;
+  font-size: 30px;
   font-weight: 800;
   line-height: 1.1;
   margin: 10px 0 8px 12px;
