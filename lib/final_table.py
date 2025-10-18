@@ -196,6 +196,7 @@ def build_final_sum_from_corr(
     selected_exps: Optional[List[str]] = None,
     weight_mode: str = "1/√T",
     cfg: FinalTableConfig = FinalTableConfig(),
+    s_override: float | None = None,
 ) -> pd.DataFrame:
     """Суммарная финальная таблица по нескольким экспирациям (Multi) на единой сетке K.
     Возвращает: DataFrame с колонками
@@ -259,7 +260,7 @@ def build_final_sum_from_corr(
             S_vals.append(float(np.nanmedian(nt["S"].astype(float))))
         if "F" in nt.columns and nt["F"].notna().any():
             F_vals.append(float(np.nanmedian(nt["F"].astype(float))))
-    base["S"] = float(np.nanmedian(S_vals)) if S_vals else np.nan
+    base["S"] = float(s_override) if (s_override is not None and np.isfinite(s_override)) else (float(np.nanmedian(S_vals)) if S_vals else np.nan)
     if F_vals:
         base["F"] = float(np.nanmedian(F_vals))
 
