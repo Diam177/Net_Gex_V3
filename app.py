@@ -189,38 +189,6 @@ from lib.tiker_data import (
 
 st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
-st.markdown("""
-<style>
-/* Centered brand at the very top of the sidebar */
-[data-testid="stSidebar"] { position: relative; }
-[data-testid="stSidebar"]::before {
-  content: "gammASTRAtegy";
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 34px;
-  font-weight: 800;
-  line-height: 1.1;
-  opacity: 0.85; /* dim for gamm + tegy */
-  pointer-events: none;
-}
-[data-testid="stSidebar"]::after {
-  content: "ASTRA";
-  position: absolute;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 34px;
-  font-weight: 800;
-  line-height: 1.1;
-  opacity: 1;
-  pointer-events: none;
-}
-/* Push nav down so it does not overlap the brand */
-[data-testid="stSidebarNav"] { margin-top: 56px; }
-</style>
-""", unsafe_allow_html=True)
 # --- Helpers -----------------------------------------------------------------
 def _coerce_results(data: Any) -> List[Dict]:
     """
@@ -304,6 +272,7 @@ def _normalize_ticker():
 
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
+    st.markdown("### ASTRA")
     st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
     ticker = st.session_state.get("ticker", "")
 
