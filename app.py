@@ -311,7 +311,7 @@ with st.sidebar:
             weight_mode = st.selectbox("Weighing", ["equal","1/T","1/√T"], index=2)
     else:
         expiration = ""
-        st.warning("Нет доступных дат экспираций для тикера.")
+        st.warning("There are no expiration dates available for the ticker.")
 
 
 
@@ -333,9 +333,9 @@ if ticker and expiration:
         raw_records = _coerce_results(snapshot_js)
         st.session_state["raw_records"] = raw_records
     except PolygonError as e:
-        st.error(f"Ошибка Polygon: {e}")
+        st.error(f"Error Polygon: {e}")
     except Exception as e:
-        st.error(f"Ошибка при загрузке snapshot JSON: {e}")
+        st.error(f"Error loading snapshot JSON: {e}")
 
 # --- Sidebar: download raw provider JSON -------------------------------------
 if snapshot_js:
@@ -368,10 +368,10 @@ if ticker:
         # Graceful handling: invalid ticker or network error
         status = getattr(getattr(e, 'response', None), 'status_code', None)
         if status == 404:
-            st.warning(f"Некорректный тикер: {ticker}. Проверьте написание.")
+            st.warning(f"Incorrect ticker: {ticker}. Check your spelling.")
             st.stop()
         else:
-            st.error("Не удалось получить спот-цену. Проверьте соединение или тикер.")
+            st.error("Unable to retrieve spot price. Please check your connection or ticker.")
             st.stop()
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
@@ -581,15 +581,15 @@ if raw_records:
                                 use_container_width=True,
                             )
                     except Exception as _zip_err:
-                        st.warning("Не удалось подготовить ZIP с промежуточными таблицами.")
+                        st.warning("Failed to prepare ZIP with staging tables.")
                         st.exception(_zip_err)
 
         except Exception as _e_multi:
-            st.warning("Multi-exp: не удалось объединить серии.")
+            st.warning("Multi-exp: Failed to merge series.")
             st.exception(_e_multi)
         df_raw = res.get("df_raw")
         if df_raw is None or getattr(df_raw, "empty", True):
-            st.warning("df_raw пуст. Проверьте формат данных.")
+            st.warning("df_raw is empty. Check the data format.")
         else:
             _st_hide_df(df_raw, use_container_width=True)
             # --- Ниже показываем остальные массивы по степени создания ---
@@ -647,7 +647,7 @@ if raw_records:
                         _st_hide_df(df_windows, use_container_width=True, hide_index=True)
                 
                 except Exception as _e:
-                    st.warning("Не удалось отобразить windows в табличном виде.")
+                    st.warning("Failed to display windows in table view.")
                     st.exception(_e)
 
             # 5) window_raw (строки окна из исходных + флаги)
@@ -697,7 +697,7 @@ if raw_records:
                     zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
                     dl_tables_container.download_button('Download tables', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', use_container_width=True)
                 except Exception as _e_zip_single:
-                    st.warning('Не удалось подготовить ZIP с таблицами (single).')
+                    st.warning('Failed to prepare ZIP with tables (single).')
                     st.exception(_e_zip_single)
             # 7) Финальная таблица (по df_corr + windows)
             try:
@@ -718,7 +718,7 @@ if raw_records:
                         # 1) веса по T
                         exp_list = [e for e in selected_exps if e in df_corr["exp"].unique().tolist()]
                         if not exp_list:
-                            raise ValueError("Нет выбранных экспираций для режима Multi.")
+                            raise ValueError("There are no expirations selected for Multi mode.")
                         t_map = {}
                         for e in exp_list:
                             T_vals = df_corr.loc[df_corr["exp"]==e, "T"].dropna().values
@@ -773,9 +773,9 @@ if raw_records:
                         # sidebar render
                         try:
                             st.sidebar.markdown("### Multi QA")
-                            st.sidebar.metric("Выбрано дат", len(selected_exps))
+                            st.sidebar.metric("Selected dates", len(selected_exps))
                             try:
-                                st.sidebar.metric("Собрано дат", len(ok_exps))
+                                st.sidebar.metric("Dates collected", len(ok_exps))
                             except Exception:
                                 pass
                             st.sidebar.metric("Strikes in the Union", union_k)
@@ -878,7 +878,7 @@ if raw_records:
                                         price_df=_price_df_m,
                                         selected_exps=selected_exps if 'selected_exps' in locals() else None,
                                         weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
-                                        caption_suffix="Агрегировано по выбранным экспирациям."
+                                        caption_suffix="Aggregated by selected expirations."
                                     )
                             except Exception as _aabm_e:
                                 st.warning("Advanced block (Multi) failed")
@@ -945,7 +945,7 @@ if raw_records:
                                                 price_df=_price_df,
                                                 selected_exps=selected_exps if 'selected_exps' in locals() else None,
                                                 weight_mode=weight_mode if 'weight_mode' in locals() else "1/√T",
-                                                caption_suffix="Агрегировано по выбранной экспирации."
+                                                caption_suffix="Aggregated by the selected expiration."
                                             )
                                     except Exception as _aabs_e:
                                         st.warning("Advanced block (Single) failed")
