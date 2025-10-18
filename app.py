@@ -311,7 +311,7 @@ with st.sidebar:
             weight_mode = st.selectbox("Weighing", ["equal","1/T","1/√T"], index=2)
     else:
         expiration = ""
-        st.warning("Нет доступных дат экспираций для тикера.")
+        st.warning("There are no expiration dates available for the ticker.")
 
 
 
