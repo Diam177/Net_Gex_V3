@@ -291,6 +291,14 @@ with st.sidebar:
         sel = st.selectbox("Expiration date", options=expirations, index=default_idx, key=f"exp_sel:{ticker}")
         expiration = sel
 
+        # --- Search trigger below expiration selection ---
+        search_clicked = st.button("Search", key="btn_search", type="primary")
+        if search_clicked:
+            try:
+                _normalize_ticker()
+            except Exception:
+                pass
+
         # --- Режим агрегации экспираций ---
         mode_exp = st.radio("Expiration mode", ["Single","Multi"], index=0, horizontal=True)
         selected_exps = []
@@ -563,8 +571,7 @@ if raw_records:
                                 data=zip_bytes.getvalue(),
                                 file_name=fname,
                                 mime="application/zip",
-                                type="primary",
-                                use_container_width=False,
+                                use_container_width=True,
                             )
                     except Exception as _zip_err:
                         st.warning("Не удалось подготовить ZIP с промежуточными таблицами.")
@@ -681,7 +688,7 @@ if raw_records:
                         return bio
                     exp_str = expiration if 'expiration' in locals() else 'exp'
                     zip_bytes = _zip_single_tables(res, df_corr, windows, exp_str)
-                    dl_tables_container.download_button('Download tables', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', type='primary')
+                    dl_tables_container.download_button('Download tables', data=zip_bytes.getvalue(), file_name=(f"{ticker}_{exp_str}_tables.zip" if ticker else 'tables.zip'), mime='application/zip', use_container_width=True)
                 except Exception as _e_zip_single:
                     st.warning('Не удалось подготовить ZIP с таблицами (single).')
                     st.exception(_e_zip_single)
