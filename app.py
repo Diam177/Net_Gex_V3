@@ -894,7 +894,7 @@ if raw_records:
                                 _st_hide_df(df_final, use_container_width=True, hide_index=True)
                                 # --- Net GEX chart (under the final table) ---
                                 try:
-st.markdown("### Net GEX")
+                                    st.markdown("### Net GEX")
                                     render_netgex_bars(df_final=df_final, ticker=ticker, spot=S if 'S' in locals() else None, toggle_key='netgex_main')
                                 except Exception as _chart_e:
                                     st.error('Unable to display Net GEX chart')
@@ -917,7 +917,7 @@ st.markdown("### Net GEX")
                                     import pytz, pandas as pd
                                     _session_date_str = pd.Timestamp.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d")
                                     _price_df = _load_session_price_df_for_key_levels(ticker, _session_date_str, st.secrets.get("POLYGON_API_KEY", ""))
-st.markdown("### Key Levels")
+                                    st.markdown("### Key Levels")
                                     render_key_levels(df_final=df_final, ticker=ticker, g_flip=_gflip_val, price_df=_price_df, session_date=_session_date_str, toggle_key="key_levels_main")
 
                                     # --- Advanced Analysis Block (Single) — placed under Key Levels ---
