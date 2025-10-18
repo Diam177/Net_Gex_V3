@@ -207,4 +207,45 @@ def get_spot_price(ticker: str, api_key: str, *, now_utc: datetime | None = None
             return float(c), int(t), "prev_close"
 
     raise PolygonError(f"get_spot_price: unable to resolve spot for {ticker}")
+
+
+# --- Snapshot-based spot (no fallbacks) --------------------------------------
+def get_spot_snapshot(ticker: str, api_key: str, *, timeout: float = 15.0) -> float:
+    """
+    Единый источник S из Polygon Snapshot.
+    - Индексы: /v3/snapshot/indices?ticker=I:SPX -> results[0].value
+    - Акции/ETF: /v2/snapshot/locale/us/markets/stocks/tickers/SPY -> ticker.min.c
+    Без фолбэков: если поле отсутствует, вызывается PolygonError.
+    """
+    if not ticker:
+        raise PolygonError("get_spot_snapshot: empty ticker")
+    t = ticker.strip().upper()
+    import requests
+
+    if t.startswith("I:"):
+        url = f"{POLYGON_BASE}/v3/snapshot/indices"
+        params = {"ticker": t, "apiKey": api_key}
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        js = r.json()
+        results = js.get("results") or []
+        if not results:
+            raise PolygonError(f"get_spot_snapshot: no results for {t}")
+        val = results[0].get("value")
+        if val is None:
+            raise PolygonError(f"get_spot_snapshot: missing value for {t}")
+        return float(val)
+
+    # stocks/etf
+    url = f"{POLYGON_BASE}/v2/snapshot/locale/us/markets/stocks/tickers/{t}"
+    params = {"apiKey": api_key}
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    js = r.json()
+    try:
+        val = js["ticker"]["min"]["c"]
+    except Exception as e:
+        raise PolygonError(f"get_spot_snapshot: missing min.c for {t}") from e
+    return float(val)
+# --- END: snapshot spot helper ------------------------------------------------
 # --- END: spot price helper ---------------------------------------------------
