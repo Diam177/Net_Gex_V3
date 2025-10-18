@@ -183,7 +183,7 @@ from lib.sanitize_window import sanitize_and_window_pipeline
 from lib.tiker_data import (
     list_future_expirations,
     download_snapshot_json,
-    get_spot_price,
+    get_spot_snapshot,
     PolygonError,
 )
 
@@ -352,10 +352,12 @@ dl_tables_container = st.sidebar.empty()
 S: float | None = None
 if ticker:
     try:
-        S, ts_ms, src = get_spot_price(ticker, api_key)
-        # spot caption hidden per UI request
-    except Exception:
-        S = None
+        S = get_spot_snapshot(ticker, api_key)
+        # snapshot-only spot
+    except Exception as e:
+        import streamlit as st
+        st.error(f"Snapshot spot error: {e}")
+        raise
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
     try:
