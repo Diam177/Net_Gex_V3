@@ -183,7 +183,7 @@ from lib.sanitize_window import sanitize_and_window_pipeline
 from lib.tiker_data import (
     list_future_expirations,
     download_snapshot_json,
-    get_spot_snapshot,
+    get_spot_price,
     PolygonError,
 )
 
@@ -300,6 +300,9 @@ with st.sidebar:
         else:
             selected_exps = st.multiselect("Select expiration", options=expirations, default=expirations[:2])
             weight_mode = st.selectbox("Weighing", ["equal","1/T","1/√T"], index=2)
+            # --- Manual fetch trigger ---
+            st.button("Search", key="btn_search", use_container_width=True)
+
     else:
         expiration = ""
         st.warning("Нет доступных дат экспираций для тикера.")
@@ -338,7 +341,8 @@ if snapshot_js:
             data=raw_bytes,
             file_name=fname,
             mime="application/json",
-            use_container_width=True,
+            type="primary",
+            use_container_width=False,
         )
     except Exception as e:
         st.sidebar.error(f"Failed to prepare JSON for download: {e}")
@@ -352,12 +356,17 @@ dl_tables_container = st.sidebar.empty()
 S: float | None = None
 if ticker:
     try:
-        S = get_spot_snapshot(ticker, api_key)
-        # snapshot-only spot
-    except Exception as e:
-        import streamlit as st
-        st.error(f"Snapshot spot error: {e}")
-        raise
+        S, ts_ms, src = get_spot_price(ticker, api_key)
+        # spot caption hidden per UI request
+    except Exception:
+        S = None
+# 3) из snapshot (fallback)
+if S is None and raw_records:
+    S = _infer_spot_from_snapshot(raw_records)
+    if S:
+        # spot fallback caption hidden per UI request
+        pass
+
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
     try:
@@ -731,7 +740,6 @@ if raw_records:
                             selected_exps=exp_list,
                             weight_mode=weight_mode,
                             cfg=final_cfg,
-                            s_override=S,
                         )
 
                         # --- QA: Sidebar Multi diagnostics for aggregated table ---
