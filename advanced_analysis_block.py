@@ -446,7 +446,7 @@ def render_advanced_analysis_block(
 
     # Левая колонка + EM без переноса
     with c1:
-        _colored_line("Текущая цена", _fmt_num(m["S"], 2), None)
+        _colored_line("Current price", _fmt_num(m["S"], 2), None)
         _colored_line("VWAP", _fmt_num(m["VWAP"], 2), None)
         S_val = m.get('S')
         if m.get('em_1d') is not None and S_val is not None:
