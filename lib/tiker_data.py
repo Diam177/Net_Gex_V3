@@ -154,8 +154,57 @@ def _poly_get_json(url: str, api_key: str, params: dict | None = None, timeout: 
     except Exception:
         return {}
 
-def get_spot_price(ticker: str, api_key: str, *_, **__) -> tuple[float, int, str]:
-    """Snapshot-only wrapper for backward compatibility."""
-    s = get_spot_snapshot(ticker, api_key)
-    return s, 0, "snapshot"
+def get_spot_price(ticker: str, api_key: str, *, now_utc: datetime | None = None, timeout: float = 10.0) -> tuple[float, int, str]:
+    """Возвращает (spot, ts_ms, source) с иерархией источников:
+       1) v3 last trade  -> /v3/trades/{ticker}?limit=1&sort=desc
+       2) v2 last minute -> /v2/aggs/ticker/{ticker}/range/1/minute/{from}/{to}?sort=desc&limit=1
+       3) v2 prev close  -> /v2/aggs/ticker/{ticker}/prev
+    """
+    if not ticker:
+        raise PolygonError("get_spot_price: empty ticker")
+    # normalize to Polygon's case-sensitive tickers
+    ticker = ticker.strip().upper()
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+
+    # 1) v3 trades (может вернуть NOT_AUTHORIZED на Starter-плане)
+    try:
+        js = _poly_get_json(f"{POLYGON_BASE}/v3/trades/{ticker}", api_key, params={"limit": 1, "sort": "desc"}, timeout=timeout)
+        results = js.get("results") or []
+        if results:
+            r0 = results[0]
+            price = r0.get("price")
+            ts = r0.get("sip_timestamp") or r0.get("participant_timestamp") or r0.get("t")
+            if price is not None and ts is not None:
+                return float(price), int(ts), "last_trade"
+    except PolygonError:
+        # мягкий фолбэк
+        pass
+
+    # 2) Последний минутный бар (надёжный для Starter)
+    date_to = now_utc.date().isoformat()
+    date_from = (now_utc - timedelta(days=2)).date().isoformat()
+    try:
+        js = _poly_get_json(f"{POLYGON_BASE}/v2/aggs/ticker/{ticker}/range/1/minute/{date_from}/{date_to}", api_key, params={"limit": 1, "sort": "desc"}, timeout=timeout)
+        results = js.get("results") or []
+        if results:
+            r0 = results[0]
+            c = r0.get("c")
+            t = r0.get("t")
+            if c is not None and t is not None:
+                return float(c), int(t), "minute"
+    except PolygonError:
+        pass
+
+    # 3) Previous close
+    js = _poly_get_json(f"{POLYGON_BASE}/v2/aggs/ticker/{ticker}/prev", api_key, timeout=timeout)
+    results = js.get("results") or []
+    if results:
+        r0 = results[0]
+        c = r0.get("c")
+        t = r0.get("t")
+        if c is not None and t is not None:
+            return float(c), int(t), "prev_close"
+
+    raise PolygonError(f"get_spot_price: unable to resolve spot for {ticker}")
 # --- END: spot price helper ---------------------------------------------------
