@@ -311,7 +311,7 @@ with st.sidebar:
             weight_mode = st.selectbox("Weighing", ["equal","1/T","1/√T"], index=2)
     else:
         expiration = ""
-        st.warning("There are no expiration dates available for the ticker.")
+        st.warning("Нет доступных дат экспираций для тикера.")
 
 
 
@@ -365,8 +365,14 @@ if ticker:
         # snapshot-only spot
     except Exception as e:
         import streamlit as st
-        st.error(f"Snapshot spot error: {e}")
-        raise
+        # Graceful handling: invalid ticker or network error
+        status = getattr(getattr(e, 'response', None), 'status_code', None)
+        if status == 404:
+            st.warning(f"Некорректный тикер: {ticker}. Проверьте написание.")
+            st.stop()
+        else:
+            st.error("Не удалось получить спот-цену. Проверьте соединение или тикер.")
+            st.stop()
 # --- Run sanitize/window + show df_raw ---------------------------------------
 if raw_records:
     try:
