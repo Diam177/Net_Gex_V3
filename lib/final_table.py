@@ -208,6 +208,10 @@ def build_final_sum_from_corr(
     if not exp_list:
         return pd.DataFrame(columns=["K","S","call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct","PZ"])
 
+    # SNAPSHOT_ONLY_S_GUARD: требуем явный s_override
+    if s_override is None or not np.isfinite(s_override):
+        raise ValueError("build_final_sum_from_corr: s_override (snapshot S) is required under snapshot-only policy")
+
     # 1) веса по T
     t_map: Dict[str, float] = {}
     for e in exp_list:
