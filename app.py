@@ -191,32 +191,34 @@ st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
 st.markdown("""
 <style>
-[data-testid="stSidebarNav"] {
-  position: relative;
-}
-
-[data-testid="stSidebarNav"]::after {
+/* Centered brand at the very top of the sidebar */
+[data-testid="stSidebar"] { position: relative; }
+[data-testid="stSidebar"]::before {
   content: "gammASTRAtegy";
-  display: block;
-  text-align: center;
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 34px;
   font-weight: 800;
   line-height: 1.1;
-  margin: 10px 0 8px 0;
-  opacity: 0.85;
+  opacity: 0.85; /* dim for gamm + tegy */
+  pointer-events: none;
 }
-[data-testid="stSidebarNav"]::before {
+[data-testid="stSidebar"]::after {
   content: "ASTRA";
   position: absolute;
+  top: 8px;
   left: 50%;
   transform: translateX(-50%);
-  top: 10px;
   font-size: 34px;
   font-weight: 800;
   line-height: 1.1;
   opacity: 1;
   pointer-events: none;
 }
+/* Push nav down so it does not overlap the brand */
+[data-testid="stSidebarNav"] { margin-top: 56px; }
 </style>
 """, unsafe_allow_html=True)
 # --- Helpers -----------------------------------------------------------------
