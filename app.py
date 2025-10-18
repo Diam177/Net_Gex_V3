@@ -189,6 +189,18 @@ from lib.tiker_data import (
 
 st.set_page_config(page_title="GammaStrat — df_raw", layout="wide")
 
+st.markdown("""
+<style>
+[data-testid="stSidebarNav"]::before {
+  content: "ASTRA";
+  display: block;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 10px 0 8px 12px;
+}
+</style>
+""", unsafe_allow_html=True)
 # --- Helpers -----------------------------------------------------------------
 def _coerce_results(data: Any) -> List[Dict]:
     """
@@ -272,8 +284,7 @@ def _normalize_ticker():
 
 # --- Controls moved to sidebar ----------------------------------------------
 with st.sidebar:
-    st.markdown("### ASTRA")
-    st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
+        st.text_input("Ticker", key="ticker", on_change=_normalize_ticker)
     ticker = st.session_state.get("ticker", "")
 
     # Получаем список будущих экспираций под выбранный тикер
