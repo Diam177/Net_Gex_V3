@@ -196,7 +196,6 @@ def build_final_sum_from_corr(
     selected_exps: Optional[List[str]] = None,
     weight_mode: str = "1/√T",
     cfg: FinalTableConfig = FinalTableConfig(),
-    s_override: float | None = None,
 ) -> pd.DataFrame:
     """Суммарная финальная таблица по нескольким экспирациям (Multi) на единой сетке K.
     Возвращает: DataFrame с колонками
@@ -207,10 +206,6 @@ def build_final_sum_from_corr(
     exp_list = [e for e in (selected_exps or exps_all) if e in exps_all]
     if not exp_list:
         return pd.DataFrame(columns=["K","S","call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct","PZ"])
-
-    # SNAPSHOT_ONLY_S_GUARD: требуем явный s_override
-    if s_override is None or not np.isfinite(s_override):
-        raise ValueError("build_final_sum_from_corr: s_override (snapshot S) is required under snapshot-only policy")
 
     # 1) веса по T
     t_map: Dict[str, float] = {}
@@ -264,7 +259,7 @@ def build_final_sum_from_corr(
             S_vals.append(float(np.nanmedian(nt["S"].astype(float))))
         if "F" in nt.columns and nt["F"].notna().any():
             F_vals.append(float(np.nanmedian(nt["F"].astype(float))))
-    base["S"] = float(s_override) if (s_override is not None and np.isfinite(s_override)) else (float(np.nanmedian(S_vals)) if S_vals else np.nan)
+    base["S"] = float(np.nanmedian(S_vals)) if S_vals else np.nan
     if F_vals:
         base["F"] = float(np.nanmedian(F_vals))
 
