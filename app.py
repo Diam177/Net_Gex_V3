@@ -197,8 +197,11 @@ st.markdown("""
   font-size: 34px;
   font-weight: 800;
   line-height: 1.1;
-  margin: 10px 0 8px 12px;
+  margin: 10px 0 8px 0;
+  padding-left: 0.75rem;          /* align with nav button left padding */
+  box-sizing: border-box;
 }
+
 </style>
 """, unsafe_allow_html=True)
 # --- Helpers -----------------------------------------------------------------
