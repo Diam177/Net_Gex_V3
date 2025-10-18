@@ -5,7 +5,7 @@ final_table.py — единая сборка финальной таблицы �
 - Берёт "исправленные" данные и окна (sanitize_window.py)
 - Считает Net GEX / AG (netgex_ag.py)
 - Считает Power Zone / ER Up / ER Down (power_zone_er.py)
-- Собирает одну финальную таблицу по каждому expiry: [exp, K, S, F, call_oi, put_oi,
+- Собирает одну финальную таблицу по каждому expiry: [exp, K, S, call_oi, put_oi,
   dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct, AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down]
 
 Предусмотрены два варианта входа:
@@ -129,7 +129,7 @@ def build_final_tables_from_corr(
 ) -> Dict[str, pd.DataFrame]:
     """
     Собирает финальные таблицы по каждой экспирации:
-    exp, K, S, F, call_oi, put_oi, dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct,
+    exp, K, S, call_oi, put_oi, dg1pct_call, dg1pct_put, AG_1pct, NetGEX_1pct,
     AG_1pct_M, NetGEX_1pct_M, PZ, ER_Up, ER_Down
     """
     results: Dict[str, pd.DataFrame] = {}
@@ -177,7 +177,7 @@ def build_final_tables_from_corr(
         net_tbl["PZ"]      = net_tbl["K"].map(pz_map).fillna(0.0)
 
         # Упорядочим колонки
-        cols = ["exp","K","S"] + (["F"] if "F" in net_tbl.columns else []) + \
+        cols = ["exp","K","S"] + \
                ["call_oi","put_oi","call_vol","put_vol","dg1pct_call","dg1pct_put","AG_1pct","NetGEX_1pct"]
         if "AG_1pct_M" in net_tbl.columns:
             cols += ["AG_1pct_M","NetGEX_1pct_M"]
@@ -196,10 +196,11 @@ def build_final_sum_from_corr(
     selected_exps: Optional[List[str]] = None,
     weight_mode: str = "1/√T",
     cfg: FinalTableConfig = FinalTableConfig(),
+    s_override: float | None = None,
 ) -> pd.DataFrame:
     """Суммарная финальная таблица по нескольким экспирациям (Multi) на единой сетке K.
     Возвращает: DataFrame с колонками
-      K, S[, F], call_oi, put_oi, call_vol, put_vol, AG_1pct, NetGEX_1pct, [AG_1pct_M, NetGEX_1pct_M], PZ.
+      K, S, call_oi, put_oi, call_vol, put_vol, AG_1pct, NetGEX_1pct, [AG_1pct_M, NetGEX_1pct_M], PZ.
     """
     # 0) фильтр экспираций
     exps_all = sorted(df_corr.get("exp", pd.Series(dtype=str)).dropna().unique().tolist())
@@ -207,7 +208,11 @@ def build_final_sum_from_corr(
     if not exp_list:
         return pd.DataFrame(columns=["K","S","call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct","PZ"])
 
-    # 1) веса по T
+    # SNAPSHOT_ONLY_S_GUARD: требуем явный s_override
+    if s_override is None or not np.isfinite(s_override):
+        raise ValueError("build_final_sum_from_corr: s_override (snapshot S) is required")
+
+# 1) веса по T
     t_map: Dict[str, float] = {}
     for e in exp_list:
         g = df_corr[df_corr["exp"] == e]
@@ -251,18 +256,9 @@ def build_final_sum_from_corr(
         K_union = sorted(set().union(*K_sets))
     base = pd.DataFrame({"K": list(K_union)}, dtype=float)
 
-    # 4) медианные S/F
+    # 4) медианные S
     S_vals: List[float] = []
-    F_vals: List[float] = []
-    for e, nt in per_exp.items():
-        if "S" in nt.columns and nt["S"].notna().any():
-            S_vals.append(float(np.nanmedian(nt["S"].astype(float))))
-        if "F" in nt.columns and nt["F"].notna().any():
-            F_vals.append(float(np.nanmedian(nt["F"].astype(float))))
-    base["S"] = float(np.nanmedian(S_vals)) if S_vals else np.nan
-    if F_vals:
-        base["F"] = float(np.nanmedian(F_vals))
-
+    base["S"] = float(s_override) if (s_override is not None and np.isfinite(s_override)) else np.nan
     # 5) взвешенные суммы AG и NetGEX на K_union
     base["AG_1pct"] = 0.0
     base["NetGEX_1pct"] = 0.0
@@ -323,7 +319,7 @@ def build_final_sum_from_corr(
     base["PZ"] = pd.Series(pz, index=base.index).astype(float)
 
     # 9) итоговый порядок колонок
-    cols = ["K","S"] + (["F"] if "F" in base.columns else []) + ["call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct"]
+    cols = ["K","S"] + ["call_oi","put_oi","call_vol","put_vol","AG_1pct","NetGEX_1pct"]
     if "AG_1pct_M" in base.columns:
         cols += ["AG_1pct_M","NetGEX_1pct_M"]
     cols += ["PZ"]
