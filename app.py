@@ -292,7 +292,7 @@ with st.sidebar:
         expiration = sel
 
         # --- Search trigger below expiration selection ---
-        search_clicked = st.button("Search", key="btn_search", type="primary")
+        search_clicked = st.button("Search", key="btn_search", type="primary", use_container_width=True)
         if search_clicked:
             try:
                 _normalize_ticker()
