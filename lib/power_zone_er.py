@@ -41,7 +41,7 @@ def compute_power_zone(
     day_low: Optional[float] = None,
     *,
     beta0: float = 1.0,
-    eta: float = 0.60,
+    eta: float = 0.50,
     zeta: float = 0.40,
     alpha_g: float = 1.0,
     alpha_v: float = 1.0,
